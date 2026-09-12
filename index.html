@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" data-catalog="catalog.json">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PSPDB</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="#">psp<span>db</span></a>
+    <div class="search-bar" role="search">
+      <label class="search-field" for="tree-search">
+        <span class="sr-only">Filter tree</span>
+        <input id="tree-search" type="search" placeholder="Search names, paths or SHA-256…" autocomplete="off" spellcheck="false" aria-controls="tree" aria-describedby="search-count" disabled>
+        <span id="search-count" role="status"></span>
+        <kbd>/</kbd>
+        <button id="clear-search" aria-label="Clear filter" hidden>×</button>
+      </label>
+    </div>
+    <span id="catalog-count"></span>
+  </header>
+  <div id="search-empty" role="status" hidden></div>
+  <div id="message" role="status">Loading catalog…</div>
+  <main id="browser" hidden>
+    <div id="table-scroll">
+      <table id="tree" role="treegrid" aria-label="PSP catalog" aria-colcount="3" tabindex="0">
+        <colgroup><col class="name-col"><col class="size-col"><col class="hash-col"><col id="download-col" hidden></colgroup>
+        <thead><tr><th scope="col" id="heading-name"><button id="sort-name" class="sort-button" disabled>Name<span aria-hidden="true"></span></button></th><th scope="col" class="size" id="heading-size" title="Binary units; hover a size for exact bytes"><button id="sort-size" class="sort-button" disabled>Size<span aria-hidden="true"></span></button></th><th scope="col" id="heading-hash" title="Hover for full SHA-256; click a hash to copy it"><button id="sort-hash" class="sort-button" disabled>SHA-256<span aria-hidden="true"></span></button></th><th id="download-heading" scope="col" hidden>Store</th></tr></thead>
+        <tbody id="entries"></tbody>
+      </table>
+    </div>
+  </main>
+  <div class="selection-bar"><span id="selected-path"></span><span id="notice" role="status"></span></div>
+  <footer>
+    <span><kbd>h</kbd> collapse / parent <kbd>j</kbd><kbd>k</kbd> move <kbd>l</kbd> expand / child <span class="extra-help">· arrows work too</span></span>
+    <span id="position" aria-live="polite"></span>
+  </footer>
+</body>
+</html>
