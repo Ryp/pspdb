@@ -1,0 +1,73 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "8a1c2419d66e368b65089ac902e23f4180de0b4d1726b4766acca112d694380c",
+  "size_bytes": 57429727,
+  "extractor": {
+    "name": "Zig-PSP zPBPTool",
+    "version": "7",
+    "options": [
+      "in-memory"
+    ]
+  },
+  "entries": [
+    {
+      "path": "DATA.BIN",
+      "type": "file",
+      "size_bytes": 57364191,
+      "sha256": "74538fc1d576f76185aedd5acdf1cf7d9129b0cc2ebb25a5dab503783f861082"
+    },
+    {
+      "path": "DATA.PSP",
+      "type": "file",
+      "size_bytes": 14000,
+      "sha256": "81907f5085328ca0d5e11be1cf8e4d629d71a1515fbcd93cb940f99483ff86b9",
+      "extraction": {
+        "sha256": "81907f5085328ca0d5e11be1cf8e4d629d71a1515fbcd93cb940f99483ff86b9",
+        "size_bytes": 14000,
+        "extractor": {
+          "name": "pspdb-pops",
+          "sha256": "e2a65c47cc9e5f717aceab38a5685fc58180b2d841f9e1b635f645a83db2ffb7",
+          "version": "1",
+          "options": [
+            "<parent.pbp>",
+            "<output>"
+          ]
+        },
+        "name_rule": "source_stem",
+        "entries": [
+          {
+            "path": "payload.gz",
+            "type": "file",
+            "size_bytes": 7134,
+            "sha256": "6eb832ab0225a2a771ba8e0003374de5f54c04d190e228bfc16cb8ed6ea89ee4"
+          }
+        ]
+      }
+    },
+    {
+      "path": "ICON0.PNG",
+      "type": "file",
+      "size_bytes": 11278,
+      "sha256": "245c8ece59be8bad06ba6d6743d09b3df1ca8c1399fd0742e84ce25ed1a28791"
+    },
+    {
+      "path": "PARAM.SFO",
+      "type": "file",
+      "size_bytes": 944,
+      "sha256": "93e4a395735d48ea7b2b9fe012a13f6cd8b1a609408256831a4c9b3d81b0b0b0"
+    },
+    {
+      "path": "PIC0.PNG",
+      "type": "file",
+      "size_bytes": 36623,
+      "sha256": "130a4c83f98af53174b6c09dcf02e8958277314ab4a478d50cbbccec4bdf3a20"
+    },
+    {
+      "path": "PIC1.PNG",
+      "type": "file",
+      "size_bytes": 2651,
+      "sha256": "3350f606604ed7153a9b60b45c3483738cb45c3ef1a30a730116c0923d6d68f1"
+    }
+  ]
+}
