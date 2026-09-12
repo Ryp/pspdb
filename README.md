@@ -69,6 +69,44 @@ The PKG extractor supports retail PSP and PS1 packages, not debug, native PS3, o
 Vita packages. Package decryption does not imply that every inner DRM payload is
 supported: as with ISOs, a nested extractor failure fails that source's full ingest.
 
+## PSN reference inventory and bounded acquisition
+
+Inventory local PSP/PSX NoPayStation TSV snapshots without network access:
+
+```sh
+uv run --locked python tools/psn_acquire.py /path/to/tsvs \
+  --work .work/psn-acquire --catalog catalog
+```
+
+The machine-local `report.json` accounts for every row across unique snapshots,
+retains duplicate-source attribution and conflicting references, and excludes
+license columns. Counts describe reference/package candidates, not a complete
+enumeration of PSN. Missing hashes or sizes remain unknown.
+
+Download a bounded batch from listed public Zeus URLs, then ingest separately:
+
+```sh
+uv run --locked python tools/psn_acquire.py /path/to/tsvs \
+  --work .work/psn-acquire --catalog catalog --category PSP_DLCS --limit 5
+./ingest/zig-out/bin/pspdb-ingest .work/psn-acquire/completed \
+  --catalog .work/psn-catalog --store /path/to/store
+```
+
+Acquisition is sequential, uses finite retries/timeouts, preserves 2 GiB free by
+default, and publishes completed `.pkg` files only after PKG-header and supplied
+size/hash checks. Missing reference hashes never become hash-confirmed.
+Interrupted transfers resume only with a strong remote ETag and a matching saved
+local prefix; otherwise they restart. Repeated runs reuse verified files.
+Use `--package` with a report candidate ID for exact selection, `--reuse` for
+existing local packages, and `--retry-failed` to revisit permanent failures.
+Other hosts and redirects remain explicitly unhandled rather than followed.
+
+Re-run inventory against the resulting catalog to distinguish exact ingested
+hash/size matches from downloaded packages. Catalog matching does not establish
+extractor freshness or support for every inner format. Keep extraction failures
+as separate ingest evidence; a successful download is not a successful ingest.
+Review and validate staged catalog pairs before contributing them.
+
 ## Extractor revisions and regeneration
 
 [tools/extractor_versions.json](tools/extractor_versions.json) is the shared revision
