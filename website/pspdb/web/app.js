@@ -461,9 +461,15 @@ function render() {
       for (const match of matches) {
         const redump = source === "Redump";
         if (redump ? !Number.isSafeInteger(match.id) || match.id <= 0 : !/^[0-9A-F]{8}$/.test(match.id)) continue;
-        const link = element("a", redump ? "redump-link" : "umdatabase-link", matches.length === 1 ? `${source} ↗` : `${source} #${match.id} ↗`);
+        const label = matches.length === 1 ? source : `${source} #${match.id}`;
+        const link = element("a", redump ? "redump-link" : "umdatabase-link");
+        link.append(element("span", "reference-label", `${label} `));
+        const icon = element("span", "reference-icon", "↗");
+        icon.setAttribute("aria-hidden", "true");
+        link.append(icon);
         link.href = redump ? `http://redump.org/disc/${match.id}/` : `https://umdatabase.net/view.php?id=${match.id}`;
-        link.title = match.name;
+        link.title = `${label}: ${match.name}`;
+        link.setAttribute("aria-label", link.title);
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         link.onclick = event => event.stopPropagation();
