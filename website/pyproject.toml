@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pspdb-website"
+version = "0.1.0"
+description = "Read-only PSPDB catalog website"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+pspdb-web = "pspdb.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pspdb*"]
+
+[tool.setuptools.package-data]
+pspdb = ["web/*.html", "web/*.css", "web/*.js"]

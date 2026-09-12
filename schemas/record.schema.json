@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Extractor-specific source metadata",
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "sha256",
+    "size_bytes"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "sha256": {
+      "$ref": "#/$defs/hash"
+    },
+    "size_bytes": {
+      "$ref": "#/$defs/size"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Fields defined by the extractor named by kind (for example UMD/SFO fields from iso)."
+    },
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "SHA-1 of the complete original ISO bytes, for external DAT comparison."
+    }
+  }
+}

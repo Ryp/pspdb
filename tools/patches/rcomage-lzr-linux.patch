@@ -1,0 +1,128 @@
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 0cc9d7f..b5d638e 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -15,7 +15,7 @@ AM_CFLAGS = \
+ 
+ bin_PROGRAMS = rcomage
+ 
+-rcomage_SOURCES = \
++rcomage_SOURCES = libLZR.c libLZR.h \
+ 		configscan.c \
+ 		configscan.h \
+ 		general.c \
+diff --git a/src/rcodump.c b/src/rcodump.c
+index bfb620f..3fbb974 100644
+--- a/src/rcodump.c
++++ b/src/rcodump.c
+@@ -1,3 +1,4 @@
++#include "libLZR.h"
+ /*
+  * rcodump.c - This file is part of RCOMage
+  *
+@@ -415,6 +416,14 @@ dump_text_resources (char *labels, rRCOEntry * parent, uint8_t writeHeader,
+ 	if (uRet == Z_DATA_ERROR)
+ 	  warning
+ 	      ("Encountered 'data error' when decompressing text resource.");
++      } else if (entry->srcCompression == RCO_DATA_COMPRESSION_RLZ) {
++        int length = LZRDecompress(textBuffer, entry->srcLenUnpacked, inBuffer, NULL);
++        if (length < 0 || (uint32_t)length != entry->srcLenUnpacked) {
++          free(inBuffer);
++          free(textBuffer);
++          error("RLZ text resource decompression failed");
++          return;
++        }
+       }
+       free (inBuffer);
+     } else
+diff --git a/src/rcomain.c b/src/rcomain.c
+index b23a6f8..680811f 100644
+--- a/src/rcomain.c
++++ b/src/rcomain.c
+@@ -1,3 +1,4 @@
++#include "libLZR.h"
+ /*
+  * rcomain.c - This file is part of RCOMage
+  *
+@@ -233,10 +234,15 @@ read_resource (rRCOEntry * entry, uint32_t * outLen)
+ 	  free (bufferIn);
+ 	  *outLen = entry->srcLenUnpacked;
+ 	} else if (entry->srcCompression == RCO_DATA_COMPRESSION_RLZ) {
+-	  warning
+-	      ("RLZ decompression not supported - data will be left uncompressed.");
+-	  bufferMid = bufferIn;
+-	  *outLen = entry->srcLen;
++          bufferMid = malloc(entry->srcLenUnpacked);
++          int length = LZRDecompress(bufferMid, entry->srcLenUnpacked, bufferIn, NULL);
++          free(bufferIn);
++          if (length < 0 || (uint32_t)length != entry->srcLenUnpacked) {
++            free(bufferMid);
++            error("RLZ resource decompression failed");
++            return NULL;
++          }
++          *outLen = length;
+ 	} else {
+ 	  // unknown compression
+ 	  free (bufferIn);
+diff --git a/src/rcoreader.c b/src/rcoreader.c
+index 7ee9504..cd0651a 100644
+--- a/src/rcoreader.c
++++ b/src/rcoreader.c
+@@ -1,3 +1,4 @@
++#include "libLZR.h"
+ /*
+  * rcoreader.c - This file is part of RCOMage
+  *
+@@ -241,10 +242,18 @@ read_rco (char *fn)
+ 
+ 	break;
+ 
+-      case RCO_DATA_COMPRESSION_RLZ:
+-	error
+-	    ("[header] This RCO uses RLZ compression which currently cannot be decompressed with rcomage.  (use Z33's Resurssiklunssi to decompress the RCO)");
+-	return NULL;
++      case RCO_DATA_COMPRESSION_RLZ: {
++        void *packed = malloc(ci.lenPacked);
++        fileread(rcoH.fp, packed, ci.lenPacked);
++        int length = LZRDecompress(rcoH.tables, ci.lenUnpacked, packed, NULL);
++        free(packed);
++        if (length < 0 || (uint32_t)length != ci.lenUnpacked) {
++          error("RLZ tree decompression failed");
++          return NULL;
++        }
++        rcoH.fSizeExpanded += ci.lenUnpacked - ALIGN_TO_4(ci.lenPacked);
++        break;
++      }
+ 
+       default:			// this won't actually ever be executed due to
+ 	// the new compression checking code above...
+@@ -289,9 +298,13 @@ read_rco (char *fn)
+ 	void *readBuf = malloc (tci.packedLen);
+ 
+ 	fileread (rcoH.fp, readBuf, tci.packedLen);
+-	int uRet = zlib_uncompress ((char *) rcoH.tables + oldSize,
+-	    tci.unpackedLen, readBuf,
+-	    tci.packedLen);
++	int uRet;
++        if (rco->headerCompression == RCO_DATA_COMPRESSION_RLZ) {
++          int length = LZRDecompress((char *)rcoH.tables + oldSize, tci.unpackedLen, readBuf, NULL);
++          uRet = length >= 0 && (uint32_t)length == tci.unpackedLen ? Z_OK : Z_STREAM_ERROR;
++        } else {
++          uRet = zlib_uncompress((char *)rcoH.tables + oldSize, tci.unpackedLen, readBuf, tci.packedLen);
++        }
+ 
+ 	if (uRet != Z_OK && uRet != Z_DATA_ERROR) {
+ 	  error ("[text-data] Unable to decompress text data!");
+diff --git a/src/vsmx.c b/src/vsmx.c
+index 828b4e8..6f29824 100644
+--- a/src/vsmx.c
++++ b/src/vsmx.c
+@@ -1401,7 +1401,7 @@ VsmxDecompile (VsmxMem * in, FILE * out)
+ 	    prev = VsmxDecompileStackPop (&stack);
+ 	    if (j) {
+ 	      wchar_t tmp[MAX_TEXT_LEN];
+-	      swprintf (tmp, L" %ls,", prev->str);
++	      swprintf (tmp, MAX_TEXT_LEN, L" %ls,", prev->str);
+ 	      wcsprecat (item.str, tmp, MAX_TEXT_LEN);
+ 	      // SWPRINTF_ITEM (" %ls,%ls", prev->str, item.str);
+ 	    } else
