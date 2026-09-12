@@ -123,7 +123,7 @@ fn equal(a: std.json.Value, b: std.json.Value) bool {
 
 /// Publish external extractor metadata and the same inventory shape as ISO.
 pub fn publishExtraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []processor.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8) !void {
-    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce")) "source_stem" else if (std.mem.eql(u8, kind, "gzip")) "decoded_suffix" else if (std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "strip_suffix" else null;
+    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp")) "source_stem" else if (std.mem.eql(u8, kind, "gzip")) "decoded_suffix" else if (std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "strip_suffix" else null;
     const tree = .{
         .kind = "tree",
         .schema_version = @as(u32, 1),

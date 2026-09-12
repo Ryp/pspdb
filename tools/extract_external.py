@@ -26,7 +26,7 @@ def tool_provenance(kind, tool=None, data=None):
     result = {'name': 'pspdb-ingest', 'version': versions()[kind], 'options': []}
     if kind == 'pbp':
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
-    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip'):
+    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp'):
         return result
     result['name'] = 'rcomage' if kind == 'rco' else 'pspdecrypt-kle' if kind in ('kl3e', 'kl4e') else 'pspdecrypt'
     result['sha256'] = hashlib.sha256(tool.resolve(strict=True).read_bytes()).hexdigest()

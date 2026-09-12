@@ -60,7 +60,7 @@ ISO revision 4 and nested ISO9660 revision 2 resolve shared-extent file aliases
 by exact path, preserving distinct case-sensitive filenames. Metadata lookup
 remains case-insensitive; it must not determine which bytes an inventory path owns.
 
-PKGs write their own versioned pairs under `catalog/pkg/v6/`. Package metadata
+PKGs write their own versioned pairs under `catalog/pkg/v7/`. Package metadata
 includes content ID, title ID, content type, and available PSP title/version/firmware
 fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
 static export display packages under **psn**, alongside **umd**. Embedded PBP files
@@ -301,3 +301,11 @@ PS1 PKG ingest uses Zig-PSP for PBP/SFO parsing and PSXtract-2 under Wine for
 full disc reconstruction, attached beneath the original `DATA.BIN` section.
 Configure `PSPDB_PSXTRACT2`, `PSPDB_WINE`, and optionally `WINEPREFIX`, or put
 `psxtract.exe` and `wine` on PATH. See [PS1 extraction setup and validation](tools/psxtract/README.md).
+
+Standard VMP memory-card wrappers expose their unchanged 131072-byte raw card as
+an `.mcr` child. This follows the
+[upstream wrapper layout](https://github.com/sahlberg/pop-fe/blob/d74e4ab44eedbf41abd759a8db7cd091779dea82/vmp.py):
+131200 total bytes, `00 50 4d 56` magic and a 128-byte header. This is byte
+extraction, not signature verification or per-save filesystem interpretation.
+VMP revision 1 preserves the original wrapper; ISO revision 5 and PKG revision 7
+force root discovery of previously opaque children during `--skip-existing`.

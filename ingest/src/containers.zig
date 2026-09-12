@@ -8,6 +8,31 @@ pub fn walkSce(bytes: []const u8, context: anytype, comptime emit: anytype) !voi
     try emit(context, "payload.psp", bytes[offset..]);
 }
 
+/// Expose the raw card bytes; this does not verify the VMP signature.
+pub fn walkVmp(bytes: []const u8, context: anytype, comptime emit: anytype) !void {
+    if (bytes.len != 0x20080 or !std.mem.startsWith(u8, bytes, "\x00PMV") or
+        std.mem.readInt(u32, bytes[4..8], .little) != 0x80) return error.InvalidVmp;
+    try emit(context, "memorycard.mcr", bytes[0x80..]);
+}
+
+test "VMP preserves the complete card and rejects inconsistent wrapper bounds" {
+    var bytes: [0x20081]u8 = @splat(0);
+    @memcpy(bytes[0..4], "\x00PMV");
+    std.mem.writeInt(u32, bytes[4..8], 0x80, .little);
+    bytes[0x80] = 0xa7;
+    bytes[0x2007f] = 0x5c;
+    const Consumer = struct {
+        fn emit(expected: []const u8, _: []const u8, payload: []const u8) !void {
+            try std.testing.expectEqualSlices(u8, expected, payload);
+        }
+    };
+    try walkVmp(bytes[0..0x20080], bytes[0x80..0x20080], Consumer.emit);
+    try std.testing.expectError(error.InvalidVmp, walkVmp(bytes[0..0x2007f], &.{}, Consumer.emit));
+    try std.testing.expectError(error.InvalidVmp, walkVmp(&bytes, &.{}, Consumer.emit));
+    std.mem.writeInt(u32, bytes[4..8], 0x7f, .little);
+    try std.testing.expectError(error.InvalidVmp, walkVmp(bytes[0..0x20080], &.{}, Consumer.emit));
+}
+
 pub fn parsePbp(bytes: []const u8) !@import("zig_psp_pbp").Pbp {
     return @import("zig_psp_pbp").Pbp.parse(bytes) catch return error.InvalidPbp;
 }

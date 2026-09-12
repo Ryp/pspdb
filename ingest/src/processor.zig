@@ -316,6 +316,10 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
             try @import("containers.zig").walkSce(task.input.bytes, &inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").sce };
         },
+        .vmp => blk: {
+            try @import("containers.zig").walkVmp(task.input.bytes, &inventory, Inventory.emit);
+            break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").vmp };
+        },
         .elf => blk: {
             try @import("containers.zig").walkElf(task.input.bytes, &inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").elf };

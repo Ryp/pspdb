@@ -1,7 +1,7 @@
 const std = @import("std");
 const memory = @import("bytes.zig");
 
-pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx };
+pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp };
 
 pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "NPUMDIMG")) return .npumdimg;
@@ -11,6 +11,7 @@ pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "~PSP")) return .prx;
     if (std.mem.startsWith(u8, bytes, "~SCE")) return .sce;
     if (std.mem.startsWith(u8, bytes, "\x00PBP")) return .pbp;
+    if (std.mem.startsWith(u8, bytes, "\x00PMV")) return .vmp;
     if (std.mem.startsWith(u8, bytes, "\x1f\x8b\x08")) return .gzip;
     if (std.mem.startsWith(u8, bytes, "KL3E")) return .kl3e;
     if (std.mem.startsWith(u8, bytes, "KL4E")) return .kl4e;
