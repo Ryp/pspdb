@@ -46,8 +46,9 @@ pub const Package = struct {
             if (kind == 13) result.table = try integer(u32, value, 0);
             pos += length;
         }
+        // Type 9 includes PSP themes; PS3 themes remain excluded by the platform check.
         switch (result.content_type) {
-            6, 7, 0xe, 0xf, 0x10 => {},
+            6, 7, 9, 0xe, 0xf, 0x10 => {},
             else => return error.UnsupportedPkg,
         }
         if (result.table % 16 != 0 or result.table > size or result.count > (size - result.table) / 32) return error.InvalidPkg;

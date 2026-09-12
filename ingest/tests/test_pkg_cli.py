@@ -27,7 +27,7 @@ def sfo(fields):
     return struct.pack('<4sIIII', b'\0PSF', 0x101, 20 + len(entries), 20 + len(entries) + len(keys), len(fields)) + entries + keys + values
 
 
-def pkg_bytes(content_type=7, extra=(), broken_pbp=False, pbp_override=None):
+def pkg_bytes(content_type=7, extra=(), broken_pbp=False, pbp_override=None, files_override=None):
     inner = sfo({'TITLE': 'Fixture game', 'DISC_ID': 'NPUG00001', 'DISC_VERSION': '1.00', 'PSP_SYSTEM_VER': '3.80'})
     offsets = [40] + [40 + len(inner)] * 7
     pbp = b'\0PBP' + struct.pack('<I8I', 0x10000, *offsets) + inner + b'payload'
@@ -38,6 +38,8 @@ def pkg_bytes(content_type=7, extra=(), broken_pbp=False, pbp_override=None):
     files = [('PARAM.SFO', sfo({'TITLE': 'Outer fixture'}), False), ('USRDIR', None, False),
              ('USRDIR/CONTENT', None, False), ('USRDIR/CONTENT/EBOOT.PBP', pbp, True),
              ('USRDIR/ISO.BIN.EDAT', b'opaque bytes', False), ('empty', b'', True), *extra]
+    if files_override is not None:
+        files = files_override
     plain = bytearray(32 * len(files)); pieces = []
     def append(data):
         plain.extend(b'\0' * (-len(plain) % 16)); pos = len(plain); plain.extend(data); return pos
@@ -97,6 +99,60 @@ class PkgCliTests(unittest.TestCase):
             self.assertEqual(run.stderr.count('source already in catalog'), 2)
             self.assertEqual(snapshot(catalog), before_catalog)
             self.assertEqual(snapshot(inputs), before)
+
+    def test_theme_preserves_payload_and_optional_metadata(self):
+        payload = b'\0PSPEDAT' + bytes(range(128))
+        for metadata in (None, sfo({'TITLE': 'Observed theme'})):
+            with self.subTest(has_sfo=metadata is not None), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp); inputs = base/'inputs'; inputs.mkdir()
+                catalog, store = base/'catalog', base/'store'
+                files = [('Original Theme.PTF', payload, True)]
+                if metadata is not None:
+                    files.append(('PARAM.SFO', metadata, False))
+                source, _ = pkg_bytes(9, files_override=files)
+                (inputs/'theme.pkg').write_bytes(source)
+                before = snapshot(inputs)
+                run = self.run_ingest(inputs, '--catalog', catalog, '--store', store)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                digest = hashlib.sha256(source).hexdigest()
+                record = json.loads(result_path(catalog, 'pkg', digest).read_text())
+                self.assertEqual(record['metadata']['content_type'], 9)
+                self.assertEqual(record['metadata']['content_id'], 'UP9000-NPUG00001_00-FIXTURE000000000')
+                self.assertEqual(record['metadata'].get('title'), 'Observed theme' if metadata is not None else None)
+                self.assertIsNone(record['metadata'].get('disc_id'))
+                self.assertIsNone(record['metadata'].get('required_firmware'))
+                tree = json.loads(tree_path(catalog, digest).read_text())
+                self.assertEqual(tree['entries'], [
+                    dict(path=name, type='file', size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                    for name, data, _ in sorted(files)
+                ])
+                for _, data, _ in files:
+                    h = hashlib.sha256(data).hexdigest()
+                    self.assertEqual((store/'sha256'/h[:2]/h[2:4]/h).read_bytes(), data)
+                self.assertEqual(snapshot(inputs), before)
+
+    def test_theme_support_keeps_platform_and_metadata_boundaries(self):
+        cases = [
+            ('ps3_theme', 1, 9, None, 'UnsupportedPkg'),
+            ('vita_app', 2, 0x15, None, 'UnsupportedPkg'),
+            ('psm', 2, 0x18, None, 'UnsupportedPkg'),
+            ('missing_game_sfo', 2, 7, None, 'MissingPkgMetadata'),
+            ('empty_theme_sfo', 2, 9, b'', 'InvalidSfo'),
+            ('corrupt_theme_sfo', 2, 9, b'\0PSF' + bytes(8), 'InvalidSfo'),
+        ]
+        for name, platform, content_type, metadata, error in cases:
+            with self.subTest(mode=name), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp); inputs = base/'inputs'; inputs.mkdir(); catalog = base/'catalog'
+                files = [('theme.PTF', b'opaque theme payload', True)]
+                if metadata is not None:
+                    files.append(('PARAM.SFO', metadata, False))
+                source, _ = pkg_bytes(content_type, files_override=files)
+                source = bytearray(source); struct.pack_into('>H', source, 6, platform)
+                (inputs/'bad.pkg').write_bytes(source)
+                run = self.run_ingest(inputs, '--catalog', catalog, '--store', base/'store')
+                self.assertNotEqual(run.returncode, 0, run.stderr)
+                self.assertIn(error, run.stderr)
+                self.assertFalse(list((catalog/'pkg').rglob('*-ingest.json')))
 
     def test_pops_uses_parent_pbp_and_attaches_only_to_executable(self):
         import gzip

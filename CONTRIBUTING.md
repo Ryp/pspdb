@@ -28,7 +28,7 @@ catalog/iso/v1/<source-sha256>-ingest.json
 catalog/iso/v1/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v5/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v6/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
 Include the new nested extractor pairs too, such as `prx/v1/` and `gzip/v1/`.

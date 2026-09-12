@@ -193,8 +193,14 @@ pub fn processPkgChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []cons
     var result: Result = .{ .kind = .pkg, .size_bytes = bytes.len, .sha256 = hash, .sha1 = std.fmt.bytesToHex(sha1, .lower), .content_type = package.content_type };
     errdefer result.deinit(allocator);
     result.content_id = try allocator.dupe(u8, package.content_id);
-    result.pkg_sfo_bytes = (try package.readFile(allocator, "PARAM.SFO")) orelse return error.MissingPkgMetadata;
-    result.metadata = try sfo.parsePkg(allocator, result.pkg_sfo_bytes, &result.pkg_title);
+    if (try package.readFile(allocator, "PARAM.SFO")) |metadata| {
+        result.pkg_sfo_bytes = metadata;
+        if (metadata.len == 0) return error.InvalidSfo;
+        result.metadata = try sfo.parsePkg(allocator, metadata, &result.pkg_title);
+    } else if (package.content_type != 9) {
+        // PSP theme PKGs can contain only a theme payload, with no SFO or PBP.
+        return error.MissingPkgMetadata;
+    }
     if (try package.readFile(allocator, "USRDIR/CONTENT/EBOOT.PBP")) |pbp| {
         defer allocator.free(pbp);
         const parsed = try @import("containers.zig").parsePbp(pbp);

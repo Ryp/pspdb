@@ -60,13 +60,16 @@ ISO revision 4 and nested ISO9660 revision 2 resolve shared-extent file aliases
 by exact path, preserving distinct case-sensitive filenames. Metadata lookup
 remains case-insensitive; it must not determine which bytes an inventory path owns.
 
-PKGs write their own versioned pairs under `catalog/pkg/v5/`. Package metadata
+PKGs write their own versioned pairs under `catalog/pkg/v6/`. Package metadata
 includes content ID, title ID, content type, and available PSP title/version/firmware
 fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
 static export display packages under **psn**, alongside **umd**. Embedded PBP files
 use the existing nested extraction pipeline when both catalog and store are set.
-The PKG extractor supports retail PSP and PS1 packages, not debug, native PS3, or
-Vita packages. Package decryption does not imply that every inner DRM payload is
+The PKG extractor supports retail PSP and PS1 packages, including standard PSP
+theme packages (content type 9), not debug, native PS3, or Vita packages.
+Themes may legitimately omit `PARAM.SFO`; no title metadata is invented. Present
+malformed metadata still fails. Theme payloads retain their original bytes and
+paths, including opaque PSPEDAT wrappers. Package decryption does not imply that every inner DRM payload is
 supported: as with ISOs, a nested extractor failure fails that source's full ingest.
 
 ## PSN reference inventory and bounded acquisition
