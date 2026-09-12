@@ -40,6 +40,16 @@ assert.equal(vm.runInContext('label(root.children[0].children[0].children[0])', 
 assert.equal(vm.runInContext('root.children[0].children[0].children[0].hash', context), 'd'.repeat(64));
 console.log('PASS: video label uses its SFO title and retains its hash.');
 
+context.untitledVideoFixture = catalog([{size_bytes:2048,sha256:'d'.repeat(64),
+  metadata:{identifier:'UMDV-00001',media_code:'V'},entries}]);
+vm.runInContext('build(untitledVideoFixture)', context);
+const untitledVideo = JSON.parse(vm.runInContext(`JSON.stringify((()=> {
+  const node = root.children[0].children[0].children[0];
+  return {label:label(node),path:node.path,child:node.children[0].name};
+})())`, context));
+assert.deepEqual(untitledVideo, {label:'UMDV-00001',path:'umd/video/'+'d'.repeat(64)+'.iso',child:'UMD_DATA.BIN'});
+console.log('PASS: video without optional SFO title retains its identifier and navigable inventory.');
+
 // A single hash-keyed extraction attaches to both occurrences, without replacing
 // the original file's identity or counting expanded bytes in its parent's size.
 Object.assign(context.fixture.trees, {

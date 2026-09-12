@@ -114,6 +114,8 @@ downloads; omit `--host` to bind only to localhost. Add `--redump /path/to/dat.z
 loaded at startup; ingest records hashes without depending on Redump.
 Add `--umdatabase /path/to/pages` for exact SHA-1 links from saved UMDatabase
 entry pages named `ID.html` (for example, `E39CFE68.html`).
+UMD video labels use the SFO title when available, otherwise the observed disc
+identifier. Missing optional SFO metadata does not prevent browsing its inventory.
 
 ## Static hosting / GitHub Pages
 

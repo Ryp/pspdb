@@ -351,7 +351,7 @@ function build(data) {
     const id = (iso.metadata.disc_id || iso.metadata.identifier).trim().replace(/^([A-Z]{4})-?([0-9]{5})$/, "$1-$2");
     const identity = [id, iso.metadata.disc_version].filter(Boolean).join("/");
     const displayName = iso.metadata.media_code === "V"
-      ? iso.metadata.title.trim()
+      ? iso.metadata.title?.trim() || identity
       : [identity, iso.metadata.title?.trim()].filter(Boolean).join(" ");
     const node = add(category, `${iso.sha256}.iso`, {
       type: "file",
