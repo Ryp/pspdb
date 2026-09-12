@@ -11,31 +11,55 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 
 def catalog_data(catalog, redump=None, umdatabase=None):
-    records, trees = {}, {}
+    records, trees, selected = {}, {}, {}
     for directory in sorted(catalog.iterdir()):
         if not directory.is_dir():
             continue
-        for path in sorted(directory.glob("*.json")):
-            record = json.loads(path.read_text(encoding="utf-8"))
-            kind = "tree" if directory.name == "trees" else directory.name
-            if (record.get("kind") != kind or record.get("schema_version") != 1
-                    or not re.fullmatch(r"[0-9a-f]{64}", path.stem)
-                    or record.get("sha256") != path.stem):
-                raise ValueError(f"Invalid catalog record identity: {path}")
-            if kind == "tree":
-                trees[path.stem] = record
+        kind = 'tree' if directory.name == 'trees' else directory.name
+        paths = [(0, path, path.stem) for path in directory.glob('*.json')]
+        if kind != 'tree':
+            for folder in directory.iterdir():
+                if folder.is_dir() and re.fullmatch(r'v[1-9][0-9]*', folder.name):
+                    paths.extend((int(folder.name[1:]), path, path.name.removesuffix('-ingest.json'))
+                                 for path in folder.glob('*-ingest.json'))
+        for revision, path, digest in sorted(paths):
+            record = json.loads(path.read_text(encoding='utf-8'))
+            if (record.get('kind') != kind or record.get('schema_version') != 1
+                    or not re.fullmatch(r'[0-9a-f]{64}', digest) or record.get('sha256') != digest):
+                raise ValueError(f'Invalid catalog record identity: {path}')
+            if kind == 'tree':
+                trees[digest] = record
                 continue
-            if kind == "iso":
-                if redump is not None:
-                    matches = redump.get((record.get("sha1"), record.get("size_bytes")), [])
-                    if matches:
-                        record["redump"] = matches
-                if umdatabase is not None:
-                    matches = umdatabase.get(record.get("sha1"), [])
-                    if matches:
-                        record["umdatabase"] = matches
-            records.setdefault(kind, []).append(record)
-    return {"records": records, "trees": trees}
+            tree = None
+            if revision:
+                tree_path = path.with_name(digest + '-tree.json')
+                if not tree_path.exists():
+                    # A newer incomplete pair must not hide a completed result.
+                    continue
+                tree = json.loads(tree_path.read_text(encoding='utf-8'))
+                if (tree.get('kind') != 'tree' or tree.get('schema_version') != 1
+                        or tree.get('sha256') != digest or tree.get('size_bytes') != record.get('size_bytes')
+                        or tree.get('extractor', {}).get('version') != str(revision)
+                        or not isinstance(tree.get('entries'), list)):
+                    raise ValueError(f'Invalid versioned tree identity: {tree_path}')
+            previous = selected.get((kind, digest))
+            if previous and previous[0].get('size_bytes') != record.get('size_bytes'):
+                raise ValueError(f'Conflicting source sizes: {path}')
+            selected[kind, digest] = record, tree
+    for (kind, digest), (record, tree) in sorted(selected.items()):
+        if tree is not None:
+            trees[digest] = tree
+        if kind == 'iso':
+            if redump is not None:
+                matches = redump.get((record.get('sha1'), record.get('size_bytes')), [])
+                if matches:
+                    record['redump'] = matches
+            if umdatabase is not None:
+                matches = umdatabase.get(record.get('sha1'), [])
+                if matches:
+                    record['umdatabase'] = matches
+        records.setdefault(kind, []).append(record)
+    return {'records': records, 'trees': trees}
 
 
 def open_object(store, digest, size):

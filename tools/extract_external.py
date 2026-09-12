@@ -10,6 +10,55 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 
+VERSIONS = None
+
+
+def versions():
+    global VERSIONS
+    if VERSIONS is None:
+        VERSIONS = json.loads(Path(__file__).with_name('extractor_versions.json').read_text())
+    if not isinstance(VERSIONS, dict) or any(not isinstance(v, str) or not re.fullmatch(r'[1-9][0-9]*', v) for v in VERSIONS.values()):
+        raise ValueError('Extractor revisions must be positive integer strings')
+    return VERSIONS
+
+
+def tool_provenance(kind, tool=None, data=None):
+    result = {'name': 'pspdb-ingest', 'version': versions()[kind], 'options': []}
+    if kind in ('iso', 'sce', 'elf', 'pbp', 'gzip'):
+        return result
+    result['name'] = 'rcomage' if kind == 'rco' else 'pspdecrypt-kle' if kind in ('kl3e', 'kl4e') else 'pspdecrypt'
+    result['sha256'] = hashlib.sha256(tool.resolve(strict=True).read_bytes()).hexdigest()
+    result['options'] = ['-O' if kind == 'psar' else '-o', '<output>', '<source>']
+    if kind == 'rco':
+        paths = sorted(data.resolve(strict=True).glob('*.ini'))
+        if not paths:
+            raise ValueError('Missing RCOMage INI configuration')
+        config_hash = hashlib.sha256()
+        for path in paths:
+            config_hash.update(path.name.encode() + b'\0' + path.read_bytes())
+        result['options'] = ['dump', '<source>', 'structure.xml', '--resdir', 'resources',
+                             '--ini-dir', 'sha256:' + config_hash.hexdigest()]
+    return result
+
+
+def current_provenance():
+    current, unavailable = {}, {}
+    for kind in versions():
+        try:
+            tool = data = None
+            if kind in ('psar', 'prx'):
+                tool = executable('PSPDECRYPT', 'pspdecrypt')
+            elif kind in ('kl3e', 'kl4e'):
+                tool = executable('PSPDECRYPT_KLE', 'pspdecrypt-kle')
+            elif kind == 'rco':
+                tool = executable('RCOMAGE', 'rcomage').resolve(strict=True)
+                data = Path(os.environ.get('RCOMAGE_DATA', tool.parent.parent / 'share' / 'rcomage'))
+            current[kind] = tool_provenance(kind, tool, data)
+        except (OSError, ValueError) as exc:
+            unavailable[kind] = str(exc)
+    return current, unavailable
+
+
 def extract_psar(source, output, tool):
     with source.open('rb') as stream:
         if stream.read(4) != b'PSAR':
@@ -21,19 +70,13 @@ def extract_psar(source, output, tool):
     # Upstream sometimes reports failures only in its log, with a zero exit.
     if result.returncode or 'Done!' not in log or re.search(r'error|fail', log, re.I):
         raise ValueError(f'Extractor did not complete cleanly:\n{log}')
-    with tool.open('rb') as stream:
-        tool_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
-    return {'name': 'pspdecrypt', 'sha256': tool_hash, 'options': ['-O', '<output>', '<source>']}
+    return tool_provenance('psar', tool)
 
 
 def extract_rco(source, output, tool, data):
     tool = tool.resolve(strict=True)
     data = data.resolve(strict=True)
-    config_hash = hashlib.sha256()
-    for path in sorted(data.glob('*.ini')):
-        config_hash.update(path.name.encode() + b'\0' + path.read_bytes())
-    if not any(data.glob('*.ini')):
-        raise ValueError('Missing RCOMage INI configuration')
+    provenance = tool_provenance('rco', tool, data)
     (output / 'resources').mkdir()
     result = subprocess.run([str(tool), 'dump', str(source.resolve()), 'structure.xml',
                             '--resdir', 'resources', '--ini-dir', str(data)], cwd=output,
@@ -44,9 +87,7 @@ def extract_rco(source, output, tool, data):
     ET.parse(output / 'structure.xml')
     for path in (output / 'resources').glob('*.xml'):
         ET.parse(path)
-    return {'name': 'rcomage', 'sha256': hashlib.sha256(tool.read_bytes()).hexdigest(),
-            'options': ['dump', '<source>', 'structure.xml', '--resdir', 'resources',
-                        '--ini-dir', 'sha256:' + config_hash.hexdigest()]}
+    return provenance
 
 
 def payload_name(header):
@@ -93,8 +134,7 @@ def extract_prx(source, output, tool):
     with target.open('rb') as stream:
         name = prx_payload_name(stream.read(20), header)
     target.rename(output / name)
-    return {'name': 'pspdecrypt', 'sha256': hashlib.sha256(tool.read_bytes()).hexdigest(),
-            'version': 'prx-2', 'options': ['-o', '<output>', '<source>']}
+    return tool_provenance('prx', tool)
 
 
 def extract_gzip(source, output):
@@ -102,7 +142,7 @@ def extract_gzip(source, output):
     with gzip.open(source, 'rb') as stream:
         data = stream.read()
     (output / payload_name(data[:20])).write_bytes(data)
-    return {'name': 'pspdb-ingest', 'version': 'gzip-2', 'options': []}
+    return tool_provenance('gzip')
 
 
 def extract_kle(source, output, tool):
@@ -116,8 +156,9 @@ def extract_kle(source, output, tool):
     with target.open('rb') as stream:
         name = payload_name(stream.read(20))
     target.rename(output / name)
-    return {'name': 'pspdecrypt-kle', 'sha256': hashlib.sha256(tool.read_bytes()).hexdigest(),
-            'version': 'kle-1', 'options': ['-o', '<output>', '<source>']}
+    with source.open('rb') as stream:
+        kind = 'kl3e' if stream.read(4) == b'KL3E' else 'kl4e'
+    return tool_provenance(kind, tool)
 
 
 def executable(variable, name):
@@ -129,7 +170,11 @@ def main():
     parser.add_argument('kind', choices=['psar', 'rco', 'prx', 'gzip', 'kl3e', 'kl4e'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--versions', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.versions:
+        global VERSIONS
+        VERSIONS = json.loads(args.versions)
     try:
         if args.kind == 'psar':
             provenance = extract_psar(args.source, args.output, executable('PSPDECRYPT', 'pspdecrypt'))

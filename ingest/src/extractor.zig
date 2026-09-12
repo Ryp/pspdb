@@ -59,6 +59,7 @@ pub const Output = struct {
 pub const Adapter = struct {
     store: []const u8,
     catalog: []const u8,
+    state: ?*const @import("catalog_state.zig").State = null,
 
     pub fn extract(self: Adapter, allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, kind: Kind) !Output {
         var random: [16]u8 = undefined;
@@ -70,8 +71,8 @@ pub const Adapter = struct {
         const source = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ self.store, hash[0..2], hash[2..4], hash });
         defer allocator.free(source);
         const result = try std.process.run(allocator, io, .{ .argv = &.{
-            "uv",           "run",  "--no-project", "--offline", "python", "-c", @embedFile("extractor_adapter"),
-            @tagName(kind), source, "--output",     output,
+            "uv",           "run",  "--no-project", "--offline", "python",     "-c",                                  @embedFile("extractor_adapter"),
+            @tagName(kind), source, "--output",     output,      "--versions", @embedFile("extractor_versions_json"),
         } });
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);

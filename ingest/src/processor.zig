@@ -118,7 +118,7 @@ pub fn processIso(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, s
     return (try processIsoChecked(allocator, io, bytes, store, null, null)).?;
 }
 
-pub fn processIsoChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, catalog: ?[]const u8, dispatch: ?*Dispatch) !?Result {
+pub fn processIsoChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, catalog: ?@import("catalog.zig").Cache, dispatch: ?*Dispatch) !?Result {
     var sha256 = std.crypto.hash.sha2.Sha256.init(.{});
     var sha1 = std.crypto.hash.Sha1.init(.{});
     var offset: usize = 0;
@@ -213,6 +213,12 @@ const Inventory = struct {
 
 /// Process only this extraction's immediate tree. Descendants go to Dispatch.
 pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Dispatch) !Counts {
+    if (dispatch.adapter.state) |state| {
+        if (state.fresh_trees.map.contains(&task.hash)) {
+            if (try reuseTask(allocator, io, task, dispatch)) |counts| return counts;
+        }
+    }
+
     var inventory = Inventory{
         .allocator = allocator,
         .io = io,
@@ -227,15 +233,15 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
     const provenance: extractor.Provenance = switch (task.kind) {
         .sce => blk: {
             try @import("containers.zig").walkSce(task.input.bytes, &inventory, Inventory.emit);
-            break :blk .{ .name = "pspdb-ingest", .version = "sce-1" };
+            break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").sce };
         },
         .elf => blk: {
             try @import("containers.zig").walkElf(task.input.bytes, &inventory, Inventory.emit);
-            break :blk .{ .name = "pspdb-ingest", .version = "elf-1" };
+            break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").elf };
         },
         .pbp => blk: {
             try @import("containers.zig").walkPbp(task.input.bytes, &inventory, Inventory.emit);
-            break :blk .{ .name = "pspdb-ingest", .version = "pbp-1" };
+            break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").pbp };
         },
         else => blk: {
             output = try dispatch.adapter.extract(allocator, io, task.hash, task.kind);
@@ -252,6 +258,56 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
     return inventory.counts;
 }
 
+/// Reuse an unchanged immediate inventory, but still visit its derived children.
+fn reuseTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Dispatch) !?Counts {
+    const revision = switch (task.kind) {
+        inline else => |kind| @field(@import("extractor_versions"), @tagName(kind)),
+    };
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-tree.json", .{ dispatch.adapter.catalog, @tagName(task.kind), revision, task.hash });
+    defer allocator.free(path);
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer allocator.free(bytes);
+    const SavedEntry = struct { path: []const u8, type: []const u8, sha256: ?[]const u8 = null, size_bytes: ?u64 = null };
+    const Saved = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry };
+    const parsed = try std.json.parseFromSlice(Saved, allocator, bytes, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    if (!std.mem.eql(u8, parsed.value.sha256, &task.hash) or parsed.value.size_bytes != task.input.bytes.len) return error.CatalogConflict;
+    var counts: Counts = .{};
+    for (parsed.value.entries) |entry| {
+        try validatePath(entry.path);
+        if (std.mem.eql(u8, entry.type, "directory")) continue;
+        const hash = entry.sha256 orelse return error.CatalogConflict;
+        if (hash.len != 64) return error.CatalogConflict;
+        for (hash) |c| if (!std.ascii.isDigit(c) and (c < 'a' or c > 'f')) return error.CatalogConflict;
+        const object_path = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ dispatch.adapter.store, hash[0..2], hash[2..4], hash });
+        defer allocator.free(object_path);
+        const object = std.Io.Dir.cwd().openFile(io, object_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => return null,
+            else => return err,
+        };
+        defer object.close(io);
+        const info = try object.stat(io);
+        if (info.kind != .file or entry.size_bytes == null or info.size != entry.size_bytes.?) return error.CorruptObject;
+        const payload = try allocator.alloc(u8, std.math.cast(usize, info.size) orelse return error.CorruptObject);
+        const view = memory.Owner.allocated(allocator, payload) catch |err| {
+            allocator.free(payload);
+            return err;
+        };
+        defer view.release();
+        if (try object.readPositionalAll(io, payload, 0) != payload.len) return error.CorruptObject;
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
+        const actual = std.fmt.bytesToHex(digest, .lower);
+        if (entry.size_bytes == null or payload.len != entry.size_bytes.? or !std.mem.eql(u8, &actual, hash)) return error.CorruptObject;
+        try dispatch.inspect(allocator, io, entry.path, view, actual);
+        counts.reused += 1;
+    }
+    return counts;
+}
+
 fn validatePath(name: []const u8) !void {
     if (!std.unicode.utf8ValidateSlice(name)) return error.InvalidIsoPath;
     for (name) |ch| if (ch < 32 or ch == '\\' or ch == ':') return error.InvalidIsoPath;
@@ -261,7 +317,7 @@ fn validatePath(name: []const u8) !void {
 
 /// Open and map one image read-only; optional outputs go only to the store.
 /// V1 targets POSIX: direct mmap avoids an implicit whole-file heap fallback.
-pub fn processFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, store: ?[]const u8, catalog: ?[]const u8, dispatch: ?*Dispatch) !?Result {
+pub fn processFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, store: ?[]const u8, catalog: ?@import("catalog.zig").Cache, dispatch: ?*Dispatch) !?Result {
     const file = try std.Io.Dir.cwd().openFile(io, path, .{
         .mode = .read_only,
         .follow_symlinks = false,

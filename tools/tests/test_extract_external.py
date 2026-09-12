@@ -23,7 +23,7 @@ class ExtractionTests(unittest.TestCase):
             with patch('tools.extract_external.subprocess.run', side_effect=run):
                 record = extract(source, output, tool)
             self.assertEqual((output / 'module.prx').read_bytes(), b'decoded')
-            self.assertEqual(record, {'name': 'pspdecrypt',
+            self.assertEqual(record, {'name': 'pspdecrypt', 'version': '1',
                 'sha256': hashlib.sha256(tool.read_bytes()).hexdigest(),
                 'options': ['-O', '<output>', '<source>']})
 
@@ -97,3 +97,22 @@ class ExtractionTests(unittest.TestCase):
                 with patch('tools.extract_external.subprocess.run', return_value=result):
                     with self.assertRaisesRegex(ValueError, 'KL decompression failed'):
                         extract_kle(source, output, Path(sys.executable))
+
+
+class ProvenanceTests(unittest.TestCase):
+    def test_revision_and_configuration_changes_are_visible(self):
+        from tools import extract_external as adapter
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tool = root / 'tool'; tool.write_bytes(b'executable one')
+            data = root / 'data'; data.mkdir()
+            config = data / 'rco.ini'; config.write_text('old config')
+            original = adapter.tool_provenance('rco', tool, data)
+            config.write_text('new config')
+            changed = adapter.tool_provenance('rco', tool, data)
+            self.assertNotEqual(original['options'], changed['options'])
+            self.assertEqual(original['sha256'], changed['sha256'])
+            tool.write_bytes(b'executable two')
+            self.assertNotEqual(changed['sha256'], adapter.tool_provenance('rco', tool, data)['sha256'])
+            with patch.object(adapter, 'VERSIONS', dict(adapter.versions(), rco='2')):
+                self.assertEqual(adapter.tool_provenance('rco', tool, data)['version'], '2')

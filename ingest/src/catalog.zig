@@ -1,9 +1,13 @@
 const std = @import("std");
 const processor = @import("processor.zig");
 
-/// Validate the catalog identity only; an existing record skips file/store work.
-pub fn contains(allocator: std.mem.Allocator, io: std.Io, root: []const u8, digest: [64]u8, size: u64) !bool {
-    const path = try std.fmt.allocPrint(allocator, "{s}/iso/{s}.json", .{ root, digest });
+pub const revisions = @import("extractor_versions");
+pub const State = @import("catalog_state.zig").State;
+pub const Cache = struct { root: []const u8, state: *const State };
+
+/// Only skip roots whose own result and reachable derived results are current.
+pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: [64]u8, size: u64) !bool {
+    const path = try std.fmt.allocPrint(allocator, "{s}/iso/v{s}/{s}-ingest.json", .{ cache.root, revisions.iso, digest });
     defer allocator.free(path);
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited) catch |err| switch (err) {
         error.FileNotFound => return false,
@@ -16,19 +20,7 @@ pub fn contains(allocator: std.mem.Allocator, io: std.Io, root: []const u8, dige
     const record = parsed.value;
     if (!std.mem.eql(u8, record.kind, "iso") or record.schema_version != 1 or
         !std.mem.eql(u8, record.sha256, &digest) or record.size_bytes != size) return error.CatalogConflict;
-    // A metadata record alone must not suppress rebuilding a missing inventory.
-    const tree_path = try std.fmt.allocPrint(allocator, "{s}/trees/{s}.json", .{ root, digest });
-    defer allocator.free(tree_path);
-    const tree_bytes = std.Io.Dir.cwd().readFileAlloc(io, tree_path, allocator, .unlimited) catch |err| switch (err) {
-        error.FileNotFound => return false,
-        else => return err,
-    };
-    defer allocator.free(tree_bytes);
-    const tree = std.json.parseFromSlice(Identity, allocator, tree_bytes, .{ .ignore_unknown_fields = true }) catch return error.CatalogConflict;
-    defer tree.deinit();
-    if (!std.mem.eql(u8, tree.value.kind, "tree") or tree.value.schema_version != 1 or
-        !std.mem.eql(u8, tree.value.sha256, &digest) or tree.value.size_bytes != size) return error.CatalogConflict;
-    return true;
+    return cache.state.fresh_isos.map.contains(&digest);
 }
 
 /// One complete inventory per exact ISO. Neither the UID nor an inventory hash
@@ -55,20 +47,19 @@ pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
     const tree = .{
         .kind = "tree",
         .schema_version = @as(u32, 1),
-        .sha256 = @as([]const u8, &result.sha256),
-        .size_bytes = result.size_bytes,
-        .extractor = .{ .name = "pspdb-ingest", .version = "iso-1", .options = [0][]const u8{} },
+        .sha256 = record.sha256,
+        .size_bytes = record.size_bytes,
+        .extractor = .{ .name = "pspdb-ingest", .version = revisions.iso, .options = [0][]const u8{} },
         .entries = result.entries,
     };
-    // Publish the inventory before its metadata record makes it discoverable.
-    try writeRecord(allocator, io, root, "trees", &result.sha256, tree);
-    try writeRecord(allocator, io, root, "iso", &result.sha256, record);
+    try writeRecord(allocator, io, root, "iso", revisions.iso, &result.sha256, "tree", tree);
+    try writeRecord(allocator, io, root, "iso", revisions.iso, &result.sha256, "ingest", record);
 }
 
-fn writeRecord(allocator: std.mem.Allocator, io: std.Io, root: []const u8, directory: []const u8, digest: []const u8, record: anytype) !void {
+fn writeRecord(allocator: std.mem.Allocator, io: std.Io, root: []const u8, directory: []const u8, version: []const u8, digest: []const u8, suffix: []const u8, record: anytype) !void {
     const json = try std.json.Stringify.valueAlloc(allocator, record, .{ .whitespace = .indent_2, .emit_null_optional_fields = false });
     defer allocator.free(json);
-    const path = try std.fmt.allocPrint(allocator, "{s}/{s}/{s}.json", .{ root, directory, digest });
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-{s}.json", .{ root, directory, version, digest, suffix });
     defer allocator.free(path);
     var output = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .make_path = true });
     defer output.deinit(io);
@@ -128,8 +119,8 @@ pub fn publishExtraction(allocator: std.mem.Allocator, io: std.Io, root: []const
         .name_rule = name_rule,
         .entries = entries,
     };
-    try writeRecord(allocator, io, root, "trees", &hash, tree);
-    try writeRecord(allocator, io, root, kind, &hash, .{
+    try writeRecord(allocator, io, root, kind, provenance.version.?, &hash, "tree", tree);
+    try writeRecord(allocator, io, root, kind, provenance.version.?, &hash, "ingest", .{
         .kind = kind,
         .schema_version = @as(u32, 1),
         .sha256 = @as([]const u8, &hash),

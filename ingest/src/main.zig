@@ -57,7 +57,7 @@ pub fn main(init: std.process.Init) !u8 {
         return 2;
     };
     if (options.help) {
-        std.debug.print("Usage: pspdb-ingest FOLDER [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.zip contents; ZIP ISO members decompressed in memory. Requires root UMD_DATA.BIN. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes one inventory per ISO SHA-256. --skip-existing skips known ISO hashes (requires --catalog; off by default).\nPSAR/RCO/PRX/SCE/PBP/gzip files are processed automatically when --store and --catalog are set; external adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
+        std.debug.print("Usage: pspdb-ingest FOLDER [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.zip contents; ZIP ISO members decompressed in memory. Requires root UMD_DATA.BIN. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO results and checks nested extractor provenance (requires --catalog; off by default).\nPSAR/RCO/PRX/SCE/PBP/gzip files are processed automatically when --store and --catalog are set; external adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
         return 0;
     }
 
@@ -77,9 +77,13 @@ pub fn main(init: std.process.Init) !u8 {
         try std.Io.Dir.cwd().createDirPath(io, path);
         break :blk try std.Io.Dir.cwd().realPathFileAlloc(io, path, init.arena.allocator());
     } else null;
+    const freshness = if (options.skip_existing) try @import("catalog_state.zig").load(init.gpa, io, catalog.?) else null;
+    defer if (freshness) |state| state.deinit();
+    const state = if (freshness) |*value| &value.value else null;
     const extractor_adapter: ?@import("extractor.zig").Adapter = if (store != null and catalog != null) .{
         .store = store.?,
         .catalog = catalog.?,
+        .state = state,
     } else null;
     const live = options.progress and options.threads > 1 and (std.Io.File.stderr().isTty(io) catch false);
     const root = if (live) std.Progress.start(io, .{
@@ -90,7 +94,7 @@ pub fn main(init: std.process.Init) !u8 {
     ingest.log(io, "Ingesting: {s} (thread cap {d}, ingest workers {d}, progress task {d})\n", .{
         options.folder.?, options.threads, worker_count, @as(usize, if (live) 1 else 0),
     });
-    const stats = ingest.run(init.gpa, io, options.folder.?, worker_count, root, store, catalog, options.skip_existing, extractor_adapter) catch |err| {
+    const stats = ingest.run(init.gpa, io, options.folder.?, worker_count, root, store, catalog, options.skip_existing, extractor_adapter, state) catch |err| {
         root.end();
         std.debug.print("pspdb-ingest: {s}\n", .{@errorName(err)});
         return 1;

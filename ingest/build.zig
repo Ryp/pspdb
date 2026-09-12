@@ -12,6 +12,20 @@ pub fn build(b: *std.Build) void {
 
     module.addAnonymousImport("extractor_adapter", .{ .root_source_file = b.path("../tools/extract_external.py") });
 
+    module.addAnonymousImport("catalog_status", .{ .root_source_file = b.path("../tools/catalog_status.py") });
+    module.addAnonymousImport("extractor_versions_json", .{ .root_source_file = b.path("../tools/extractor_versions.json") });
+    const revisions = b.addOptions();
+    const revision_bytes = std.Io.Dir.cwd().readFileAlloc(b.graph.io, b.pathFromRoot("../tools/extractor_versions.json"), b.allocator, .unlimited) catch @panic("Cannot read extractor revisions");
+    const parsed = std.json.parseFromSlice(std.json.Value, b.allocator, revision_bytes, .{}) catch @panic("Invalid extractor revisions");
+    var it = parsed.value.object.iterator();
+    while (it.next()) |entry| {
+        const revision = entry.value_ptr.string;
+        const number = std.fmt.parseInt(u32, revision, 10) catch @panic("Extractor revisions must be positive integers");
+        if (number == 0 or revision[0] == '0') @panic("Extractor revisions must be canonical positive integers");
+        revisions.addOption([]const u8, entry.key_ptr.*, revision);
+    }
+    module.addOptions("extractor_versions", revisions);
+
     const archive = b.addTranslateC(.{
         .root_source_file = b.path("src/archive.h"),
         .target = target,

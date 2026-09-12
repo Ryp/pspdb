@@ -75,6 +75,7 @@ const Pool = struct {
     store: ?[]const u8,
     catalog: ?[]const u8,
     skip_existing: bool,
+    state: ?*const @import("catalog_state.zig").State = null,
     extractor_adapter: ?processor.extractor.Adapter,
     mutex: std.Io.Mutex = .init,
     changed: std.Io.Condition = .init,
@@ -256,6 +257,11 @@ const Pool = struct {
         }
     }
 
+    fn skipCache(self: *const Pool) ?@import("catalog.zig").Cache {
+        if (!self.skip_existing) return null;
+        return .{ .root = self.catalog.?, .state = self.state.? };
+    }
+
     fn process(self: *Pool, job: Job) !void {
         const progress = self.iso_progress.start(std.Io.Dir.path.basename(job.path), 0);
         defer progress.end();
@@ -264,7 +270,7 @@ const Pool = struct {
         group.result = (if (job.member) |member|
             self.processZipMember(member, dispatch)
         else
-            processor.processFile(self.allocator, self.io, job.path, self.store, if (self.skip_existing) self.catalog else null, dispatch)) catch |err| {
+            processor.processFile(self.allocator, self.io, job.path, self.store, self.skipCache(), dispatch)) catch |err| {
             self.complete(group, .{}, err);
             return;
         };
@@ -318,7 +324,7 @@ const Pool = struct {
             return err;
         };
         defer input.release();
-        return processor.processIsoChecked(self.allocator, self.io, input.bytes, self.store, if (self.skip_existing) self.catalog else null, dispatch);
+        return processor.processIsoChecked(self.allocator, self.io, input.bytes, self.store, self.skipCache(), dispatch);
     }
 
     fn extract(self: *Pool, extraction: Extraction) void {
@@ -388,7 +394,7 @@ pub fn log(io: std.Io, comptime format: []const u8, args: anytype) void {
     stderr.file_writer.interface.flush() catch {};
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, folder: []const u8, worker_count: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, extractor_adapter: ?processor.extractor.Adapter) !Stats {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, folder: []const u8, worker_count: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, extractor_adapter: ?processor.extractor.Adapter, state: ?*const @import("catalog_state.zig").State) !Stats {
     std.debug.assert(worker_count >= 1);
     var pool: Pool = .{
         .allocator = allocator,
@@ -396,6 +402,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folder: []const u8, worker_
         .store = store,
         .catalog = catalog,
         .skip_existing = skip_existing,
+        .state = state,
         .extractor_adapter = extractor_adapter,
         .scan_progress = root.start("Scanning directories", 0),
         .iso_progress = root.start("ISO intake", 0),

@@ -36,6 +36,22 @@ def iso_bytes(umd=GAME_UMD, nested=False):
 
 REPO = Path(__file__).resolve().parents[2]
 BINARY = REPO / "ingest/zig-out/bin/pspdb-ingest"
+VERSIONS = json.loads((REPO / 'tools/extractor_versions.json').read_text())
+
+
+def result_path(catalog, kind, digest):
+    return catalog / kind / ('v' + VERSIONS[kind]) / (digest + '-ingest.json')
+
+
+def tree_path(catalog, digest):
+    paths = [result_path(catalog, kind, digest).with_name(digest + '-tree.json') for kind in VERSIONS]
+    return next(path for path in paths if path.exists())
+
+
+def source_hash(path):
+    return path.name.removesuffix('-ingest.json')
+
+
 SUMMARY = re.compile(
     r"Summary: (\d+) directories scanned, (\d+) files ignored, "
     r"(\d+) symlinks skipped, (\d+) input candidates, (\d+) accepted, "
@@ -284,7 +300,7 @@ class IngestCliTests(unittest.TestCase):
                 for record in records:
                     self.assertEqual(record['sha256'], hashlib.sha256(image).hexdigest())
                     self.assertNotIn('entries', record)
-                    saved = json.loads((catalog / 'trees' / (record['sha256'] + '.json')).read_text())
+                    saved = json.loads(tree_path(catalog, record['sha256']).read_text())
                     self.assertEqual(record['entry_count'], len(saved['entries']))
                     entries = {entry['path']: entry for entry in saved['entries']}
                     self.assertEqual(entries['EMPTY'], {'path': 'EMPTY', 'type': 'directory'})
@@ -379,14 +395,14 @@ class IngestCliTests(unittest.TestCase):
                         self.assertIn('InvalidSfo', output)
                         continue
                     self.assertEqual(code, 0, output)
-                    record = json.loads(next((catalog / 'iso').glob('*.json')).read_text())
+                    record = json.loads(next((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json')).read_text())
                     self.assertEqual(record['metadata'].get('title'), title)
                     self.assertEqual(record['metadata']['umd_uid'], '8D53CBDF6A4FC495')
                     self.assertEqual(record['sha256'], hashlib.sha256(image).hexdigest())
                     self.assertEqual(record['sha1'], hashlib.sha1(image).hexdigest())
                     for folder, data in [('PSP_GAME', game), ('UMD_VIDEO', video)]:
                         if data is None: continue
-                        tree = json.loads((catalog / 'trees' / (record['sha256'] + '.json')).read_text())
+                        tree = json.loads(tree_path(catalog, record['sha256']).read_text())
                         entry = next(e for e in tree['entries'] if e['path'] == folder + '/PARAM.SFO')
                         digest = hashlib.sha256(data).hexdigest()
                         self.assertEqual(entry['sha256'], digest)
@@ -421,10 +437,10 @@ class IngestCliTests(unittest.TestCase):
             args = ('--catalog', str(catalog), '--store', str(store), '--threads', '4', '--no-progress')
             code, output = self.run_cli(root, *args)
             self.assertEqual(code, 0, output)
-            files = sorted((catalog / 'iso').glob('*.json'))
-            self.assertEqual({p.stem for p in files}, {hashlib.sha256(image).hexdigest(), hashlib.sha256(padded).hexdigest()})
+            files = sorted((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json'))
+            self.assertEqual({source_hash(p) for p in files}, {hashlib.sha256(image).hexdigest(), hashlib.sha256(padded).hexdigest()})
             records = [json.loads(p.read_text()) for p in files]
-            trees = [json.loads((catalog / 'trees' / p.name).read_text()) for p in files]
+            trees = [json.loads(tree_path(catalog, source_hash(p)).read_text()) for p in files]
             self.assertEqual(trees[0]['entries'], trees[1]['entries'])
             self.assertNotEqual(trees[0]['sha256'], trees[1]['sha256'])
             tree_validator = Draft202012Validator(json.loads((REPO / 'schemas/tree.schema.json').read_text()))
@@ -467,8 +483,8 @@ class IngestCliTests(unittest.TestCase):
             self.assertEqual(self.records(output), [])
             self.assertFalse((store / 'sha256').exists())
             self.assertEqual(snapshot(catalog), before)
-            # Missing inventories are rebuilt even with --skip-existing enabled.
-            missing_tree = catalog / 'trees' / files[0].name
+            # Missing trees are rebuilt even with --skip-existing enabled.
+            missing_tree = tree_path(catalog, source_hash(files[0]))
             expected_tree = json.loads(missing_tree.read_text())
             missing_tree.unlink()
             code, output = self.run_cli(root, *args, '--skip-existing')
@@ -509,8 +525,8 @@ class IngestCliTests(unittest.TestCase):
                 code, output = self.run_cli(root, *args)
             self.assertEqual(code, 0, output)
             h = hashlib.sha256(payload).hexdigest()
-            self.assertEqual([p.stem for p in (catalog / 'psar').glob('*.json')], [h])
-            tree = json.loads((catalog / 'trees' / (h + '.json')).read_text())
+            self.assertEqual([source_hash(p) for p in (catalog / 'psar' / ('v' + VERSIONS['psar'])).glob('*-ingest.json')], [h])
+            tree = json.loads(tree_path(catalog, h).read_text())
             entry = next(e for e in tree['entries'] if e['type'] == 'file')
             self.assertEqual(entry['path'], 'F0/module.prx')
             self.assertEqual(entry['sha256'], hashlib.sha256(b'decoded').hexdigest())
@@ -526,7 +542,7 @@ class IngestCliTests(unittest.TestCase):
             self.assertIn('ExtractionFailed', output)
             self.assertIn('error decoding', output)
             self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
-            self.assertEqual(json.loads((catalog / 'trees' / (h + '.json')).read_text()), tree)
+            self.assertEqual(json.loads(tree_path(catalog, h).read_text()), tree)
 
     def test_nested_psar_trees_are_walked_and_cycles_stop(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -553,12 +569,12 @@ class IngestCliTests(unittest.TestCase):
             self.assertEqual(code, 0, output)
             self.assertEqual(output.count('psar '), 2)
             self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
-            self.assertEqual({p.stem for p in (catalog / 'psar').glob('*.json')}, {parent_hash, child_hash})
+            self.assertEqual({source_hash(p) for p in (catalog / 'psar' / ('v' + VERSIONS['psar'])).glob('*-ingest.json')}, {parent_hash, child_hash})
             for h in (parent_hash, child_hash):
-                tree = json.loads((catalog / 'trees' / (h + '.json')).read_text())
+                tree = json.loads(tree_path(catalog, h).read_text())
                 self.assertEqual(next(e['sha256'] for e in tree['entries'] if e['path'] == 'F0/child.dat'), child_hash)
-            iso_record = json.loads(next((catalog / 'iso').glob('*.json')).read_text())
-            iso_tree = json.loads((catalog / 'trees' / (iso_record['sha256'] + '.json')).read_text())
+            iso_record = json.loads(next((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json')).read_text())
+            iso_tree = json.loads(tree_path(catalog, iso_record['sha256']).read_text())
             self.assertEqual({e['path'] for e in iso_tree['entries']}, {'UMD_DATA.BIN', 'UPDATE.DAT'})
             # A failure while Zig walks a child must also clean both temp trees.
             (Path(tmp) / 'outputs').unlink()
@@ -618,8 +634,8 @@ echo Done!
                     '--store', str(root / 'store'), '--threads', '4', '--no-progress')
             self.assertEqual(code, 0, output)
             self.assertEqual({p.name for p in markers.iterdir()}, hashes)
-            self.assertEqual(len(list((catalog / 'iso').glob('*.json'))), 2)
-            self.assertEqual({p.stem for p in (catalog / 'psar').glob('*.json')}, hashes)
+            self.assertEqual(len(list((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json'))), 2)
+            self.assertEqual({source_hash(p) for p in (catalog / 'psar' / ('v' + VERSIONS['psar'])).glob('*-ingest.json')}, hashes)
             self.assertEqual(len(self.records(output)), 2)
             self.assertTrue(all(not Path(p).exists() for p in (root / 'outputs').read_text().splitlines()))
 
@@ -639,8 +655,8 @@ echo Done!
                 code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
             self.assertEqual(code, 0, output)
             h = hashlib.sha256(payload).hexdigest()
-            self.assertTrue((root / 'catalog/rco' / (h + '.json')).exists())
-            tree = json.loads((root / 'catalog/trees' / (h + '.json')).read_text())
+            self.assertTrue(result_path(root / 'catalog', 'rco', h).exists())
+            tree = json.loads(tree_path(root / 'catalog', h).read_text())
             self.assertEqual({e['path'] for e in tree['entries']}, {'resources', 'resources/icon.gim', 'structure.xml'})
             self.assertEqual(tree['extractor']['name'], 'rcomage')
 
@@ -665,8 +681,8 @@ echo Done!
             self.assertEqual(code, 0, output)
             for kind, source, name, child in [('pbp', pbp, 'DATA.PSP', sce), ('sce', sce, 'payload.psp', prx), ('prx', prx, 'module.prx.gz', compressed), ('gzip', compressed, 'module.prx', elf)]:
                 h = hashlib.sha256(source).hexdigest()
-                self.assertTrue((root / 'catalog' / kind / (h + '.json')).exists())
-                tree = json.loads((root / 'catalog/trees' / (h + '.json')).read_text())
+                self.assertTrue(result_path(root / 'catalog', kind, h).exists())
+                tree = json.loads(tree_path(root / 'catalog', h).read_text())
                 self.assertEqual(tree['entries'], [{'path': name, 'type': 'file', 'size_bytes': len(child), 'sha256': hashlib.sha256(child).hexdigest()}])
                 self.assertEqual(tree.get('name_rule'), {'prx': 'source_stem', 'sce': 'source_stem', 'gzip': 'strip_suffix'}.get(kind))
             # Reject malformed section tables before invoking a child extractor.
@@ -703,11 +719,81 @@ echo Done!
             self.assertEqual(code, 0, output)
             for kind, source, name, child in [('elf', elf, 'embedded-80.psp', wrapper), ('prx', wrapper, 'module.bin.kl3e', decoded), ('kl3e', decoded, 'payload.bin', b'reboot')]:
                 h = hashlib.sha256(source).hexdigest()
-                self.assertTrue((root / 'catalog' / kind / (h + '.json')).exists())
-                tree = json.loads((root / 'catalog/trees' / (h + '.json')).read_text())
+                self.assertTrue(result_path(root / 'catalog', kind, h).exists())
+                tree = json.loads(tree_path(root / 'catalog', h).read_text())
                 self.assertEqual(tree['entries'], [{'path': name, 'type': 'file', 'size_bytes': len(child), 'sha256': hashlib.sha256(child).hexdigest()}])
                 child_hash = hashlib.sha256(child).hexdigest()
                 self.assertEqual((root / 'store/sha256' / child_hash[:2] / child_hash[2:4] / child_hash).read_bytes(), child)
+
+    def test_revision_namespaces_and_nested_reuse(self):
+        import gzip
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+            catalog, store = root / 'catalog', root / 'store'
+            parent = b'PSARrevision-test'
+            child = gzip.compress(b'decoded resource', mtime=0)
+            compressed = root / 'child.gz'; compressed.write_bytes(child)
+            calls = root / 'calls'
+            tool = root / 'pspdecrypt'
+            tool.write_text('#!/bin/sh\necho called >> "$PSPDB_CALLS"\ncp "$PSPDB_CHILD" "$2/child.gz"\necho "Done!"\n')
+            tool.chmod(0o755)
+            iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
+            for name, data in [('UMD_DATA.BIN', GAME_UMD), ('UPDATE.DAT', parent)]:
+                iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
+            iso.write(str(inputs / 'sample.iso')); iso.close()
+            iso_hash = hashlib.sha256((inputs / 'sample.iso').read_bytes()).hexdigest()
+            child_hash = hashlib.sha256(child).hexdigest()
+            args = ['--catalog', str(catalog), '--store', str(store), '--threads', '1', '--no-progress', '--skip-existing']
+            env = {'PSPDECRYPT': str(tool), 'PSPDB_CHILD': str(compressed), 'PSPDB_CALLS': str(calls)}
+            with patch.dict(os.environ, env):
+                code, output = self.run_cli(inputs, *args)
+                self.assertEqual(code, 0, output)
+                old = {key: value for key, value in snapshot(catalog).items() if value[3] is not None}
+                checkout = root / 'build'
+                shutil.copytree(REPO / 'ingest/src', checkout / 'ingest/src')
+                for name in ('build.zig', 'build.zig.zon'):
+                    shutil.copyfile(REPO / 'ingest' / name, checkout / 'ingest' / name)
+                (checkout / 'tools').mkdir()
+                for name in ('extract_external.py', 'extractor_versions.json', 'catalog_status.py'):
+                    shutil.copyfile(REPO / 'tools' / name, checkout / 'tools' / name)
+                revisions = dict(VERSIONS)
+                def rebuild():
+                    (checkout / 'tools/extractor_versions.json').write_text(json.dumps(revisions))
+                    subprocess.run(['zig', 'build', '-Doptimize=ReleaseSafe'], cwd=checkout / 'ingest', check=True, timeout=180)
+                    result = subprocess.run([str(checkout / 'ingest/zig-out/bin/pspdb-ingest'), str(inputs), *args], capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    return result.stdout + result.stderr
+                # ISO and PSAR are current: a stale gzip descendant still prevents skipping.
+                revisions['gzip'] = str(int(revisions['gzip']) + 1)
+                output = rebuild()
+                self.assertIn('Already cataloged: 0 ISO images skipped.', output)
+                self.assertTrue((catalog / 'gzip' / ('v' + revisions['gzip']) / (child_hash + '-tree.json')).exists())
+                self.assertEqual(calls.read_text().splitlines(), ['called'])
+                self.assertTrue(all(snapshot(catalog)[key] == value for key, value in old.items()))
+                # An ISO bump writes a fresh adjacent pair and retains the previous pair.
+                revisions['iso'] = str(int(revisions['iso']) + 1)
+                rebuild()
+                self.assertTrue((catalog / 'iso' / ('v' + revisions['iso']) / (iso_hash + '-ingest.json')).exists())
+                self.assertTrue((catalog / 'iso' / ('v' + revisions['iso']) / (iso_hash + '-tree.json')).exists())
+                self.assertEqual(calls.read_text().splitlines(), ['called'])
+                self.assertTrue(all(snapshot(catalog)[key] == value for key, value in old.items()))
+                output = rebuild()
+                self.assertIn('Already cataloged: 1 ISO images skipped.', output)
+                # A missing stored child forces its current parent extractor to run again.
+                child_object = store / 'sha256' / child_hash[:2] / child_hash[2:4] / child_hash
+                child_object.unlink()
+                (catalog / 'gzip' / ('v' + revisions['gzip']) / (child_hash + '-tree.json')).unlink()
+                rebuild()
+                self.assertEqual(child_object.read_bytes(), child)
+                self.assertEqual(calls.read_text().splitlines(), ['called', 'called'])
+                # A changed executable cannot silently overwrite its current revision.
+                tool.write_text(tool.read_text() + '# changed executable\n')
+                before = snapshot(catalog)
+                result = subprocess.run([str(checkout / 'ingest/zig-out/bin/pspdb-ingest'), str(inputs), *args], capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn('CatalogConflict', result.stdout + result.stderr)
+                self.assertEqual(snapshot(catalog), before)
 
     def test_empty_folder_and_missing_root(self):
         with tempfile.TemporaryDirectory() as tmp:
