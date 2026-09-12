@@ -155,7 +155,7 @@ def prx_payload_name(payload_header, psp_header):
         if not attributes & 1:
             extension = '.bin'
         return 'module' + extension + compression
-    return payload_name(payload_header)
+    return decoded_payload_name(payload_header)
 
 
 def extract_prx(source, output, tool):

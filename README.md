@@ -227,6 +227,25 @@ Install `pspdecrypt` and the patched `rcomage` on PATH (overrides: `PSPDECRYPT`,
 `tools/patches/rcomage-lzr-linux.patch`.
 Python adapters run through uv and are embedded in the ingest binary.
 
+The main decrypter needs the standard update PRX recipe for tag `2E5E10F0`.
+Build the pinned source with the repository patch (requires Git, Make, a C/C++
+compiler, zlib and OpenSSL development headers):
+
+```sh
+uv run --locked python tools/build_pspdecrypt.py \
+  --pspdecrypt-source /path/to/pspdecrypt \
+  --output .work/pspdecrypt
+export PSPDECRYPT="$PWD/.work/pspdecrypt"
+```
+
+The source checkout must contain commit
+`c156627db7634d395c380c0a9589130f603307fc`; local modifications are not used or
+changed. Nothing is installed globally. The patch reuses the
+[published type-5 XOR recipe](https://github.com/hrydgard/ppsspp/blob/35d69dd4a11632ab6633b2fada84d393541e6131/Core/ELF/PrxDecrypter.cpp#L477),
+preserving the decoder's header and ciphertext integrity checks. It requires no
+title-specific key or sibling PBP section. PRX revision 2 records this recipe and
+format-based ELF naming; PSAR revision 2 tracks the shared decrypter change.
+
 PRX decryption preserves its decrypted payload; gzip payloads recurse to ELF.
 KL3E/KL4E streams similarly retain their compressed bytes and get a decoded child.
 ELF files containing bounded `~PSP` wrappers expose them as `embedded-<offset>.psp`

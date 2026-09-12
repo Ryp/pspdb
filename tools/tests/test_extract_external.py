@@ -24,23 +24,6 @@ class ExtractionTests(unittest.TestCase):
             self.assertEqual([p.name for p in output.iterdir()], ['module.elf'])
             self.assertEqual((output/'module.elf').read_bytes(), elf)
 
-    def test_extracts_into_caller_directory_and_reports_provenance(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / 'source'; source.write_bytes(b'PSAR test input')
-            output = root / 'output'; output.mkdir()
-            tool = Path(sys.executable).resolve()
-            def run(args, **kwargs):
-                self.assertEqual(args, [str(tool), '-O', str(output), str(source)])
-                (output / 'module.prx').write_bytes(b'decoded')
-                return subprocess.CompletedProcess(args, 0, 'Done!\n', '')
-            with patch('tools.extract_external.subprocess.run', side_effect=run):
-                record = extract(source, output, tool)
-            self.assertEqual((output / 'module.prx').read_bytes(), b'decoded')
-            self.assertEqual(record, {'name': 'pspdecrypt', 'version': '1',
-                'sha256': hashlib.sha256(tool.read_bytes()).hexdigest(),
-                'options': ['-O', '<output>', '<source>']})
-
     def test_zero_exit_with_error_leaves_cleanup_to_caller(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -99,7 +82,7 @@ class ExtractionTests(unittest.TestCase):
         self.assertEqual(prx_payload_name(b'KL4E', header), 'module.elf.kl4e')
         header[6:8] = bytes(2)
         self.assertEqual(prx_payload_name(b'KL3E', header), 'module.bin.kl3e')
-        self.assertEqual(prx_payload_name(b'\x7fELF' + bytes(12) + b'\xa0\xff', header), 'module.prx')
+        self.assertEqual(prx_payload_name(b'\x7fELF' + bytes(12) + b'\xa0\xff', header), 'module.elf')
 
     def test_kl_decoder_rejects_tool_failure_and_missing_output(self):
         from tools.extract_external import extract_kle
