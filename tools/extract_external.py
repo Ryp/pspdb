@@ -126,22 +126,14 @@ def extract_rco(source, output, tool, data):
     return provenance
 
 
-def payload_name(header):
-    if header.startswith(b'\x7fELF'):
-        if len(header) >= 18 and int.from_bytes(header[16:18], 'little') in (0xffa0, 0xffa1):
-            return 'module.prx'
-        return 'module.elf'
-    if header.startswith(b'\x1f\x8b\x08'):
-        return 'payload.gz'
-    return 'payload.bin'
-
-
 def decoded_payload_name(header):
     # Name decoded objects by byte format. PRX is an ELF module subtype,
     # not another encoding to unwrap after ELF has been recovered.
     if header.startswith(b'\x7fELF'):
         return 'module.elf'
-    return payload_name(header)
+    if header.startswith(b'\x1f\x8b\x08'):
+        return 'payload.gz'
+    return 'payload.bin'
 
 
 def prx_payload_name(payload_header, psp_header):
@@ -213,7 +205,7 @@ def extract_kle(source, output, tool):
     if result.returncode or 'Decompression successful' not in log or not target.is_file() or not target.stat().st_size:
         raise ValueError(f'KL decompression failed:\n{log}')
     with target.open('rb') as stream:
-        name = payload_name(stream.read(20))
+        name = decoded_payload_name(stream.read(20))
     target.rename(output / name)
     with source.open('rb') as stream:
         kind = 'kl3e' if stream.read(4) == b'KL3E' else 'kl4e'

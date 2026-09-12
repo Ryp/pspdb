@@ -288,9 +288,9 @@ the catalog attaches decoded output specifically beneath `DATA.PSP`. The file
 hash and download remain those of the original section. This contextual subtree
 is stored in the PBP result, with helper provenance and normal decoded-file
 hashes; it does not create a global standalone PRX result or a generated report.
-Decoded ELF payloads use `.elf`, including PSP PRX modules. Gzip trees use the
-`decoded_suffix` naming rule to retain that detected format in display names and
-download filenames, without duplicating existing `.elf` suffixes.
+Decoded ELF payloads use `.elf`, including PSP PRX modules. Gzip and KL3E/KL4E
+trees use `decoded_suffix` to retain that format in display and download names,
+without duplicating existing `.elf` suffixes. KL3E/KL4E revision 2 records this naming.
 
 PSN package labels use `XXXX-12345 Title`, with the serial styled like UMD IDs; collisions receive a short SHA-256
 suffix that expands as needed. Full content IDs remain searchable. Hash-based
