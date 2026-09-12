@@ -1,0 +1,25 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "36b3df7fc009a27f3a132d3dc7f2aa22820ae7778b6d12d1e1e9231df0405e3e",
+  "size_bytes": 2045936,
+  "extractor": {
+    "name": "pspdecrypt",
+    "sha256": "5511936205cdb38f05165964c34b12be8797075644537ed0c4d74ad865d71a2d",
+    "version": "1",
+    "options": [
+      "-o",
+      "<output>",
+      "<source>"
+    ]
+  },
+  "name_rule": "source_stem",
+  "entries": [
+    {
+      "path": "module.prx",
+      "type": "file",
+      "size_bytes": 2045596,
+      "sha256": "41cac107237918d0fc2e10331101673c4b7cbea2f3931bfa896aa3596bac1e8b"
+    }
+  ]
+}

@@ -28,7 +28,7 @@ catalog/iso/v1/<source-sha256>-ingest.json
 catalog/iso/v1/<source-sha256>-tree.json
 ```
 
-Include the new nested extractor pairs too, such as `prx/v2/` and `gzip/v2/`.
+Include the new nested extractor pairs too, such as `prx/v1/` and `gzip/v1/`.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same
 revision, report the discrepancy instead of replacing it. Tool executable hashes
@@ -66,7 +66,8 @@ selects the newest complete pair for each source.
 
 The initial tracked catalog contains the previously published 47-ISO snapshot:
 1,084 metadata/tree pairs. Its metadata, inventories, executable hashes, and
-options were preserved when moving to versioned adjacent pairs. Legacy revision
-labels such as `iso-1` and `prx-2` became `1` and `2`; previously unnumbered PSAR
-and RCO adapters form their revision-1 baseline. This was a layout/provenance-label
-migration, not a new extraction run.
+options were preserved when moving to versioned adjacent pairs. All extractors
+start at revision 1 in this tracked baseline, including PRX and gzip, which had
+higher internal revision labels before the reset. This was a layout/provenance-label
+migration, not a new extraction run. Future extractor changes increment from this
+baseline and retain previous results.
