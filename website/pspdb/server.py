@@ -59,6 +59,8 @@ def catalog_data(catalog, redump=None, umdatabase=None):
                 if matches:
                     record['umdatabase'] = matches
         records.setdefault(kind, []).append(record)
+    from .redump import load_psx_matches, annotate_file_matches
+    annotate_file_matches(trees, load_psx_matches())
     return {'records': records, 'trees': trees}
 
 
@@ -85,17 +87,17 @@ def open_object(store, digest, size):
 
 def download_index(data):
     index = {}
-    def add(digest, size, name, ancestors=frozenset()):
+    def add(digest, size, name, ancestors=frozenset(), contextual=None):
         if not re.fullmatch(r"[0-9a-f]{64}", digest) or not name or any(ord(c) < 32 or c in '/\\' for c in name):
             return
         if digest in index and index[digest][0] != size:
             raise ValueError("Conflicting sizes for catalog hash")
         names = index.setdefault(digest, (size, set()))[1]
-        if name in names:
+        if name in names and contextual is None:
             return
         names.add(name)
-        tree = data['trees'].get(digest)
-        if not tree or tree['size_bytes'] != size or digest in ancestors:
+        tree = contextual or data['trees'].get(digest)
+        if not tree or (contextual and tree.get('sha256') != digest) or tree['size_bytes'] != size or digest in ancestors:
             return
         for entry in tree['entries']:
             if entry['type'] != 'file':
@@ -106,7 +108,14 @@ def download_index(data):
                 child = re.sub(r'\.[^.]*$', '', name) + child[child.index('.'):]
             elif rule == 'strip_suffix':
                 child = re.sub(r'\.[^.]*$', '', name)
-            add(entry['sha256'], entry['size_bytes'], child, ancestors | {digest})
+            elif rule == 'decoded_suffix':
+                stem = re.sub(r'\.[^.]*$', '', name)
+                dot = child.find('.')
+                suffix = child[dot:] if dot >= 0 else ''
+                if suffix == '.elf':
+                    stem = re.sub(r'\.(?:elf|prx)$', '', stem, flags=re.I)
+                child = stem if not suffix or suffix == '.bin' or stem.endswith(suffix) else stem + suffix
+            add(entry['sha256'], entry['size_bytes'], child, ancestors | {digest}, entry.get('extraction'))
 
     for kind, records in data["records"].items():
         for record in records:
@@ -114,7 +123,7 @@ def download_index(data):
     for tree in data["trees"].values():
         for entry in tree["entries"]:
             if entry["type"] == "file":
-                add(entry["sha256"], entry["size_bytes"], entry["path"].rsplit("/", 1)[-1])
+                add(entry["sha256"], entry["size_bytes"], entry["path"].rsplit("/", 1)[-1], contextual=entry.get("extraction"))
     return index
 
 

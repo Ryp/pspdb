@@ -1,6 +1,12 @@
 .{
     .name = .pspdb_ingest,
     .version = "0.1.0",
+    .dependencies = .{
+        .zig_psp = .{
+            .url = "https://github.com/zPSP-Dev/Zig-PSP/archive/35a7e02f1a2eafc200a851aea1ed0757128fe28e.tar.gz",
+            .hash = "pspsdk-0.7.0-BZphyk2bEgCFkzGUlGnNooIZmU52-Ezju6f4rU3JllQL",
+        },
+    },
     .fingerprint = 0x3aa4d61e5f006ad9,
     .minimum_zig_version = "0.16.0",
     .paths = .{ "build.zig", "build.zig.zon", "src" },

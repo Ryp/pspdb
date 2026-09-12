@@ -1,9 +1,11 @@
 const std = @import("std");
 const memory = @import("bytes.zig");
 
-pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e };
+pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx };
 
 pub fn detect(bytes: []const u8) ?Kind {
+    if (std.mem.startsWith(u8, bytes, "NPUMDIMG")) return .npumdimg;
+    if (bytes.len >= 32775 and bytes[32768] == 1 and std.mem.eql(u8, bytes[32769..32774], "CD001") and bytes[32774] == 1) return .iso9660;
     if (std.mem.startsWith(u8, bytes, "PSAR")) return .psar;
     if (std.mem.startsWith(u8, bytes, "\x00PRF")) return .rco;
     if (std.mem.startsWith(u8, bytes, "~PSP")) return .prx;
@@ -91,6 +93,8 @@ pub const Adapter = struct {
 };
 
 test "format detection uses signatures" {
+    try std.testing.expectEqual(Kind.npumdimg, detect("NPUMDIMG").?);
+    try std.testing.expectEqual(null, detect("NPUMD"));
     try std.testing.expectEqual(Kind.psar, detect("PSAR\x03").?);
     try std.testing.expectEqual(Kind.rco, detect("\x00PRF").?);
     try std.testing.expectEqual(null, detect("not an archive"));

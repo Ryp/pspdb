@@ -57,7 +57,7 @@ pub fn main(init: std.process.Init) !u8 {
         return 2;
     };
     if (options.help) {
-        std.debug.print("Usage: pspdb-ingest FOLDER [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.zip contents; ZIP ISO members decompressed in memory. Requires root UMD_DATA.BIN. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO results and checks nested extractor provenance (requires --catalog; off by default).\nPSAR/RCO/PRX/SCE/PBP/gzip files are processed automatically when --store and --catalog are set; external adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
+        std.debug.print("Usage: pspdb-ingest FOLDER [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.pkg/.zip contents; ZIP ISO/PKG members decompressed in memory. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG results and checks nested extractor provenance (requires --catalog; off by default).\nPSAR/RCO/PRX/SCE/PBP/gzip files are processed automatically when --store and --catalog are set; external adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
         return 0;
     }
 
@@ -100,11 +100,11 @@ pub fn main(init: std.process.Init) !u8 {
         return 1;
     };
     root.end();
-    std.debug.print("Summary: {d} directories scanned, {d} files ignored, {d} symlinks skipped, {d} input candidates, {d} accepted, {d} errors, {d} ISO input bytes.\n", .{
+    std.debug.print("Summary: {d} directories scanned, {d} files ignored, {d} symlinks skipped, {d} input candidates, {d} accepted, {d} errors, {d} source input bytes.\n", .{
         stats.directories, stats.ignored, stats.symlinks, stats.candidates, stats.processed, stats.errors, stats.bytes,
     });
-    std.debug.print("Already cataloged: {d} ISO images skipped.\n", .{stats.skipped});
-    std.debug.print("ZIPs: {d} scanned, {d} ISO members, {d} other members ignored.\n", .{ stats.zip_archives, stats.zip_members, stats.ignored_members });
+    std.debug.print("Already cataloged: {d} sources skipped.\n", .{stats.skipped});
+    std.debug.print("ZIPs: {d} scanned, {d} ISO/PKG members, {d} other members ignored.\n", .{ stats.zip_archives, stats.zip_members, stats.ignored_members });
     return if (stats.errors != 0) 1 else 0;
 }
 

@@ -67,17 +67,24 @@ def validate_catalog(root, versions=None):
                 raise ValueError(f'Extractor revision does not match directory: {relative}')
             if kind in ('psar', 'rco', 'prx', 'kl3e', 'kl4e') and 'sha256' not in value['extractor']:
                 raise ValueError(f'Missing external executable hash: {relative}')
-            entries = value['entries']
-            names = [entry['path'] for entry in entries]
-            if names != sorted(set(names)):
-                raise ValueError(f'Tree paths must be unique and sorted: {relative}')
-            directories = {entry['path'] for entry in entries if entry['type'] == 'directory'}
-            for entry in entries:
-                parent = str(PurePosixPath(entry['path']).parent)
-                if parent != '.' and parent not in directories:
-                    raise ValueError(f'Missing parent directory for {entry["path"]}: {relative}')
-                if entry['type'] == 'file':
-                    check_size(entry['sha256'], entry['size_bytes'])
+            def check_entries(tree):
+                entries = tree['entries']
+                names = [entry['path'] for entry in entries]
+                if names != sorted(set(names)):
+                    raise ValueError(f'Tree paths must be unique and sorted: {relative}')
+                directories = {entry['path'] for entry in entries if entry['type'] == 'directory'}
+                for entry in entries:
+                    parent = str(PurePosixPath(entry['path']).parent)
+                    if parent != '.' and parent not in directories:
+                        raise ValueError(f'Missing parent directory for {entry["path"]}: {relative}')
+                    if entry['type'] == 'file':
+                        check_size(entry['sha256'], entry['size_bytes'])
+                        if entry.get('extraction'):
+                            child = entry['extraction']
+                            if child['sha256'] != entry['sha256'] or child['size_bytes'] != entry['size_bytes']:
+                                raise ValueError('Contextual extraction source mismatch')
+                            check_entries(child)
+            check_entries(value)
         pairs.setdefault((kind, version, digest), {})[role] = value
     if not pairs:
         raise ValueError('Catalog contains no result pairs')

@@ -10,6 +10,20 @@ from tools.extract_external import extract_psar as extract, extract_prx, extract
 
 
 class ExtractionTests(unittest.TestCase):
+    def test_gzip_names_decoded_psp_module_by_elf_format(self):
+        import gzip
+        from tools.extract_external import extract_gzip, decoded_payload_name
+        # PSP-specific e_type remains in the bytes even with a generic ELF suffix.
+        elf = b'\x7fELF\x01\x01' + bytes(10) + b'\xa0\xff' + bytes(34)
+        self.assertEqual(decoded_payload_name(elf), 'module.elf')
+        self.assertEqual(decoded_payload_name(b'\x1f\x8b\x08'), 'payload.gz')
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); source = root/'opaque-source'; output = root/'out'; output.mkdir()
+            source.write_bytes(gzip.compress(elf, mtime=0))
+            extract_gzip(source, output)
+            self.assertEqual([p.name for p in output.iterdir()], ['module.elf'])
+            self.assertEqual((output/'module.elf').read_bytes(), elf)
+
     def test_extracts_into_caller_directory_and_reports_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -116,3 +130,31 @@ class ProvenanceTests(unittest.TestCase):
             self.assertNotEqual(changed['sha256'], adapter.tool_provenance('rco', tool, data)['sha256'])
             with patch.object(adapter, 'VERSIONS', dict(adapter.versions(), rco='2')):
                 self.assertEqual(adapter.tool_provenance('rco', tool, data)['version'], '2')
+
+class NpumdimgTests(unittest.TestCase):
+    def test_signature_failure_and_iso_validation(self):
+        from tools.extract_external import extract_npumdimg
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); source = root/'source'; output = root/'output'; output.mkdir()
+            source.write_bytes(b'PSAR')
+            with patch('tools.extract_external.subprocess.run') as run:
+                with self.assertRaisesRegex(ValueError, 'not NPUMDIMG'):
+                    extract_npumdimg(source, output, Path(sys.executable))
+                run.assert_not_called()
+            source.write_bytes(b'NPUMDIMG' + bytes(248))
+            for code, data in [(1, bytes(34816)), (0, b'bad iso')]:
+                def run(args, **kwargs):
+                    Path(args[2]).write_bytes(data)
+                    return subprocess.CompletedProcess(args, code, '', '')
+                with patch('tools.extract_external.subprocess.run', side_effect=run):
+                    with self.assertRaises(ValueError):
+                        extract_npumdimg(source, output, Path(sys.executable))
+            iso = bytearray(34816); iso[32768:32775] = b'\x01CD001\x01'
+            def run(args, **kwargs):
+                Path(args[2]).write_bytes(iso)
+                return subprocess.CompletedProcess(args, 0, '', '')
+            with patch('tools.extract_external.subprocess.run', side_effect=run):
+                provenance = extract_npumdimg(source, output, Path(sys.executable))
+            self.assertEqual(provenance['name'], 'pkg2zip-npumdimg')
+            self.assertEqual(provenance['sha256'], hashlib.sha256(Path(sys.executable).resolve().read_bytes()).hexdigest())
+            self.assertEqual((output/'disc.iso').read_bytes(), iso)

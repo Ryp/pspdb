@@ -10,8 +10,21 @@ from urllib.parse import quote, urlencode
 from urllib.request import build_opener, ProxyHandler
 from unittest.mock import patch
 
-from pspdb.server import handler_for
+from pspdb.server import handler_for, download_index
 from pspdb.cli import main
+
+
+class ContextualIndexTests(unittest.TestCase):
+    def test_scoped_output_is_downloadable_without_global_source_tree(self):
+        source, payload = 'a'*64, 'b'*64
+        tree = dict(sha256=source, size_bytes=14, name_rule='source_stem',
+            entries=[dict(path='payload.gz', type='file', sha256=payload, size_bytes=7)])
+        parent = dict(sha256='c'*64, size_bytes=100, entries=[
+            dict(path='DATA.PSP', type='file', sha256=source, size_bytes=14, extraction=tree)])
+        data = dict(records={}, trees={'c'*64:parent})
+        self.assertIn('DATA.gz', download_index(data)[payload][1])
+        tree['sha256'] = 'd'*64
+        self.assertNotIn(payload, download_index(data))
 
 
 class DownloadTests(unittest.TestCase):
@@ -154,6 +167,19 @@ if __name__ == '__main__':
 
 
 class ExtractedNamesTests(unittest.TestCase):
+    def test_decoded_format_names_match_download_links(self):
+        from pspdb.server import download_index
+        compressed, decoded, parent = [c * 64 for c in 'abc']
+        data = {'records': {}, 'trees': {
+            parent: {'size_bytes': 100, 'entries': [dict(path=n, type='file', size_bytes=7, sha256=compressed)
+                for n in ['DATA.gz', 'MODULE.prx.gz', 'EXISTING.elf.gz']]},
+            compressed: {'size_bytes': 7, 'name_rule': 'decoded_suffix', 'entries': [
+                dict(path='module.elf', type='file', size_bytes=20, sha256=decoded)]},
+        }}
+        names = download_index(data)[decoded][1]
+        self.assertTrue({'DATA.elf', 'MODULE.elf', 'EXISTING.elf'} <= names)
+        self.assertFalse({'DATA', 'MODULE.prx', 'EXISTING.elf.elf'} & names)
+
     def test_shared_tree_download_names_follow_each_parent(self):
         from pspdb.server import download_index
         source, compressed, decoded, iso = [c * 64 for c in 'abcd']

@@ -16,4 +16,4 @@ pspdb-web = "pspdb.cli:main"
 include = ["pspdb*"]
 
 [tool.setuptools.package-data]
-pspdb = ["web/*.html", "web/*.css", "web/*.js"]
+pspdb = ["web/*.html", "web/*.css", "web/*.js", "data/*.json"]

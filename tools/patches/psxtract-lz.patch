@@ -1,0 +1,12 @@
+--- lz.cpp
++++ lz.cpp
+@@ -162,6 +162,9 @@
+ 		memset(tmp, 0x80, 0xA60);
+ 		while (1)
+ 		{
++			// Disc blocks have a caller-specified decoded size. Stop after either
++			// a literal or a match fills it, before interpreting trailing bits.
++			if (start == end) return (int)(start - out);
+ 			// Start reading at 0x920.
+ 			tmp_sect1 = tmp + offset + 0x920;
+ 			if (!decode_bit(&range, &code, 0, &in, tmp_sect1))  // Raw char.

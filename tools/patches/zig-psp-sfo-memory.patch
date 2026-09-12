@@ -1,0 +1,139 @@
+--- a/tools/sfo/src/main.zig
++++ b/tools/sfo/src/main.zig
+@@ -16,6 +16,7 @@
+     Bin = 0x0004,
+     UTF8 = 0x0204,
+     Int32 = 0x0404,
++    _, // Preserve unknown formats without creating invalid enum values.
+ };
+ 
+ pub const TableEntry = extern struct {
+@@ -34,8 +35,21 @@
+ pub const SFOStructure = struct {
+     header: SFOHeader,
+     table: []TableEntry,
+-    key_pool: []u8,
+-    data_pool: []u8,
++    key_pool: []const u8,
++    data_pool: []const u8,
++
++    /// readSFO allocates only the table; key/data pools borrow its input.
++    pub fn deinit(self: SFOStructure, allocator: std.mem.Allocator) void {
++        allocator.free(self.table);
++    }
++
++    pub fn key(self: SFOStructure, entry: TableEntry) []const u8 {
++        return std.mem.sliceTo(self.key_pool[entry.key_offset..], 0);
++    }
++
++    pub fn data(self: SFOStructure, entry: TableEntry) []const u8 {
++        return self.data_pool[entry.data_offset..][0..entry.data_len];
++    }
+ };
+ 
+ const InternalEntry = struct {
+@@ -57,39 +71,37 @@
+     .{ .name = "REGION", .type = .Int32, .value = 0x8000, .data = null, .maxsize = 4 },
+ };
+ 
+-fn readSFO(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !SFOStructure {
+-    var file = try std.Io.Dir.cwd().openFile(io, path, .{});
+-    defer file.close(io);
+-
+-    var buffer: [4096]u8 = undefined;
+-    var reader = file.reader(io, &buffer);
+-    const io_reader = &reader.interface;
+-
++/// Parse from memory. Key/data pools borrow bytes; deinit releases only the table.
++pub fn readSFO(allocator: std.mem.Allocator, bytes: []const u8) !SFOStructure {
++    var reader = std.Io.Reader.fixed(bytes);
++    const io_reader = &reader;
+     const header = try io_reader.takeStruct(SFOHeader, .little);
+-    var entries = try allocator.alloc(TableEntry, header.entry_count);
+-    for (0..header.entry_count) |i| {
+-        entries[i] = try io_reader.takeStruct(TableEntry, .little);
+-    }
+-
+-    std.debug.assert(io_reader.seek == header.key_start);
+-
++    if (!std.mem.eql(u8, &header.magic, "\x00PSF") or
++        !std.mem.eql(u8, &header.version, &.{ 1, 1, 0, 0 })) return error.InvalidHeader;
++    if (header.key_start < @sizeOf(SFOHeader) or header.key_start > header.data_start or
++        header.data_start > bytes.len or
++        header.entry_count > (header.key_start - @sizeOf(SFOHeader)) / @sizeOf(TableEntry)) return error.InvalidOffset;
++    const entries = try allocator.alloc(TableEntry, header.entry_count);
++    errdefer allocator.free(entries);
++    for (entries) |*entry| entry.* = try io_reader.takeStruct(TableEntry, .little);
++    _ = try io_reader.take(header.key_start - io_reader.seek);
+     const key_len = header.data_start - header.key_start;
+-    const key_pool = try io_reader.readAlloc(allocator, key_len);
+-    errdefer allocator.free(key_pool);
+-
+-    const data_pool = try io_reader.allocRemaining(allocator, .unlimited);
+-    errdefer allocator.free(data_pool);
+-
+-    return SFOStructure{
+-        .header = header,
+-        .table = entries,
+-        .key_pool = key_pool,
+-        .data_pool = data_pool,
+-    };
++    const key_pool = try io_reader.take(key_len);
++    const data_pool = io_reader.buffered();
++    for (entries) |entry| {
++        if (entry.key_offset >= key_pool.len or
++            std.mem.indexOfScalar(u8, key_pool[entry.key_offset..], 0) == null or
++            entry.data_len > entry.data_max_len or entry.data_offset > data_pool.len or
++            entry.data_max_len > data_pool.len - entry.data_offset) return error.InvalidOffset;
++    }
++    return .{ .header = header, .table = entries, .key_pool = key_pool, .data_pool = data_pool };
+ }
+ 
+ pub fn prettyPrintSFO(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !void {
+-    const sfo = try readSFO(allocator, io, path);
++    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited);
++    defer allocator.free(bytes);
++    const sfo = try readSFO(allocator, bytes);
++    defer sfo.deinit(allocator);
+     std.debug.print("Header:\n", .{});
+     std.debug.print("\tMagic: {s}\n", .{sfo.header.magic});
+     std.debug.print("\tVersion: {d}.{d}\n", .{ sfo.header.version[0], sfo.header.version[1] });
+@@ -102,11 +114,10 @@
+         std.debug.print("Index: {d}\n", .{index});
+ 
+         // Slice to Zero
+-        const keyslice = sfo.key_pool[entry.key_offset..];
+-        const keyname = std.mem.span(@as([*:0]u8, @ptrCast(keyslice.ptr)));
++        const keyname = sfo.key(entry);
+ 
+         std.debug.print("\tKey: {s}\n", .{keyname});
+-        std.debug.print("\tType: {s}\n", .{@tagName(entry.data_fmt)});
++        std.debug.print("\tType: 0x{X}\n", .{@intFromEnum(entry.data_fmt)});
+         std.debug.print("\tOffset: 0x{X}\n", .{entry.data_offset});
+         std.debug.print("\tSize: {d}\n", .{entry.data_len});
+         std.debug.print("\tMax Size: {d}\n", .{entry.data_max_len});
+@@ -118,12 +129,14 @@
+             },
+             .UTF8 => {
+                 const data = sfo.data_pool[entry.data_offset .. entry.data_offset + entry.data_len];
+-                std.debug.print("\tValue: {s}\n", .{std.mem.span(@as([*:0]u8, @ptrCast(data.ptr)))});
++                std.debug.print("\tValue: {s}\n", .{std.mem.sliceTo(data, 0)});
+             },
+             .Int32 => {
+                 const data = sfo.data_pool[entry.data_offset .. entry.data_offset + entry.data_len];
+-                std.debug.print("\tValue: 0x{X}\n", .{std.mem.bytesAsValue(i32, data).*});
++                if (data.len != 4) return error.InvalidInteger;
++                std.debug.print("\tValue: 0x{X}\n", .{std.mem.readInt(i32, data[0..4], .little)});
+             },
++            _ => std.debug.print("\tValue: unknown format\n", .{}),
+         }
+     }
+ }
+@@ -139,6 +152,7 @@
+             .Bin => entry.data.?.len,
+             .UTF8 => entry.data.?.len + 1,
+             .Int32 => @sizeOf(i32),
++            _ => return error.InvalidDataType,
+         };
+ 
+         const data_max_len = if (data_len % 4 == 0) data_len else data_len + 4 - (data_len % 4);

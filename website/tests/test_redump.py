@@ -46,3 +46,18 @@ class RedumpTests(unittest.TestCase):
                 dat.write_text(xml)
                 with self.assertRaises(ValueError):
                     load_matches(dat)
+
+    def test_psx_inline_annotation_requires_exact_hash_and_size(self):
+        from pspdb.redump import load_psx_matches, annotate_file_matches
+        matches = load_psx_matches()
+        (digest, size), expected = next(iter(matches.items()))
+        entries = [dict(type='file', path='disc.bin', sha256=digest, size_bytes=size),
+                   dict(type='file', path='wrong-size.bin', sha256=digest, size_bytes=size + 1),
+                   dict(type='file', path='wrong-hash.bin', sha256='f' * 64, size_bytes=size)]
+        trees = {'parent': {'entries': [dict(type='file', path='DATA.BIN', sha256='a'*64, size_bytes=100,
+                                           extraction={'entries': entries})]}}
+        annotate_file_matches(trees, matches)
+        self.assertEqual(entries[0]['redump'], expected)
+        self.assertNotIn('redump', entries[1])
+        self.assertNotIn('redump', entries[2])
+        self.assertNotIn('redump', trees['parent']['entries'][0])

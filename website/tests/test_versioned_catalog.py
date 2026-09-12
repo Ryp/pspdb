@@ -36,6 +36,22 @@ class VersionedCatalogTests(unittest.TestCase):
             (newer / (digest + '-ingest.json')).unlink()
             self.assertEqual(catalog_data(root)['trees'][digest]['extractor']['version'], '2')
 
+    def test_pkg_metadata_and_inventory_survive_static_export(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)/'catalog'; folder = root/'pkg/v1'; folder.mkdir(parents=True)
+            digest = 'f'*64
+            record = dict(kind='pkg', schema_version=1, sha256=digest, size_bytes=123,
+                          metadata={'content_id':'UP9000-NPUG00001_00-FIXTURE000000000', 'title':'Demo'})
+            tree = dict(kind='tree', schema_version=1, sha256=digest, size_bytes=123,
+                        extractor={'name':'pspdb-ingest', 'version':'1', 'options':[]}, entries=[])
+            (folder/(digest+'-ingest.json')).write_text(json.dumps(record))
+            (folder/(digest+'-tree.json')).write_text(json.dumps(tree))
+            export_site(root, Path(tmp)/'export')
+            data = json.loads((Path(tmp)/'export/catalog.json').read_text())
+            self.assertEqual(data['records']['pkg'], [record])
+            self.assertEqual(data['trees'][digest], tree)
+            self.assertFalse(data['downloads_enabled'])
+
     def test_rejects_tree_version_and_identity_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); folder = root / 'iso/v1'; folder.mkdir(parents=True)

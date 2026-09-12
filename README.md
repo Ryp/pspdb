@@ -3,7 +3,7 @@
 A catalog of PSP file paths, byte sizes, and SHA-256 hashes. Each extracted source hash owns its
 inventory; optional file contents live in a separate deduplicated object store.
 
-- `ingest/`: Zig ISO/ZIP ingester and ingest tests.
+- `ingest/`: Zig ISO/PKG/ZIP ingester and ingest tests.
 - `website/`: Python server, browser assets, and website tests.
 - `schemas/`: shared catalog format. `catalog/` contains versioned metadata and inventories contributed through PRs.
 
@@ -11,19 +11,21 @@ Run the following commands from the repository root.
 
 ## Build and ingest
 
-Requires **Zig 0.16.0** and **libarchive** development headers/library.
+Requires **Zig 0.16.0**, **libarchive** development headers/library, and GNU **patch**.
+The first build fetches the pinned Zig-PSP dependency.
 
 ```sh
 (cd ingest && zig build -Doptimize=ReleaseSafe)
 ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store
 ```
 
-Discovers ISO files and ISO members in ZIP archives. A root `UMD_DATA.BIN` is
-required. `--store` is optional. `--threads N` caps threads (default: logical CPU
+Discovers ISO and PKG files, including members of ZIP archives. ISOs require a
+root `UMD_DATA.BIN`. Retail PSP/PS1 PKGs are decrypted by the native PKG extractor,
+preserving every file and directory at its original path. `--store` is optional. `--threads N` caps threads (default: logical CPU
 count); `--no-progress` disables terminal progress. `--skip-existing` skips current
-ISO results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
+ISO/PKG results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
 
-Filesystem discovery stays parallel, but only one ISO is admitted through hashing,
+Filesystem discovery stays parallel, but only one ISO or PKG is admitted through hashing,
 metadata parsing, and its immediate file walk at a time. Nested extractors share
 the worker pool and retain their input bytes in memory; they can overlap the next ISO.
 
@@ -44,10 +46,24 @@ Inputs are read-only. Catalog JSON is tracked in Git; object stores and source
 images stay local. See [CONTRIBUTING.md](CONTRIBUTING.md) to submit ingested content
 and validate new metadata/tree pairs.
 
+SFO metadata is parsed in memory with the pinned Zig-PSP zSFOTool code. A
+[dependency patch](tools/patches/zig-psp-sfo-memory.md) exposes its reader and
+adds bounds validation; PSPDB only selects and validates its catalog fields.
+The reader change is recorded in ISO revision 2 and PKG revision 3.
+
 Metadata is read independently before file inventory/storage: `UMD_DATA.BIN`
 and both game/video `PARAM.SFO` paths. When both SFOs exist, game metadata takes
 precedence. If neither exists, the updater SFO supplies the title and version; its generic
 ID does not replace the disc identifier.
+
+PKGs write their own versioned pairs under `catalog/pkg/v4/`. Package metadata
+includes content ID, title ID, content type, and available PSP title/version/firmware
+fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
+static export display packages under **psn**, alongside **umd**. Embedded PBP files
+use the existing nested extraction pipeline when both catalog and store are set.
+The PKG extractor supports retail PSP and PS1 packages, not debug, native PS3, or
+Vita packages. Package decryption does not imply that every inner DRM payload is
+supported: as with ISOs, a nested extractor failure fails that source's full ingest.
 
 ## Extractor revisions and regeneration
 
@@ -64,7 +80,7 @@ uv run --locked python tools/catalog_status.py --catalog catalog
 
 The status command is read-only. It compares revisions, executable SHA-256 hashes,
 and extraction options (including the RCOMage INI digest), and follows child hashes
-to report affected ISO roots. Missing tools are reported as unavailable, never current.
+to report affected ISO and PKG roots. Missing tools are reported as unavailable, never current.
 If a tool/configuration changes within the same revision, bump that extractor's
 revision before regenerating; existing results will not be overwritten.
 Changes to adapter behavior, naming rules, metadata parsing, or file detection also
@@ -129,7 +145,8 @@ Validate the tracked catalog without source images or external extractors:
 uv run --locked python tools/validate_catalog.py
 ```
 
-The ingest CLI tests build the current executable and generate their own ISO/ZIP fixtures.
+The ingest CLI tests build the current executable and generate their own ISO/PKG/ZIP
+fixtures. PKG fixtures use OpenSSL for independent AES encryption.
 
 ```sh
 (cd ingest && zig build test)
@@ -142,15 +159,17 @@ node website/tests/tree-catalog.mjs
 
 ## Extractors
 
-PSAR, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E and KL4E processing runs automatically during
-ISO/ZIP ingest when both catalog and store are set:
+PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E and KL4E processing runs automatically during
+ISO/PKG/ZIP ingest when both catalog and store are set:
 
 ```sh
 ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store
 ```
 
-Detection uses signatures, independent of filenames. SCE and PBP readers borrow
-slices directly. External tools extract into Zig-owned temporary directories;
+Detection uses signatures, independent of filenames. SCE borrows slices directly.
+PBP extraction and embedded PKG metadata use Zig-PSP’s PBP reader in memory, with
+borrowed slices and no temporary files. The pinned dependency receives a
+[patch exposing its memory API and fixing bounds/final-section handling](tools/patches/zig-psp-pbp-memory.md). External tools extract into Zig-owned temporary directories;
 Zig hashes/stores the output and queues nested extraction using retained buffers.
 Temporary directories are removed after their immediate walk; children continue from
 memory. An ISO is reported complete only after all its extraction jobs succeed.
@@ -180,3 +199,39 @@ KL decoding uses `pspdecrypt-kle` on PATH (`PSPDECRYPT_KLE` override): build
 pspdecrypt with `tools/patches/pspdecrypt-kle.patch` and install that binary under
 this separate name. The patch exposes standalone streams and adds decoder bounds
 checks; it rejects outputs exceeding 64 MiB.
+
+NPUMDIMG (`DATA.BIN`, PBP section 7) uses the existing pkg2zip decoder,
+with a [standalone entry-point patch and build instructions](tools/patches/pkg2zip-npumdimg.md).
+Install `pkg2zip-npumdimg` on PATH (`PKG2ZIP_NPUMDIMG` override). Ingest retains
+`DATA.BIN`, attaches `disc.iso` beneath it, and inventories that ISO through
+libarchive under the `iso9660` extractor. Its executable files recurse normally.
+Derived ISOs stay beneath their PSN package rather than becoming UMD roots.
+This disc decoder handles NPUMDIMG; PS1 disc extraction and EDAT payloads remain
+unsupported. PS1 executable decryption uses the whole-PBP helper described below. The PBP, ISO and PKG revisions were bumped so existing inputs are
+revisited to discover these previously opaque children.
+
+For NPUMDIMG PBPs, the Zig [DATA.PSP parser](tools/patches/data-psp.md) verifies the
+SFO/content-ID signature using OpenSSL libcrypto. Generated verification reports
+are not included in the extracted file inventory.
+Install OpenSSL development headers/library when building ingest. Optional
+STARTDAT and OPNSSMP containers are exposed without decoding their contents.
+
+For supported PS1 PBPs, install [pspdb-pops](tools/pops/README.md) (`PSPDB_POPS`
+override). It reads the full PBP to recover the sibling-derived title key, while
+the catalog attaches decoded output specifically beneath `DATA.PSP`. The file
+hash and download remain those of the original section. This contextual subtree
+is stored in the PBP result, with helper provenance and normal decoded-file
+hashes; it does not create a global standalone PRX result or a generated report.
+Decoded ELF payloads use `.elf`, including PSP PRX modules. Gzip trees use the
+`decoded_suffix` naming rule to retain that detected format in display names and
+download filenames, without duplicating existing `.elf` suffixes.
+
+PSN package labels use `XXXX-12345 Title`, with the serial styled like UMD IDs; collisions receive a short SHA-256
+suffix that expands as needed. Full content IDs remain searchable. Hash-based
+catalog identity and links remain stable when a display title changes.
+
+
+PS1 PKG ingest uses Zig-PSP for PBP/SFO parsing and PSXtract-2 under Wine for
+full disc reconstruction, attached beneath the original `DATA.BIN` section.
+Configure `PSPDB_PSXTRACT2`, `PSPDB_WINE`, and optionally `WINEPREFIX`, or put
+`psxtract.exe` and `wine` on PATH. See [PS1 extraction setup and validation](tools/psxtract/README.md).

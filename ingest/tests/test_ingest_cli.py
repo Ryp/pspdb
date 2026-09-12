@@ -55,7 +55,7 @@ def source_hash(path):
 SUMMARY = re.compile(
     r"Summary: (\d+) directories scanned, (\d+) files ignored, "
     r"(\d+) symlinks skipped, (\d+) input candidates, (\d+) accepted, "
-    r"(\d+) errors, (\d+) ISO input bytes\."
+    r"(\d+) errors, (\d+) source input bytes\."
 )
 
 
@@ -115,7 +115,7 @@ class IngestCliTests(unittest.TestCase):
                   if "!" in row["source"]]
         self.assertCountEqual(actual, expected_members)
         self.assertIn(
-            f"ZIPs: {counts[0]} scanned, {counts[1]} ISO members, "
+            f"ZIPs: {counts[0]} scanned, {counts[1]} ISO/PKG members, "
             f"{counts[2]} other members ignored.", output
         )
 
@@ -479,7 +479,7 @@ class IngestCliTests(unittest.TestCase):
             before = snapshot(catalog)
             code, output = self.run_cli(root, *args, '--skip-existing')
             self.assertEqual(code, 0, output)
-            self.assertIn('Already cataloged: 3 ISO images skipped.', output)
+            self.assertIn('Already cataloged: 3 sources skipped.', output)
             self.assertEqual(self.records(output), [])
             self.assertFalse((store / 'sha256').exists())
             self.assertEqual(snapshot(catalog), before)
@@ -757,6 +757,9 @@ echo Done!
                 (checkout / 'tools').mkdir()
                 for name in ('extract_external.py', 'extractor_versions.json', 'catalog_status.py'):
                     shutil.copyfile(REPO / 'tools' / name, checkout / 'tools' / name)
+                (checkout / 'tools/patches').mkdir()
+                shutil.copyfile(REPO / 'tools/patches/zig-psp-pbp-memory.patch', checkout / 'tools/patches/zig-psp-pbp-memory.patch')
+                shutil.copyfile(REPO / 'tools/patches/zig-psp-sfo-memory.patch', checkout / 'tools/patches/zig-psp-sfo-memory.patch')
                 revisions = dict(VERSIONS)
                 def rebuild():
                     (checkout / 'tools/extractor_versions.json').write_text(json.dumps(revisions))
@@ -767,7 +770,7 @@ echo Done!
                 # ISO and PSAR are current: a stale gzip descendant still prevents skipping.
                 revisions['gzip'] = str(int(revisions['gzip']) + 1)
                 output = rebuild()
-                self.assertIn('Already cataloged: 0 ISO images skipped.', output)
+                self.assertIn('Already cataloged: 0 sources skipped.', output)
                 self.assertTrue((catalog / 'gzip' / ('v' + revisions['gzip']) / (child_hash + '-tree.json')).exists())
                 self.assertEqual(calls.read_text().splitlines(), ['called'])
                 self.assertTrue(all(snapshot(catalog)[key] == value for key, value in old.items()))
@@ -779,7 +782,7 @@ echo Done!
                 self.assertEqual(calls.read_text().splitlines(), ['called'])
                 self.assertTrue(all(snapshot(catalog)[key] == value for key, value in old.items()))
                 output = rebuild()
-                self.assertIn('Already cataloged: 1 ISO images skipped.', output)
+                self.assertIn('Already cataloged: 1 sources skipped.', output)
                 # A missing stored child forces its current parent extractor to run again.
                 child_object = store / 'sha256' / child_hash[:2] / child_hash[2:4] / child_hash
                 child_object.unlink()

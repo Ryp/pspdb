@@ -8,23 +8,18 @@ pub fn walkSce(bytes: []const u8, context: anytype, comptime emit: anytype) !voi
     try emit(context, "payload.psp", bytes[offset..]);
 }
 
+pub fn parsePbp(bytes: []const u8) !@import("zig_psp_pbp").Pbp {
+    return @import("zig_psp_pbp").Pbp.parse(bytes) catch return error.InvalidPbp;
+}
+
 pub fn walkPbp(bytes: []const u8, context: anytype, comptime emit: anytype) !void {
-    if (bytes.len < 40 or !std.mem.startsWith(u8, bytes, "\x00PBP")) return error.InvalidPbp;
-    const names = [_][]const u8{ "PARAM.SFO", "ICON0.PNG", "ICON1.PMF", "PIC0.PNG", "PIC1.PNG", "SND0.AT3", "DATA.PSP", "DATA.PSAR" };
-    var offsets: [9]usize = undefined;
-    for (offsets[0..8], 0..) |*offset, i| offset.* = std.mem.readInt(u32, bytes[8 + i * 4 ..][0..4], .little);
-    offsets[8] = bytes.len;
-    // Validate every range before emitting anything.
-    if (offsets[0] < 40) return error.InvalidPbp;
-    for (offsets[0..8], offsets[1..]) |start, end| if (start > end or end > bytes.len) return error.InvalidPbp;
-    for (names, offsets[0..8], offsets[1..]) |name, start, end| {
-        if (start != end) try emit(context, name, bytes[start..end]);
-    }
+    try (try parsePbp(bytes)).walk(context, emit);
 }
 
 test "PBP rejects reversed offsets before emitting" {
     var bytes: [40]u8 = @splat(0);
     @memcpy(bytes[0..4], "\x00PBP");
+    std.mem.writeInt(u32, bytes[4..8], 0x10000, .little);
     for (0..8) |i| std.mem.writeInt(u32, bytes[8 + i * 4 ..][0..4], 40, .little);
     std.mem.writeInt(u32, bytes[12..16], 39, .little);
     const Callback = struct {
@@ -78,4 +73,47 @@ test "embedded PSP scan skips invalid candidates and bounds declared size" {
     try std.testing.expectEqual(null, embeddedPsp(&bytes, 528));
     std.mem.writeInt(u32, bytes[128 + 0x2c ..][0..4], 1024, .little);
     try std.testing.expectEqual(null, embeddedPsp(&bytes, 0));
+}
+
+test "Zig-PSP PBP reader borrows slices and preserves the entire final section" {
+    var bytes: [104]u8 = @splat(0);
+    @memcpy(bytes[0..4], "\x00PBP");
+    std.mem.writeInt(u32, bytes[4..8], 0x10000, .little);
+    for (0..8) |i| std.mem.writeInt(u32, bytes[8 + i * 4 ..][0..4], 40, .little);
+    @memset(bytes[40..], 0x5a);
+    const pbp = try parsePbp(&bytes);
+    const tail = pbp.get("DATA.BIN").?;
+    try std.testing.expectEqual(@as(usize, 64), tail.len);
+    try std.testing.expectEqual(bytes[40..].ptr, tail.ptr);
+    try std.testing.expectEqualSlices(u8, bytes[40..], tail);
+    try std.testing.expectEqual(@as(usize, 0), pbp.get("DATA.PSP").?.len);
+    // The dependency's file API uses the same reader and keeps the full tail too.
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const directory = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(directory);
+    const input_path = try std.fmt.allocPrint(allocator, "{s}/source.pbp", .{directory});
+    defer allocator.free(input_path);
+    const output_path = try std.fmt.allocPrint(allocator, "{s}/output", .{directory});
+    defer allocator.free(output_path);
+    const file = try tmp.dir.createFile(io, "source.pbp", .{});
+    try file.writeStreamingAll(io, &bytes);
+    file.close(io);
+    try @import("zig_psp_pbp").unpack_pbp(allocator, io, input_path, output_path);
+    const unpacked = try tmp.dir.readFileAlloc(io, "output/DATA.BIN", allocator, .unlimited);
+    defer allocator.free(unpacked);
+    try std.testing.expectEqualSlices(u8, tail, unpacked);
+    std.mem.writeInt(u32, bytes[36..40], 105, .little);
+    try std.testing.expectError(error.InvalidPbp, parsePbp(&bytes));
+    std.mem.writeInt(u32, bytes[36..40], 40, .little);
+    bytes[0] = 1;
+    try std.testing.expectError(error.InvalidPbp, parsePbp(&bytes));
+    bytes[0] = 0;
+    std.mem.writeInt(u32, bytes[4..8], 0x10001, .little);
+    _ = try parsePbp(&bytes); // Observed in the retail echochrome demo.
+    std.mem.writeInt(u32, bytes[4..8], 0x20001, .little);
+    try std.testing.expectError(error.InvalidPbp, parsePbp(&bytes));
+    try std.testing.expectError(error.InvalidPbp, parsePbp(bytes[0..39]));
 }

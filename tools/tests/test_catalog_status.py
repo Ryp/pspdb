@@ -45,6 +45,34 @@ class CatalogStatusTests(unittest.TestCase):
         self.assertEqual(report['fresh_isos'], {a: True})
         self.assertEqual(old.read_bytes(), before)
 
+    def test_pkg_root_tracks_nested_staleness(self):
+        self.revisions['pkg'] = '1'
+        self.current['pkg'] = extract_external.tool_provenance('pkg')
+        root, child = 'd'*64, 'e'*64
+        self.write('pkg', '1', root, [child])
+        self.write('gzip', '2', child)
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['affected_pkgs'], [root])
+        self.assertEqual(report['fresh_pkgs'], {})
+        self.write('gzip', '3', child)
+        self.assertEqual(catalog_status(self.root, self.current)['fresh_pkgs'], {root: True})
+
+    def test_contextual_decoder_and_descendant_invalidate_parent(self):
+        a, b, c = 'a'*64, 'b'*64, 'c'*64
+        path = self.write('pbp', '1', a, [b])
+        decoder = dict(name='pops', version='1', sha256='d'*64, options=[])
+        self.current['pops'] = decoder
+        tree = json.loads(path.read_text())
+        tree['entries'][0]['extraction'] = dict(sha256=b, size_bytes=42,
+            extractor=decoder, name_rule='source_stem', entries=[dict(path='payload.gz', type='file', sha256=c, size_bytes=42)])
+        path.write_text(json.dumps(tree))
+        self.write('gzip', '2', c)
+        report = catalog_status(self.root, self.current)
+        self.assertIn(a, report['fresh_trees'])
+        self.current['pops'] = dict(decoder, sha256='e'*64)
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(next(x for x in report['stale'] if x['sha256']==a)['reason'], 'contextual extractor changed')
+
     def test_cycles_propagate_staleness_and_terminate(self):
         a, b, c = 'a'*64, 'b'*64, 'c'*64
         self.write('iso', '2', a, [b])

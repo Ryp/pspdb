@@ -30,6 +30,21 @@ class CatalogValidationTests(unittest.TestCase):
         with patch.dict(os.environ, {'PATH': ''}):
             self.assertEqual(validate_catalog(self.root), {'pairs': 1, 'isos': 1})
 
+    def test_contextual_tree_checks_attachment_and_nested_entries(self):
+        entry = dict(path='DATA.PSP', type='file', sha256='b'*64, size_bytes=14)
+        entry['extraction'] = dict(sha256='b'*64, size_bytes=14, name_rule='source_stem',
+            extractor=dict(name='pops', version='1', options=[]),
+            entries=[dict(path='payload.gz', type='file', sha256='c'*64, size_bytes=7)])
+        self.tree['entries'] = [entry]; self.save()
+        self.assertEqual(validate_catalog(self.root)['pairs'], 1)
+        entry['extraction']['sha256'] = 'd'*64; self.save()
+        with self.assertRaisesRegex(ValueError, 'source mismatch'):
+            validate_catalog(self.root)
+        entry['extraction']['sha256'] = 'b'*64
+        entry['extraction']['entries'][0]['size_bytes'] = 0; self.save()
+        with self.assertRaisesRegex(ValueError, 'empty-file'):
+            validate_catalog(self.root)
+
     def test_missing_partner_and_wrong_identity_are_rejected(self):
         self.tree_path.unlink()
         with self.assertRaisesRegex(ValueError, 'partner'):

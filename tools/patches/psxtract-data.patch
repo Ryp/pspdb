@@ -1,0 +1,53 @@
+--- psxtract.cpp
++++ psxtract.cpp
+@@ -395,18 +395,20 @@
+ 	memset(entry, 0, sizeof(ISO_ENTRY));
+ 
+ 	// Read the first entry.
+-	fread(entry, sizeof(ISO_ENTRY), 1, iso_table);
++	if (fread(entry, sizeof(ISO_ENTRY), 1, iso_table) != 1) { fclose(iso); return -1; }
+ 
+ 	// Keep reading entries until we reach the end of the table.
+ 	while (entry->size > 0)
+ 	{
+ 		// Locate the block offset in the DATA.PSAR.
+ 		fseek(psar, iso_base_offset + entry->offset, SEEK_SET);
+-		fread(iso_block_comp, entry->size, 1, psar);
++		if (entry->size > iso_block_size || fread(iso_block_comp, entry->size, 1, psar) != 1) { fclose(iso); return -1; }
+ 
+ 		// Decompress if necessary.
+ 		if (entry->size < iso_block_size)   // Compressed.
+-			decompress(iso_block_decomp, iso_block_comp, iso_block_size);
++			{
++			int decoded = decompress(iso_block_decomp, iso_block_comp, iso_block_size); if (decoded != iso_block_size) { fprintf(stderr, "Block %08x: decoded %d of %d bytes\n", entry->offset, decoded, iso_block_size); fclose(iso); return -1; }
++		}
+ 		else								// Not compressed.
+ 			memcpy(iso_block_decomp, iso_block_comp, iso_block_size);
+ 
+@@ -435,7 +437,7 @@
+ 		// Go to next entry.
+ 		table_offset += sizeof(ISO_ENTRY);
+ 		fseek(iso_table, table_offset, SEEK_SET);
+-		fread(entry, sizeof(ISO_ENTRY), 1, iso_table);
++		if (fread(entry, sizeof(ISO_ENTRY), 1, iso_table) != 1) { fclose(iso); return -1; }
+ 	}
+ 	
+ 	fclose(iso);
+@@ -544,7 +546,7 @@
+ 	// Decrypt the ISO header and get the block table.
+ 	// NOTE: In a single disc, the ISO header is located at offset 0x400 and has a length of 0xB6600.
+ 	if (decrypt_iso_header(psar, 0x400, 0xB6600, pgd_key, 0))
+-		printf("Aborting...\n");
++		return -1;
+ 
+ 	// Re-open in read mode (just to be safe).
+ 	FILE* iso_table = fopen("ISO_HEADER.BIN", "rb");
+@@ -602,7 +604,7 @@
+ 	// Build the ISO image.
+ 	printf("Building the final ISO image...\n");
+ 	if (build_iso(psar, iso_table, 0, 0))
+-		printf("ERROR: Failed to reconstruct the ISO image!\n\n");
++		{ fclose(iso_table); return -1; }
+ 	else
+ 		printf("ISO image successfully reconstructed! Saving as ISO.BIN...\n\n");
+ 

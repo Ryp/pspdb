@@ -43,11 +43,30 @@ pub const Dispatch = struct {
 
 pub const Counts = struct { stored: usize = 0, reused: usize = 0 };
 
+pub const InlineExtraction = struct {
+    sha256: []const u8,
+    size_bytes: u64,
+    extractor: extractor.Provenance,
+    name_rule: []const u8 = "source_stem",
+    entries: []Entry,
+};
+
 pub const Entry = struct {
     path: []const u8,
     type: enum { directory, file },
     size_bytes: ?u64 = null,
     sha256: ?[64]u8 = null,
+    extraction: ?*InlineExtraction = null,
+
+    fn deinit(self: Entry, allocator: std.mem.Allocator) void {
+        allocator.free(self.path);
+        if (self.extraction) |tree| {
+            for (tree.entries) |entry| entry.deinit(allocator);
+            allocator.free(tree.entries);
+            allocator.free(tree.sha256);
+            allocator.destroy(tree);
+        }
+    }
 
     pub fn jsonStringify(self: Entry, json: *std.json.Stringify) !void {
         try json.beginObject();
@@ -61,14 +80,25 @@ pub const Entry = struct {
             try json.objectField("sha256");
             try json.write(@as([]const u8, &self.sha256.?));
         }
+        if (self.extraction) |tree| {
+            try json.objectField("extraction");
+            try json.write(tree);
+        }
         try json.endObject();
     }
 };
 
 pub const Result = struct {
     size_bytes: u64,
-    umd_bytes: []u8,
-    record: umd.Record,
+    kind: enum { iso, pkg } = .iso,
+    content_id: []u8 = &.{},
+    content_type: u32 = 0,
+    pkg_sfo_bytes: []u8 = &.{},
+    pkg_title: []u8 = &.{},
+    pbp_title: []u8 = &.{},
+    pbp_sfo_bytes: []u8 = &.{},
+    umd_bytes: []u8 = &.{},
+    record: umd.Record = undefined,
     game_sfo_bytes: []u8 = &.{},
     video_sfo_bytes: []u8 = &.{},
     updater_sfo_bytes: []u8 = &.{},
@@ -80,11 +110,16 @@ pub const Result = struct {
     reused: usize = 0,
 
     pub fn deinit(self: Result, allocator: std.mem.Allocator) void {
+        allocator.free(self.content_id);
+        allocator.free(self.pkg_sfo_bytes);
+        allocator.free(self.pkg_title);
+        allocator.free(self.pbp_title);
+        allocator.free(self.pbp_sfo_bytes);
         allocator.free(self.umd_bytes);
         allocator.free(self.game_sfo_bytes);
         allocator.free(self.video_sfo_bytes);
         allocator.free(self.updater_sfo_bytes);
-        for (self.entries) |entry| allocator.free(entry.path);
+        for (self.entries) |entry| entry.deinit(allocator);
         allocator.free(self.entries);
     }
 };
@@ -97,14 +132,14 @@ fn readMetadata(allocator: std.mem.Allocator, bytes: []const u8) !Result {
     result.record = try umd.parse(umd_bytes);
     result.game_sfo_bytes = (try iso.readFile(allocator, bytes, "PSP_GAME/PARAM.SFO")) orelse &.{};
     result.video_sfo_bytes = (try iso.readFile(allocator, bytes, "UMD_VIDEO/PARAM.SFO")) orelse &.{};
-    const game = try sfo.parse(result.game_sfo_bytes);
-    const video = try sfo.parse(result.video_sfo_bytes);
+    const game = try sfo.parse(allocator, result.game_sfo_bytes);
+    const video = try sfo.parse(allocator, result.video_sfo_bytes);
     // One disc-level metadata record: prefer the game SFO when both exist.
     result.metadata = if (result.game_sfo_bytes.len != 0) game else video;
     if (result.game_sfo_bytes.len == 0 and result.video_sfo_bytes.len == 0) {
         result.updater_sfo_bytes = (try iso.readFile(allocator, bytes, "PSP_GAME/SYSDIR/UPDATE/PARAM.SFO")) orelse &.{};
         // An updater-only disc takes its title here, but MSTKUPDATE is not its disc ID.
-        const updater = try sfo.parse(result.updater_sfo_bytes);
+        const updater = try sfo.parse(allocator, result.updater_sfo_bytes);
         result.metadata.title = updater.title;
         result.metadata.disc_version = updater.disc_version;
     }
@@ -130,7 +165,7 @@ pub fn processIsoChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []cons
     }
     const iso_hash = std.fmt.bytesToHex(sha256.finalResult(), .lower);
     if (catalog) |root| {
-        if (try @import("catalog.zig").contains(allocator, io, root, iso_hash, bytes.len)) return null;
+        if (try @import("catalog.zig").contains(allocator, io, root, iso_hash, bytes.len, "iso")) return null;
     }
     var result = try readMetadata(allocator, bytes);
     errdefer result.deinit(allocator);
@@ -145,6 +180,37 @@ pub fn processIsoChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []cons
     return result;
 }
 
+/// PKGs are roots just like ISOs; decrypted entries retain their own backing
+/// buffers so the existing extraction queue can outlive the package walk.
+pub fn processPkgChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, cache: ?@import("catalog.zig").Cache, dispatch: ?*Dispatch) !?Result {
+    const package = try @import("pkg.zig").Package.init(bytes);
+    var digest: [32]u8 = undefined;
+    var sha1: [20]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    std.crypto.hash.Sha1.hash(bytes, &sha1, .{});
+    const hash = std.fmt.bytesToHex(digest, .lower);
+    if (cache) |value| if (try @import("catalog.zig").contains(allocator, io, value, hash, bytes.len, "pkg")) return null;
+    var result: Result = .{ .kind = .pkg, .size_bytes = bytes.len, .sha256 = hash, .sha1 = std.fmt.bytesToHex(sha1, .lower), .content_type = package.content_type };
+    errdefer result.deinit(allocator);
+    result.content_id = try allocator.dupe(u8, package.content_id);
+    result.pkg_sfo_bytes = (try package.readFile(allocator, "PARAM.SFO")) orelse return error.MissingPkgMetadata;
+    result.metadata = try sfo.parsePkg(allocator, result.pkg_sfo_bytes, &result.pkg_title);
+    if (try package.readFile(allocator, "USRDIR/CONTENT/EBOOT.PBP")) |pbp| {
+        defer allocator.free(pbp);
+        const parsed = try @import("containers.zig").parsePbp(pbp);
+        result.pbp_sfo_bytes = try allocator.dupe(u8, parsed.get("PARAM.SFO").?);
+        const inner = try sfo.parsePkg(allocator, result.pbp_sfo_bytes, &result.pbp_title);
+        result.metadata = .{ .title = inner.title orelse result.metadata.title, .disc_id = inner.disc_id, .disc_version = inner.disc_version, .required_firmware = inner.required_firmware };
+    }
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .paths = .init(allocator) };
+    defer inventory.deinit();
+    try package.walk(allocator, &inventory, Inventory.emitView);
+    result.entries = try inventory.finish();
+    result.stored = inventory.counts.stored;
+    result.reused = inventory.counts.reused;
+    return result;
+}
+
 /// Ingest owns names, inventory records, hashes and store writes. The reader
 /// only lends paths and payloads for the duration of emit.
 const Inventory = struct {
@@ -154,12 +220,13 @@ const Inventory = struct {
     dispatch: ?*Dispatch,
     counts: Counts = .{},
     owner: ?*memory.Owner = null,
+    suppress_dispatch: ?[]const u8 = null,
     entries: std.ArrayList(Entry) = .empty,
     paths: std.StringHashMap(usize),
 
     fn deinit(self: *Inventory) void {
         self.paths.deinit();
-        for (self.entries.items) |entry| self.allocator.free(entry.path);
+        for (self.entries.items) |entry| entry.deinit(self.allocator);
         self.entries.deinit(self.allocator);
     }
 
@@ -172,7 +239,7 @@ const Inventory = struct {
         try validatePath(name);
         if (self.paths.contains(name)) return error.DuplicateIsoPath;
         var entry = Entry{ .path = try self.allocator.dupe(u8, name), .type = if (contents != null) .file else .directory };
-        errdefer self.allocator.free(entry.path);
+        errdefer entry.deinit(self.allocator);
         if (contents) |view| {
             const payload = view.bytes;
             var hash: [32]u8 = undefined;
@@ -189,7 +256,9 @@ const Inventory = struct {
             }
         }
         if (contents) |view| {
-            if (self.dispatch) |dispatch| try dispatch.inspect(self.allocator, self.io, name, view, entry.sha256.?);
+            if (self.suppress_dispatch == null or !std.mem.eql(u8, name, self.suppress_dispatch.?)) {
+                if (self.dispatch) |dispatch| try dispatch.inspect(self.allocator, self.io, name, view, entry.sha256.?);
+            }
         }
         try self.paths.put(entry.path, self.entries.items.len);
         try self.entries.append(self.allocator, entry);
@@ -228,9 +297,15 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
         .paths = .init(allocator),
     };
     defer inventory.deinit();
+    var contextual_outputs: [2]?extractor.Output = .{ null, null };
+    defer for (contextual_outputs) |item| { if (item) |value| value.deinit(allocator, io); };
     var output: ?extractor.Output = null;
     defer if (output) |value| value.deinit(allocator, io);
     const provenance: extractor.Provenance = switch (task.kind) {
+        .iso9660 => blk: {
+            try iso.walk(allocator, task.input.bytes, &inventory, Inventory.emitView);
+            break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").iso9660 };
+        },
         .sce => blk: {
             try @import("containers.zig").walkSce(task.input.bytes, &inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").sce };
@@ -240,8 +315,40 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
             break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").elf };
         },
         .pbp => blk: {
+            const pbp = try @import("containers.zig").parsePbp(task.input.bytes);
+            if (pbp.get("DATA.BIN")) |psar| {
+                if (std.mem.startsWith(u8, psar, "NPUMDIMG")) {
+                    const data = try @import("data_psp.zig").Header.parse(pbp.get("DATA.PSP") orelse return error.MissingDataPsp);
+                    const param = pbp.get("PARAM.SFO") orelse return error.MissingPbpMetadata;
+                    const valid = try data.verify(param);
+                    if (!valid) return error.InvalidDataPspSignature;
+                    if (data.opnssmp) |bytes| try inventory.emit("OPNSSMP.PGD", bytes);
+                    if (data.startdat) |bytes| try inventory.emit("STARTDAT", bytes);
+                }
+            }
+            const data_bin = pbp.get("DATA.BIN") orelse &.{};
+            const pops = std.mem.startsWith(u8, data_bin, "PSISOIMG0000") or std.mem.startsWith(u8, data_bin, "PSTITLEIMG0000");
+            if (pops) inventory.suppress_dispatch = "DATA.PSP";
             try @import("containers.zig").walkPbp(task.input.bytes, &inventory, Inventory.emit);
-            break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").pbp };
+            if (pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
+                // Whole-PBP context; attach to the corresponding source section.
+                const section_output = try dispatch.adapter.extract(allocator, io, task.hash, section[0]);
+                contextual_outputs[if (section[0] == .pops) 0 else 1] = section_output;
+                var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.adapter.store, .dispatch = dispatch, .paths = .init(allocator) };
+                defer child.deinit();
+                try section_output.walk(allocator, io, &child, Inventory.emitView);
+                const index = inventory.paths.get(section[1]) orelse return error.MissingDataPsp;
+                const entry = &inventory.entries.items[index];
+                const tree = try allocator.create(InlineExtraction);
+                errdefer allocator.destroy(tree);
+                const hash = try allocator.dupe(u8, &entry.sha256.?);
+                errdefer allocator.free(hash);
+                tree.* = .{ .sha256 = hash, .size_bytes = entry.size_bytes.?, .extractor = section_output.provenance.value, .name_rule = if (section[0] == .psx) "identity" else "source_stem", .entries = try child.finish() };
+                entry.extraction = tree;
+                inventory.counts.stored += child.counts.stored;
+                inventory.counts.reused += child.counts.reused;
+            };
+            break :blk .{ .name = "Zig-PSP zPBPTool", .version = @import("extractor_versions").pbp, .options = &.{"in-memory"} };
         },
         else => blk: {
             output = try dispatch.adapter.extract(allocator, io, task.hash, task.kind);
@@ -251,7 +358,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
     };
     const entries = try inventory.finish();
     defer {
-        for (entries) |entry| allocator.free(entry.path);
+        for (entries) |entry| entry.deinit(allocator);
         allocator.free(entries);
     }
     try @import("catalog.zig").publishExtraction(allocator, io, dispatch.adapter.catalog, task.hash, task.input.bytes.len, entries, provenance, @tagName(task.kind));
@@ -270,13 +377,19 @@ fn reuseTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Di
         else => return err,
     };
     defer allocator.free(bytes);
-    const SavedEntry = struct { path: []const u8, type: []const u8, sha256: ?[]const u8 = null, size_bytes: ?u64 = null };
-    const Saved = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry };
+    const Saved = SavedTree;
     const parsed = try std.json.parseFromSlice(Saved, allocator, bytes, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
     if (!std.mem.eql(u8, parsed.value.sha256, &task.hash) or parsed.value.size_bytes != task.input.bytes.len) return error.CatalogConflict;
+    return reuseEntries(allocator, io, parsed.value.entries, dispatch);
+}
+
+const SavedEntry = struct { path: []const u8, type: []const u8, sha256: ?[]const u8 = null, size_bytes: ?u64 = null, extraction: ?SavedTree = null };
+const SavedTree = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry };
+
+fn reuseEntries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry, dispatch: *Dispatch) anyerror!?Counts {
     var counts: Counts = .{};
-    for (parsed.value.entries) |entry| {
+    for (entries) |entry| {
         try validatePath(entry.path);
         if (std.mem.eql(u8, entry.type, "directory")) continue;
         const hash = entry.sha256 orelse return error.CatalogConflict;
@@ -302,7 +415,11 @@ fn reuseTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Di
         std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
         const actual = std.fmt.bytesToHex(digest, .lower);
         if (entry.size_bytes == null or payload.len != entry.size_bytes.? or !std.mem.eql(u8, &actual, hash)) return error.CorruptObject;
-        try dispatch.inspect(allocator, io, entry.path, view, actual);
+        if (entry.extraction) |tree| {
+            if (!std.mem.eql(u8, tree.sha256, hash) or tree.size_bytes != payload.len) return error.CatalogConflict;
+            const nested = (try reuseEntries(allocator, io, tree.entries, dispatch)) orelse return null;
+            counts.reused += nested.reused;
+        } else try dispatch.inspect(allocator, io, entry.path, view, actual);
         counts.reused += 1;
     }
     return counts;
@@ -335,7 +452,10 @@ pub fn processFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8, s
         return err;
     };
     defer input.release();
-    const result = try processIsoChecked(allocator, io, mapping, store, catalog, dispatch);
+    const result = if (std.ascii.endsWithIgnoreCase(path, ".pkg"))
+        try processPkgChecked(allocator, io, mapping, store, catalog, dispatch)
+    else
+        try processIsoChecked(allocator, io, mapping, store, catalog, dispatch);
     errdefer if (result) |value| value.deinit(allocator);
     const after = try file.stat(io);
     if (stat.size != after.size or stat.mtime.nanoseconds != after.mtime.nanoseconds or stat.ctime.nanoseconds != after.ctime.nanoseconds) return error.SourceChanged;

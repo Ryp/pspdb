@@ -10,6 +10,28 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Patch an output copy; never mutate Zig's dependency cache.
+    const sdk = b.dependency("zig_psp", .{ .target = target, .optimize = optimize });
+    const patch_pbp = b.addSystemCommand(&.{ "patch", "--silent", "--output" });
+    const pbp_source = patch_pbp.addOutputFileArg("pbp.zig");
+    patch_pbp.addFileArg(sdk.path("tools/pbp/src/main.zig"));
+    patch_pbp.addFileArg(b.path("../tools/patches/zig-psp-pbp-memory.patch"));
+    module.addImport("zig_psp_pbp", b.createModule(.{
+        .root_source_file = pbp_source,
+        .target = target,
+        .optimize = optimize,
+    }));
+
+    const patch_sfo = b.addSystemCommand(&.{ "patch", "--silent", "--output" });
+    const sfo_source = patch_sfo.addOutputFileArg("sfo.zig");
+    patch_sfo.addFileArg(sdk.path("tools/sfo/src/main.zig"));
+    patch_sfo.addFileArg(b.path("../tools/patches/zig-psp-sfo-memory.patch"));
+    module.addImport("zig_psp_sfo", b.createModule(.{
+        .root_source_file = sfo_source,
+        .target = target,
+        .optimize = optimize,
+    }));
+
     module.addAnonymousImport("extractor_adapter", .{ .root_source_file = b.path("../tools/extract_external.py") });
 
     module.addAnonymousImport("catalog_status", .{ .root_source_file = b.path("../tools/catalog_status.py") });
@@ -34,6 +56,7 @@ pub fn build(b: *std.Build) void {
     });
     module.addImport("archive", archive.createModule());
     module.linkSystemLibrary("archive", .{});
+    module.linkSystemLibrary("crypto", .{});
     module.link_libc = true;
 
     const exe = b.addExecutable(.{ .name = "pspdb-ingest", .root_module = module });

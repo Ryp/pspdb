@@ -6,8 +6,8 @@ pub const State = @import("catalog_state.zig").State;
 pub const Cache = struct { root: []const u8, state: *const State };
 
 /// Only skip roots whose own result and reachable derived results are current.
-pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: [64]u8, size: u64) !bool {
-    const path = try std.fmt.allocPrint(allocator, "{s}/iso/v{s}/{s}-ingest.json", .{ cache.root, revisions.iso, digest });
+pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: [64]u8, size: u64, kind: []const u8) !bool {
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-ingest.json", .{ cache.root, kind, if (std.mem.eql(u8, kind, "pkg")) revisions.pkg else revisions.iso, digest });
     defer allocator.free(path);
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited) catch |err| switch (err) {
         error.FileNotFound => return false,
@@ -18,15 +18,29 @@ pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: 
     const parsed = std.json.parseFromSlice(Identity, allocator, bytes, .{ .ignore_unknown_fields = true }) catch return error.CatalogConflict;
     defer parsed.deinit();
     const record = parsed.value;
-    if (!std.mem.eql(u8, record.kind, "iso") or record.schema_version != 1 or
+    if (!std.mem.eql(u8, record.kind, kind) or record.schema_version != 1 or
         !std.mem.eql(u8, record.sha256, &digest) or record.size_bytes != size) return error.CatalogConflict;
-    return cache.state.fresh_isos.map.contains(&digest);
+    return if (std.mem.eql(u8, kind, "pkg")) cache.state.fresh_pkgs.map.contains(&digest) else cache.state.fresh_isos.map.contains(&digest);
 }
 
 /// One complete inventory per exact ISO. Neither the UID nor an inventory hash
 /// participates in identity. No machine-local source/store paths are published.
 pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: processor.Result) !void {
     const fields = result.metadata;
+    if (result.kind == .pkg) {
+        const record = .{
+            .kind = "pkg",
+            .schema_version = @as(u32, 1),
+            .sha256 = @as([]const u8, &result.sha256),
+            .sha1 = @as([]const u8, &result.sha1),
+            .size_bytes = result.size_bytes,
+            .metadata = .{ .content_id = result.content_id, .content_type = result.content_type, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware },
+        };
+        const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries };
+        try writeRecord(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);
+        try writeRecord(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "ingest", record);
+        return;
+    }
     const record = .{
         .kind = "iso",
         .schema_version = @as(u32, 1),
@@ -109,7 +123,7 @@ fn equal(a: std.json.Value, b: std.json.Value) bool {
 
 /// Publish external extractor metadata and the same inventory shape as ISO.
 pub fn publishExtraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []processor.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8) !void {
-    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "strip_suffix" else null;
+    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce")) "source_stem" else if (std.mem.eql(u8, kind, "gzip")) "decoded_suffix" else if (std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "strip_suffix" else null;
     const tree = .{
         .kind = "tree",
         .schema_version = @as(u32, 1),

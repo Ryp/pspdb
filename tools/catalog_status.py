@@ -57,8 +57,14 @@ def catalog_status(root, current=None, unavailable=None):
             else:
                 trees.pop(digest, None)
             selected[digest] = revision
-    for digest, tree in trees.items():
+    def nested_entries(tree):
         for entry in tree['entries']:
+            yield entry
+            if entry.get('extraction'):
+                yield from nested_entries(entry['extraction'])
+
+    for digest, tree in trees.items():
+        for entry in nested_entries(tree):
             if entry['type'] == 'file':
                 child = entry['sha256']
                 if not HASH.fullmatch(child):
@@ -74,6 +80,14 @@ def catalog_status(root, current=None, unavailable=None):
                   'missing current revision' if str(selected[digest]) != extract_external.versions()[kind] else
                   'extractor unavailable' if expected is None else
                   'extractor changed' if actual != expected else None)
+        if not reason:
+            for entry in nested_entries(tree):
+                contextual = entry.get('extraction')
+                if contextual and (contextual['sha256'] != entry['sha256'] or contextual['size_bytes'] != entry['size_bytes']):
+                    raise ValueError('Contextual extraction source mismatch')
+                if contextual and contextual['extractor'] != current.get('psx' if contextual['extractor']['name'] == 'PSXtract-2' else 'pops'):
+                    reason = 'contextual extractor changed'
+                    break
         if reason:
             stale.append({'sha256': digest, 'kind': kind, 'reason': reason,
                           'recorded': actual, 'expected': expected,
@@ -88,8 +102,11 @@ def catalog_status(root, current=None, unavailable=None):
                 affected.add(parent)
                 queue.append(parent)
     roots = {digest for digest, kind in kinds.items() if kind == 'iso'}
+    packages = {digest for digest, kind in kinds.items() if kind == 'pkg'}
     return {'provenance': current, 'unavailable': unavailable, 'stale': stale,
             'affected_isos': sorted(roots & affected),
+            'affected_pkgs': sorted(packages & affected),
+            'fresh_pkgs': {digest: True for digest in sorted(packages - affected)},
             'fresh_trees': fresh, 'fresh_isos': {digest: True for digest in sorted(roots - affected)}}
 
 
@@ -115,6 +132,9 @@ def main():
             if item['unavailable']:
                 print(f"       {item['unavailable']}")
         print(f"{len(report['stale'])} trees need attention; {len(report['affected_isos'])} affected ISO roots.")
+        print(f"{len(report['affected_pkgs'])} affected PKG roots.")
+        for digest in report['affected_pkgs']:
+            print(f'  pkg {digest}')
         for digest in report['affected_isos']:
             print(f'  iso {digest}')
     return 0

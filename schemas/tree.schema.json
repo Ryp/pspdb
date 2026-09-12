@@ -63,9 +63,10 @@
       "type": "string",
       "enum": [
         "source_stem",
-        "strip_suffix"
+        "strip_suffix",
+        "decoded_suffix", "identity"
       ],
-      "description": "For a single generated child, derive its occurrence name from the parent while keeping a stable inventory path."
+      "description": "For a single generated child, derive its occurrence name from the parent while keeping a stable inventory path. decoded_suffix removes compression and preserves the detected output format suffix; unknown binary data retains the uncompressed source name."
     }
   },
   "$defs": {
@@ -108,6 +109,9 @@
             },
             "sha256": {
               "$ref": "#/$defs/hash"
+            },
+            "extraction": {
+              "$ref": "#/$defs/inlineExtraction"
             }
           }
         }
@@ -128,6 +132,69 @@
     "hash": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
+    },
+    "inlineExtraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "size_bytes",
+        "extractor",
+        "entries",
+        "name_rule"
+      ],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "extractor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "options"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "version": {
+              "type": "string",
+              "description": "Extractor revision; the parent directory is v followed by this revision in a versioned catalog."
+            }
+          }
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entry"
+          }
+        },
+        "name_rule": {
+          "type": "string",
+          "enum": [
+            "source_stem",
+            "strip_suffix",
+            "decoded_suffix", "identity"
+          ],
+          "description": "For a single generated child, derive its occurrence name from the parent while keeping a stable inventory path."
+        }
+      }
     }
   }
 }

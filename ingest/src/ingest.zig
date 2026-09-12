@@ -171,7 +171,7 @@ const Pool = struct {
                 };
                 break :blk stat.kind;
             } else entry.kind;
-            if (kind == .directory or (kind == .file and (isIso(entry.name) or isZip(entry.name)))) {
+            if (kind == .directory or (kind == .file and (isIso(entry.name) or isPkg(entry.name) or isZip(entry.name)))) {
                 const child = try std.Io.Dir.path.join(self.allocator, &.{ path, entry.name });
                 self.enqueue(child, if (kind == .directory) .directory else if (isZip(entry.name)) .zip else .iso) catch |err| {
                     self.allocator.free(child);
@@ -289,7 +289,7 @@ const Pool = struct {
         var found: usize = 0;
         while (try iterator.next()) |entry| {
             const name = try source.archive.name(entry);
-            if (!isIso(name)) {
+            if (!isIso(name) and !isPkg(name)) {
                 self.mutex.lockUncancelable(self.io);
                 self.stats.ignored_members += 1;
                 self.mutex.unlock(self.io);
@@ -314,7 +314,7 @@ const Pool = struct {
         self.mutex.lockUncancelable(self.io);
         self.stats.zip_archives += 1;
         self.mutex.unlock(self.io);
-        if (found == 0) log(self.io, "Skipped ZIP {s}: no ISO members\n", .{path});
+        if (found == 0) log(self.io, "Skipped ZIP {s}: no ISO/PKG members\n", .{path});
     }
 
     fn processZipMember(self: *Pool, member: Member, dispatch: ?*processor.Dispatch) !?processor.Result {
@@ -324,7 +324,7 @@ const Pool = struct {
             return err;
         };
         defer input.release();
-        return processor.processIsoChecked(self.allocator, self.io, input.bytes, self.store, self.skipCache(), dispatch);
+        return if (isPkg(member.name)) processor.processPkgChecked(self.allocator, self.io, input.bytes, self.store, self.skipCache(), dispatch) else processor.processIsoChecked(self.allocator, self.io, input.bytes, self.store, self.skipCache(), dispatch);
     }
 
     fn extract(self: *Pool, extraction: Extraction) void {
@@ -344,10 +344,26 @@ const Pool = struct {
         self.mutex.lockUncancelable(self.io);
         self.stats.skipped += 1;
         self.mutex.unlock(self.io);
-        log(self.io, "Skipped {s}: ISO already in catalog\n", .{path});
+        log(self.io, "Skipped {s}: source already in catalog\n", .{path});
     }
 
     fn printSummary(self: *Pool, path: []const u8, result: processor.Result) void {
+        if (result.kind == .pkg) {
+            const line = std.json.Stringify.valueAlloc(self.allocator, .{
+                .source = path,
+                .kind = "pkg",
+                .content_id = result.content_id,
+                .pkg_bytes = result.size_bytes,
+                .sha256 = &result.sha256,
+                .sha1 = &result.sha1,
+                .entry_count = result.entries.len,
+                .stored_objects = result.stored,
+                .reused_objects = result.reused,
+            }, .{}) catch return;
+            defer self.allocator.free(line);
+            log(self.io, "{s}\n", .{line});
+            return;
+        }
         // JSON escapes control characters in labels and preserves unknown fields.
         const line = std.json.Stringify.valueAlloc(self.allocator, .{
             .source = path,
@@ -405,7 +421,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folder: []const u8, worker_
         .state = state,
         .extractor_adapter = extractor_adapter,
         .scan_progress = root.start("Scanning directories", 0),
-        .iso_progress = root.start("ISO intake", 0),
+        .iso_progress = root.start("ISO/PKG intake", 0),
         .extraction_progress = root.start("Pending ISO extractions", 0),
     };
     defer pool.scan_progress.end();
@@ -478,4 +494,8 @@ test "intake gate leaves workers free for discovery and child extraction" {
     try std.testing.expectEqual(null, pool.takeReady());
     pool.finish(first.kind);
     try std.testing.expect(pool.takeReady().?.isIntake());
+}
+
+fn isPkg(name: []const u8) bool {
+    return std.ascii.endsWithIgnoreCase(name, ".pkg");
 }

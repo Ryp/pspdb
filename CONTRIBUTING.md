@@ -28,6 +28,9 @@ catalog/iso/v1/<source-sha256>-ingest.json
 catalog/iso/v1/<source-sha256>-tree.json
 ```
 
+PKG inputs use `catalog/pkg/v4/<source-sha256>-ingest.json` and the adjacent
+`-tree.json`; the website shows them under `psn/`.
+
 Include the new nested extractor pairs too, such as `prx/v1/` and `gzip/v1/`.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same

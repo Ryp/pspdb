@@ -260,6 +260,14 @@ function expandable(node) { return node.type === "directory" || Boolean(node.ext
 function extractedName(source, path, rule) {
   if (rule === "source_stem") return source.replace(/\.[^.]*$/, "") + path.slice(path.indexOf("."));
   if (rule === "strip_suffix") return source.replace(/\.[^.]*$/, "");
+  if (rule === "decoded_suffix") {
+    let stem = source.replace(/\.[^.]*$/, "");
+    const dot = path.indexOf(".");
+    const suffix = dot < 0 ? "" : path.slice(dot);
+    if (!suffix || suffix === ".bin") return stem;
+    if (suffix === ".elf") stem = stem.replace(/\.(?:elf|prx)$/i, "");
+    return stem.endsWith(suffix) ? stem : stem + suffix;
+  }
   return path;
 }
 
@@ -277,21 +285,48 @@ function addInventory(parent, entries, extractions = {}, ancestors = new Set(), 
     if (entry.type === "directory") {
       if (!directories.has(entry.path)) directories.set(entry.path, add(directory, name));
     } else {
-      const node = add(directory, name, { type: "file", size: entry.size_bytes, hash: entry.sha256 });
-      attachExtraction(node, extractions, ancestors);
+      const node = add(directory, name, { type: "file", size: entry.size_bytes, hash: entry.sha256, redump: entry.redump || [] });
+      attachExtraction(node, extractions, ancestors, entry.extraction);
     }
   }
 }
 
-function attachExtraction(node, extractions, ancestors = new Set()) {
-  const extraction = extractions[node.hash];
-  if (!extraction || extraction.size_bytes !== node.size || ancestors.has(node.hash)) return;
+function attachExtraction(node, extractions, ancestors = new Set(), contextual = null) {
+  const extraction = contextual || extractions[node.hash];
+  if (!extraction || (contextual && extraction.sha256 !== node.hash) || extraction.size_bytes !== node.size || ancestors.has(node.hash)) return;
   node.extraction = extraction.extractor.name;
   addInventory(node, extraction.entries, extractions, new Set([...ancestors, node.hash]), extraction.name_rule);
 }
 
 function addGroup(parent, name, data = {}) {
   return add(parent, name, { ...data, virtual: true });
+}
+
+function packageSerial(metadata) {
+  const id = metadata.title_id?.trim() || metadata.content_id?.match(/^[^-]+-([A-Z0-9]{9})_/i)?.[1] || "";
+  return id.toUpperCase().replace(/^([A-Z0-9]{4})-?([0-9]{5})$/, "$1-$2");
+}
+
+function packageLabels(packages) {
+  const groups = new Map();
+  for (const pkg of packages) {
+    const metadata = pkg.metadata || {};
+    const title = metadata.title?.trim().replace(/\s+/g, " ") || "Untitled package";
+    const id = packageSerial(metadata);
+    const base = id ? `${id} ${title}` : title;
+    if (!groups.has(base)) groups.set(base, []);
+    groups.get(base).push({ pkg, id });
+  }
+  const labels = new Map();
+  for (const [base, members] of groups) {
+    const hashes = [...new Set(members.map(({ pkg }) => pkg.sha256))];
+    for (const { pkg, id } of members) {
+      let length = 8;
+      while (length < 64 && hashes.some(hash => hash !== pkg.sha256 && hash.slice(0, length) === pkg.sha256.slice(0, length))) length++;
+      labels.set(pkg.sha256, hashes.length > 1 || !id ? `${base} · ${pkg.sha256.slice(0, length)}` : base);
+    }
+  }
+  return labels;
 }
 
 function build(data) {
@@ -326,6 +361,21 @@ function build(data) {
     });
     attachExtraction(node, extractions);
   }
+  const packages = data.records.pkg || [];
+  if (packages.length) {
+    const psn = addGroup(root, "psn");
+    const labels = packageLabels(packages);
+    for (const pkg of packages) {
+      const metadata = pkg.metadata || {};
+      const node = add(psn, `${pkg.sha256}.pkg`, {
+        type: "file", hash: pkg.sha256, size: pkg.size_bytes,
+        displayName: labels.get(pkg.sha256),
+        gamePrefix: packageSerial(metadata) || null,
+        searchMetadata: metadata.content_id || "",
+      });
+      attachExtraction(node, extractions);
+    }
+  }
   function summarize(node) {
     node.children.sort((a, b) => (a.type === b.type ? 0 : a.type === "directory" ? -1 : 1)
       || (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : 0));
@@ -337,9 +387,9 @@ function build(data) {
   summarize(root);
   for (const node of nodes.values()) {
     node.displayPath = node.parent && node.parent !== root ? `${node.parent.displayPath}/${label(node)}` : label(node);
-    node.searchText = `${node.parent?.searchText || ""} ${node.name} ${node.displayName || ""} ${node.note || ""} ${node.hash || ""}`.toLowerCase();
+    node.searchText = `${node.parent?.searchText || ""} ${node.name} ${node.displayName || ""} ${node.note || ""} ${node.searchMetadata || ""} ${node.hash || ""}`.toLowerCase();
   }
-  $("catalog-count").textContent = `${isos.length} UMD images · ${number.format(root.files)} files`;
+  $("catalog-count").textContent = `${isos.length} UMD images · ${packages.length} PSN packages · ${number.format(root.files)} files`;
 }
 
 function url(node) { return "#" + node.path.split("/").map(encodeURIComponent).join("/"); }
