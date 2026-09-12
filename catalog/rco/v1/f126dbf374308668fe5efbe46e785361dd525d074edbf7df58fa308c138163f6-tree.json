@@ -1,0 +1,626 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "f126dbf374308668fe5efbe46e785361dd525d074edbf7df58fa308c138163f6",
+  "size_bytes": 175408,
+  "extractor": {
+    "name": "rcomage",
+    "sha256": "89c67f27264af74e75bb7a7e53322fd49e283686137409e4950a5cc3eb1813c7",
+    "options": [
+      "dump",
+      "<source>",
+      "structure.xml",
+      "--resdir",
+      "resources",
+      "--ini-dir",
+      "sha256:8eea70e7e7c3ed26b4866500a11fadb341d95f0a2d54774b733f80d1888681ee"
+    ],
+    "version": "1"
+  },
+  "entries": [
+    {
+      "path": "resources",
+      "type": "directory"
+    },
+    {
+      "path": "resources/tex_1seg.gim",
+      "type": "file",
+      "size_bytes": 4508,
+      "sha256": "582643d8607d16361249e8fa385cb8db9e40048bf5b315ce515b10be9726b323"
+    },
+    {
+      "path": "resources/tex_browser.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "8a78cf0d79c3e213ae468c847b21c10604faa2de099de96043bac8cc3b22b79e"
+    },
+    {
+      "path": "resources/tex_camera.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "c48f27ae589a33c33218d717fb0817a628297ff665b533b655a620732cbc8672"
+    },
+    {
+      "path": "resources/tex_cnf_date.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "678b70a9c24604e1bc1468a55408b4d12f70d1ef29c513933e9551a3de3a17d6"
+    },
+    {
+      "path": "resources/tex_cnf_display.gim",
+      "type": "file",
+      "size_bytes": 7084,
+      "sha256": "29b4965053151b4d32f641ba3193d6a02967abd2e9fc011880ef0625d26aa33c"
+    },
+    {
+      "path": "resources/tex_cnf_network.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "54337cd638a2f80fa4948a3ff0658dd04938ddcfce076e2c7b81545654d0516e"
+    },
+    {
+      "path": "resources/tex_cnf_password.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "242900b04ad80b06652118033e93cb57dd8995e7b0ab09ebd16c0b92ef6652b1"
+    },
+    {
+      "path": "resources/tex_cnf_photo.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "67107f1be23e0c68150acd973437c9c7bcde0a2aaa904e9ef269cb284d60229c"
+    },
+    {
+      "path": "resources/tex_cnf_psp.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "33502b7bc836b28e120f77ef14ca92d9e8e1597e4415b90ff26ae6f45ee391e8"
+    },
+    {
+      "path": "resources/tex_cnf_rss.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "0f0ccff20390082b845c40dcb8ff9475e1d3615b36a82bea5b4c9417713d1caf"
+    },
+    {
+      "path": "resources/tex_cnf_save_energy.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "16845558de86263d1055705be7bdf49579731f351d22e74308e7dce4834aa6c2"
+    },
+    {
+      "path": "resources/tex_cnf_sound.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "081d91e5f5b326dcc14890ea5273ac49a9bac0ea78d7b2552d253b586d8db8ab"
+    },
+    {
+      "path": "resources/tex_cnf_theme.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "058b25e37aea133e408e014cc30462d4ebbdb3990867402ff3ab16bbe1316707"
+    },
+    {
+      "path": "resources/tex_cnf_update.gim",
+      "type": "file",
+      "size_bytes": 4816,
+      "sha256": "fda2c18e8c32b3fc65a76cd7561115e478556d3315e69b38d8deb452ff6f0fe4"
+    },
+    {
+      "path": "resources/tex_cnf_usb.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "16f5ea9ca5009198d45881039ec835ae16f7bee333299743d7eceb5ba578c6aa"
+    },
+    {
+      "path": "resources/tex_cnf_video.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "21bc8d3d322484238fb2a78b583512e6ad0a6b7748d973b8882d9942901f420e"
+    },
+    {
+      "path": "resources/tex_fcs_1seg.gim",
+      "type": "file",
+      "size_bytes": 5924,
+      "sha256": "0770907a552c96b925d55ea97cee1fa389f22455d08dc0b8a71881e1f4186868"
+    },
+    {
+      "path": "resources/tex_fcs_MS.gim",
+      "type": "file",
+      "size_bytes": 9680,
+      "sha256": "97ac4fcf080a390b5068c34738c67edacc36ae1e354c7f0eae3986e94d65e2b4"
+    },
+    {
+      "path": "resources/tex_fcs_UMD.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "eedb9834d210dde18851988c47d5fdb320441e5068ec277990c34b62d7718100"
+    },
+    {
+      "path": "resources/tex_fcs_browser.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "5e01558af86db8ce7cc385f2d7c4e36111cdb2d42eae596fcf50e4e8eb1f3a13"
+    },
+    {
+      "path": "resources/tex_fcs_camera.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "b4846317158690890ffe626bd07147ebe326f9c0b5ce2daf7bb5abd7cd6f7e54"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_date.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "eb8a557c7a40f5e35f50c7bc1309adaedf0058cd28b4a81816714cba1a80d40a"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_display.gim",
+      "type": "file",
+      "size_bytes": 9008,
+      "sha256": "e8df3d36f4f12cf884c308a1013460a81b577f1cb0098189392e004739824630"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_network.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "5b988ff0df70ecec2c8874f858502ea428b2af6dd4cd20ec0a37b20b5a261a07"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_password.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "6e7847c0616b1bd7cffbc21b596e99df808e10c4cbe5cc80269de4ea05bbc0b6"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_photo.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "0191ad4f8756aeb963facb717b20f932dbf4429c61e2e37b8b6d390df665a759"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_psp.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "656175761846e9ee9827efb85429295e0123a58020a477d917056830ffe99d3b"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_rss.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "013e8dd196c89b50ad02415b1961dfc214f0f16fe5a60df7e1e846c5ced485fd"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_save_energy.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "02d602c3582885d5c43bdbcef566959f9bdf8e01772f8731a73397e6787327f8"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_sound.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "211ecb34752d7e22b382f2e9e814870d328d4aaf9905b212d2624b23eab9693a"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_theme.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "a8491537fa310447b83994beba845fad99531c48e2073488c6d9d0587961c7cf"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_update.gim",
+      "type": "file",
+      "size_bytes": 8144,
+      "sha256": "0126acca3761692b3312c6dc6a0c683b38a6124e6b6b3aa99121897d41ad53ef"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_usb.gim",
+      "type": "file",
+      "size_bytes": 10448,
+      "sha256": "9e396288469bbeacd636c4c3c5aec386b5663f5f47f466c4d4867d57a9109ee7"
+    },
+    {
+      "path": "resources/tex_fcs_cnf_video.gim",
+      "type": "file",
+      "size_bytes": 8912,
+      "sha256": "6b1ce2207e68aa18a6646783ccfd93f6067efa8fc5b3fd505914467aad8bd977"
+    },
+    {
+      "path": "resources/tex_fcs_help.gim",
+      "type": "file",
+      "size_bytes": 10448,
+      "sha256": "3b8d870f37705f332161f451fd0cf0ff6dd8ae1bbd79d8f1e9133f61ea253ddc"
+    },
+    {
+      "path": "resources/tex_fcs_lftv.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "9ca8355e5ed6e34979e1d77e17e1e84496fd319d6fe401c87fa60e7b164b0f92"
+    },
+    {
+      "path": "resources/tex_fcs_podcast.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "e8dbecbf84ce604b36ed8401d19684c95cb88b175a02c01fbd97d9fdda9e6c64"
+    },
+    {
+      "path": "resources/tex_fcs_premo.gim",
+      "type": "file",
+      "size_bytes": 10448,
+      "sha256": "e8b1c4ba9d8545d2ea22f656b613146a7647dcd4f07c095773096e70ef33039f"
+    },
+    {
+      "path": "resources/tex_fcs_savedata.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "83b11cddb154827f71c70eaa05da7058319372a39c2d7e439a61fc613cdc7024"
+    },
+    {
+      "path": "resources/tex_fcs_sharing.gim",
+      "type": "file",
+      "size_bytes": 9680,
+      "sha256": "086f6bafcb8fb35ed1e3d90c5456ae172cef2d810082aa2558cc813f4adb6157"
+    },
+    {
+      "path": "resources/tex_fcs_spot.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "8ba96a0d15c055e1094709077789bc025f6e036b5efbb6d9f257f0d86fdd1476"
+    },
+    {
+      "path": "resources/tex_fcs_update.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "d984759b6f7bd6173daca53f0c885450da3740be83548a2d6d906a8f7ae18661"
+    },
+    {
+      "path": "resources/tex_game.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "f19c97959020fa7bdb0ce6da0b40430d1307da61ef75fd280345abfb466eaa62"
+    },
+    {
+      "path": "resources/tex_help.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "58f96d8d81600b8f54cadda60954e119137b32317ec097f94f6de52b4c859b3e"
+    },
+    {
+      "path": "resources/tex_lftv.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "85c5e5be76b743fd1b6275a77645d29a426baa12259a1ef416afe744f8540554"
+    },
+    {
+      "path": "resources/tex_ms.gim",
+      "type": "file",
+      "size_bytes": 3536,
+      "sha256": "79893c4d7262a3ed2c6f1a66d139c1a1706815dc06b0fca97485a8e0459bbb61"
+    },
+    {
+      "path": "resources/tex_music.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "24030ccf17d850c27aa0931cc3dd940b0e02bf79f5e71b6dfa859af849e5d604"
+    },
+    {
+      "path": "resources/tex_network.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "260eef515271bd5d6d9e4f9934094f9c7c9ee79c9b07d04a387634cb8b94f594"
+    },
+    {
+      "path": "resources/tex_photo.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "f4d18cb8a51838df86b6275734fc7ce439a940ff10a8ebc7cc58df629a89c1ed"
+    },
+    {
+      "path": "resources/tex_podcast.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "3e979292505845b81dd8a396a7cb0b94e496eaa3f43af2fc2a1c60fcbaad43d6"
+    },
+    {
+      "path": "resources/tex_premo.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "3361aca42777acfb2bbcbb738ebb7fca21c5cd057af862a16ff2cb51889624fd"
+    },
+    {
+      "path": "resources/tex_savedata.gim",
+      "type": "file",
+      "size_bytes": 3536,
+      "sha256": "6103beda15e786db739255cd96a4121c2d5ea831614b60a23685be18b2b1bb42"
+    },
+    {
+      "path": "resources/tex_sdw_1seg.gim",
+      "type": "file",
+      "size_bytes": 2084,
+      "sha256": "37ceb6429013df7d1712eea10ed23c62762f82dce9cccd0e08ce4c11f0165fae"
+    },
+    {
+      "path": "resources/tex_sdw_MS.gim",
+      "type": "file",
+      "size_bytes": 3232,
+      "sha256": "c9f6650602ea731e1c47648a994294e46ac116c0da48ec4ba2971f2d55fd906a"
+    },
+    {
+      "path": "resources/tex_sdw_UMD.gim",
+      "type": "file",
+      "size_bytes": 3236,
+      "sha256": "8606dc636da939d352962232fc27e5d2f37f8a42aae6cee6f44c5da64951eb18"
+    },
+    {
+      "path": "resources/tex_sdw_browser.gim",
+      "type": "file",
+      "size_bytes": 2336,
+      "sha256": "2458e3a87f995805a266d6ffac7b6dfe59548947c4682042c3159d3003139088"
+    },
+    {
+      "path": "resources/tex_sdw_camera.gim",
+      "type": "file",
+      "size_bytes": 3236,
+      "sha256": "4dbba2e7f07167682075767d4ae819726e286fa0c506f7ee2c667e76bef1c4d6"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_date.gim",
+      "type": "file",
+      "size_bytes": 3244,
+      "sha256": "ab35ab61df2a4fe30acd3bcdca1c6a0428fc3741b14ef5632debe69c1fe5b292"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_display.gim",
+      "type": "file",
+      "size_bytes": 3248,
+      "sha256": "aa4195edec520e366d086a680d910b7a6023e57ab6aed5c687272fb9f66281ef"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_network.gim",
+      "type": "file",
+      "size_bytes": 3240,
+      "sha256": "f48bc3a202164b9e3c89ecd1d2df4d28764c2d64829dae5ba3d4789d09bd99d2"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_password.gim",
+      "type": "file",
+      "size_bytes": 3240,
+      "sha256": "243b8aa1a7ef7cc7b39963bd55e27ee6da3a636c1be93ddd9086e266468d8c5e"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_photo.gim",
+      "type": "file",
+      "size_bytes": 3240,
+      "sha256": "3b81934f5e6e0d0f065caeb2c07dcef438c346b5449c27cc73b2b9c176511b28"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_psp.gim",
+      "type": "file",
+      "size_bytes": 3236,
+      "sha256": "26536bf976ce170168ed164e1e6d3ae81eed3e5a6cbb14b39ca29c09488baa92"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_rss.gim",
+      "type": "file",
+      "size_bytes": 3236,
+      "sha256": "c8d9fda3826b5b302acba5d437dbdb27a5d260d1cb60d5a78e9efcb24cb18bc7"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_save_energy.gim",
+      "type": "file",
+      "size_bytes": 3244,
+      "sha256": "4c4f6b9df2f075a98c3b8ed5e72c371d00432dbfce46fa4d68d1814a4777ccf7"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_sound.gim",
+      "type": "file",
+      "size_bytes": 3240,
+      "sha256": "61e78cba17ce7ea41def7f41af3d97b4aba2e337d7bb14f3ac5fff246d8e9971"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_theme.gim",
+      "type": "file",
+      "size_bytes": 3236,
+      "sha256": "f5cdd488c560b27847e01ad0e23fa7c392630b1c7dae0fd4768bd0b3efebe60d"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_update.gim",
+      "type": "file",
+      "size_bytes": 3240,
+      "sha256": "6b0114b073aa746fd36b4c0c27c160fe2beb2163f1402e39d4c00961bf05687e"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_usb.gim",
+      "type": "file",
+      "size_bytes": 2472,
+      "sha256": "30731c0864be442ad4bddc55665ae60a6aebee466331ac0c7a29f8bd7982b3c6"
+    },
+    {
+      "path": "resources/tex_sdw_cnf_video.gim",
+      "type": "file",
+      "size_bytes": 3240,
+      "sha256": "6b19004853901555100591cb306505b6246fb0ea8b89f1aa67b612f4c59bb7d1"
+    },
+    {
+      "path": "resources/tex_sdw_help.gim",
+      "type": "file",
+      "size_bytes": 3232,
+      "sha256": "3b0231a71d03bb63e789e8cad33559e460a47c6e3d7caddc5cba7fa09f560341"
+    },
+    {
+      "path": "resources/tex_sdw_lftv.gim",
+      "type": "file",
+      "size_bytes": 2332,
+      "sha256": "85e2b134d575cf9a5ac74cf4660aaa0f79d935778b8cd3310256179504877f4d"
+    },
+    {
+      "path": "resources/tex_sdw_podcast.gim",
+      "type": "file",
+      "size_bytes": 2336,
+      "sha256": "ddb4cf830ec2c41a6c346a0681c5ef2bbe02cd4c90f1537e0cd14de7603237cc"
+    },
+    {
+      "path": "resources/tex_sdw_premo.gim",
+      "type": "file",
+      "size_bytes": 3236,
+      "sha256": "58a652e02784689054b5f69d59e36c591581cead81542424e1a5d3ef665e0b53"
+    },
+    {
+      "path": "resources/tex_sdw_savedata.gim",
+      "type": "file",
+      "size_bytes": 3236,
+      "sha256": "1bec57ba69c13b080aab782a39646a84c29200b3b0e9db35f773d20460ad9075"
+    },
+    {
+      "path": "resources/tex_sdw_sharing.gim",
+      "type": "file",
+      "size_bytes": 3240,
+      "sha256": "730a3a004c15ccf712c290452915bc55b7037d1f91c2e35900c7ba475d92342c"
+    },
+    {
+      "path": "resources/tex_sdw_spot.gim",
+      "type": "file",
+      "size_bytes": 2348,
+      "sha256": "a73cb68310657d207fc175ec898cde0a2251fa1b84a8143f44057e795a66f496"
+    },
+    {
+      "path": "resources/tex_sdw_update.gim",
+      "type": "file",
+      "size_bytes": 3236,
+      "sha256": "bcc0608857893ca352e2651c1b99e780f3a1ff8bcf57671a644e3bc42010468a"
+    },
+    {
+      "path": "resources/tex_sdwf_game.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "8ff60d89784b60d96e7d2d0eab021d54a44b144b3a334f63da356d260bbd8e1f"
+    },
+    {
+      "path": "resources/tex_sdwf_music.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "453d17578804b2eb48ebc66539b96eaa948277fb9975ea4e9362e56f9da918e0"
+    },
+    {
+      "path": "resources/tex_sdwf_ntwork.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "4dd257862f7d24d851fd3eed4b59fc357db0a402e1c83b06bd47f142d09e2e0e"
+    },
+    {
+      "path": "resources/tex_sdwf_photo.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "33a9d3494bd080147d8b42bbbdec9deda491249cdcf62f498c8a613a5a14cebe"
+    },
+    {
+      "path": "resources/tex_sdwf_system.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "f2b2c0a696a69d82ccb5669d60034283f5d586c11837f1000b746b25c44fcb1f"
+    },
+    {
+      "path": "resources/tex_sdwf_tv.gim",
+      "type": "file",
+      "size_bytes": 7076,
+      "sha256": "44c19e10010814226a0db3e5a26eb1a80ada4fd3b02467cce54c023aec635516"
+    },
+    {
+      "path": "resources/tex_sdwf_video.gim",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "a7317779a2cf7b465d840f1ac576c80536e220ae700611f95a3d04c7c6922fab"
+    },
+    {
+      "path": "resources/tex_sdwn_game.gim",
+      "type": "file",
+      "size_bytes": 9680,
+      "sha256": "c7732485e0516d0e63ab0d61264234d6945701d7b753b095f585736af288bb48"
+    },
+    {
+      "path": "resources/tex_sdwn_music.gim",
+      "type": "file",
+      "size_bytes": 9680,
+      "sha256": "b543e9959a9e8c6338ef7c294fa80389555dd5490bc177e16336027beeceba01"
+    },
+    {
+      "path": "resources/tex_sdwn_ntwork.gim",
+      "type": "file",
+      "size_bytes": 9680,
+      "sha256": "8d6e75dacb4c7a0ad6d40080e2f6e0d9af6fffc0816ba4bdffa3434bee060f8a"
+    },
+    {
+      "path": "resources/tex_sdwn_photo.gim",
+      "type": "file",
+      "size_bytes": 9680,
+      "sha256": "17bced8202c062749bbd522896c9575c7392360d069e2af9f5cb3ac24cb0e961"
+    },
+    {
+      "path": "resources/tex_sdwn_system.gim",
+      "type": "file",
+      "size_bytes": 9680,
+      "sha256": "7d6bb8dc2acb84cbdd1a1c59051edfe7168508ec8bf703c63746f3eda3d03854"
+    },
+    {
+      "path": "resources/tex_sdwn_tv.gim",
+      "type": "file",
+      "size_bytes": 9768,
+      "sha256": "214d1f97c62b6dd275fc8aa95b53a82d6d47cdfca49f6d9d873b7c34423c36f7"
+    },
+    {
+      "path": "resources/tex_sdwn_video.gim",
+      "type": "file",
+      "size_bytes": 9680,
+      "sha256": "d91f975153a92f1384bfb20c39ee983433786b0d6d15548cad4c886e27e2affb"
+    },
+    {
+      "path": "resources/tex_sharing.gim",
+      "type": "file",
+      "size_bytes": 7632,
+      "sha256": "6fafc5c2a22dde8771fedd791726cc1d6dc0419a2cad87aa5ef644785f221012"
+    },
+    {
+      "path": "resources/tex_spot.gim",
+      "type": "file",
+      "size_bytes": 3536,
+      "sha256": "13f7e0afb3f36d6a6898ed79b344f82e76910e0476c96fd50a088a2b2f054dd2"
+    },
+    {
+      "path": "resources/tex_system.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "5815ab6972b14b8d56ea7625f258b62cb1e861b0c457f7b564f579036a262e6a"
+    },
+    {
+      "path": "resources/tex_tv.gim",
+      "type": "file",
+      "size_bytes": 7708,
+      "sha256": "15b50a5d3756f7c6232b50764f89fae26cc200cd7e646b828a675816d9192d4b"
+    },
+    {
+      "path": "resources/tex_umd.gim",
+      "type": "file",
+      "size_bytes": 3536,
+      "sha256": "969a1c4b67d1f8f0f3afce4ca81632eb855dc4880cf576aec08d32fc711d665f"
+    },
+    {
+      "path": "resources/tex_update.gim",
+      "type": "file",
+      "size_bytes": 3536,
+      "sha256": "a365fb6dda4753cc00513edcf9620ff3933020439846f04cc2791f2caeeaca22"
+    },
+    {
+      "path": "resources/tex_video.gim",
+      "type": "file",
+      "size_bytes": 5328,
+      "sha256": "88afa45d574607d046cb6a470d1c9c84dcb8efd326a972643800618aa4ab4a84"
+    },
+    {
+      "path": "structure.xml",
+      "type": "file",
+      "size_bytes": 11787,
+      "sha256": "eb4bdc193bcfdbae367c3d7d8ccc595e1eeaaaedaae9512c547ca24afad84fe1"
+    }
+  ]
+}

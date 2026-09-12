@@ -1,0 +1,72 @@
+# Contributing catalog entries
+
+Catalog metadata and inventories are tracked in Git. Fork the repository, ingest
+your sources locally, and open a pull request containing new result pairs.
+Source images, archives, extracted file contents, and object stores stay local.
+
+## Generate a contribution
+
+Install the [build requirements and extractors](README.md#build-and-ingest), then
+run from the repository root:
+
+```sh
+uv sync --locked
+(cd ingest && zig build -Doptimize=ReleaseSafe)
+./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
+  --catalog .work/contribution --store /path/to/store
+```
+
+Use a fresh staging catalog for each contribution. Include the store option to
+produce nested extraction trees. This command writes metadata and hashes to the
+staging catalog; extracted bytes go only to your local object store.
+
+Copy **new pairs** into the same relative locations under `catalog/`, preserving
+existing files. For example:
+
+```text
+catalog/iso/v1/<source-sha256>-ingest.json
+catalog/iso/v1/<source-sha256>-tree.json
+```
+
+Include the new nested extractor pairs too, such as `prx/v2/` and `gzip/v2/`.
+A source already present at that revision does not need another contribution.
+If your generated inventory differs from an existing inventory at the same
+revision, report the discrepancy instead of replacing it. Tool executable hashes
+can differ between builds; retain the provenance emitted by your own ingestion
+for newly contributed records.
+
+## Validate and submit
+
+```sh
+uv run --locked python tools/validate_catalog.py
+# Compare against the main branch after staging your new files:
+git add catalog/
+uv run --locked python tools/validate_catalog.py --base origin/main
+uv run --locked pspdb-web export --catalog catalog --output dist/contribution-preview
+git diff --cached --stat
+```
+
+Commit the new pairs and open a PR against `main`. Describe the releases/serials
+and versions added, the ingester commit used, external tool versions/builds,
+and any extraction errors or unusual results. Keep local source paths out of the
+PR description. Whole-image hashes in the ingest records identify the sources.
+
+PR checks validate the JSON schemas, filenames, source identity and size
+consistency, paired records, extractor revisions, and tree paths. They also
+reject edits, renames, or deletions of existing catalog records. These checks
+validate catalog consistency; they cannot verify file contents without the
+original sources. CI does not need those sources or the extraction tools.
+
+Extractor fixes belong in a new revision: update
+[tools/extractor_versions.json](tools/extractor_versions.json), rebuild, and add
+results under the new `vN` folder. Keep historical results intact. The website
+selects the newest complete pair for each source.
+
+## Initial catalog
+
+The initial tracked catalog contains the previously published 47-ISO snapshot:
+1,084 metadata/tree pairs. Its metadata, inventories, executable hashes, and
+options were preserved when moving to versioned adjacent pairs. Legacy revision
+labels such as `iso-1` and `prx-2` became `1` and `2`; previously unnumbered PSAR
+and RCO adapters form their revision-1 baseline. This was a layout/provenance-label
+migration, not a new extraction run.

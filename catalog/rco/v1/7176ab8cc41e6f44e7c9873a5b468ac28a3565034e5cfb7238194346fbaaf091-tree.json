@@ -1,0 +1,32 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "7176ab8cc41e6f44e7c9873a5b468ac28a3565034e5cfb7238194346fbaaf091",
+  "size_bytes": 240,
+  "extractor": {
+    "name": "rcomage",
+    "sha256": "89c67f27264af74e75bb7a7e53322fd49e283686137409e4950a5cc3eb1813c7",
+    "options": [
+      "dump",
+      "<source>",
+      "structure.xml",
+      "--resdir",
+      "resources",
+      "--ini-dir",
+      "sha256:8eea70e7e7c3ed26b4866500a11fadb341d95f0a2d54774b733f80d1888681ee"
+    ],
+    "version": "1"
+  },
+  "entries": [
+    {
+      "path": "resources",
+      "type": "directory"
+    },
+    {
+      "path": "structure.xml",
+      "type": "file",
+      "size_bytes": 426,
+      "sha256": "c791fa64389b97c7866da62fb5063439e566adefba5902d7b79da8f6397ad092"
+    }
+  ]
+}

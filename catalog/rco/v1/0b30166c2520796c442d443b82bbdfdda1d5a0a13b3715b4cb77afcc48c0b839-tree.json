@@ -1,0 +1,38 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "0b30166c2520796c442d443b82bbdfdda1d5a0a13b3715b4cb77afcc48c0b839",
+  "size_bytes": 10988,
+  "extractor": {
+    "name": "rcomage",
+    "sha256": "89c67f27264af74e75bb7a7e53322fd49e283686137409e4950a5cc3eb1813c7",
+    "options": [
+      "dump",
+      "<source>",
+      "structure.xml",
+      "--resdir",
+      "resources",
+      "--ini-dir",
+      "sha256:8eea70e7e7c3ed26b4866500a11fadb341d95f0a2d54774b733f80d1888681ee"
+    ],
+    "version": "1"
+  },
+  "entries": [
+    {
+      "path": "resources",
+      "type": "directory"
+    },
+    {
+      "path": "resources/mdl_bg.gmo",
+      "type": "file",
+      "size_bytes": 29248,
+      "sha256": "88aa6ed5068658e93c5fe19f613d8cc2751a7ef5a93ce556967c10e0dff77960"
+    },
+    {
+      "path": "structure.xml",
+      "type": "file",
+      "size_bytes": 2588,
+      "sha256": "ecf46fa35aadc2517c27956584ed5ccaa4a4c10840051a1ab1827047c083623b"
+    }
+  ]
+}

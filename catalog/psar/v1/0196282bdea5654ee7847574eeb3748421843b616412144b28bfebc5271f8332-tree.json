@@ -1,0 +1,2054 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "0196282bdea5654ee7847574eeb3748421843b616412144b28bfebc5271f8332",
+  "size_bytes": 20544736,
+  "extractor": {
+    "name": "pspdecrypt",
+    "sha256": "5511936205cdb38f05165964c34b12be8797075644537ed0c4d74ad865d71a2d",
+    "options": [
+      "-O",
+      "<output>",
+      "<source>"
+    ],
+    "version": "1"
+  },
+  "entries": [
+    {
+      "path": "F0",
+      "type": "directory"
+    },
+    {
+      "path": "F0/data",
+      "type": "directory"
+    },
+    {
+      "path": "F0/data/cert",
+      "type": "directory"
+    },
+    {
+      "path": "F0/data/cert/CA_LIST.cer",
+      "type": "file",
+      "size_bytes": 38338,
+      "sha256": "5f854afdb39649ee5599e5637fcc3d23d62d49716d243ca5b8b0ede5d7a1d92f"
+    },
+    {
+      "path": "F0/dic",
+      "type": "directory"
+    },
+    {
+      "path": "F0/dic/apotp.dic",
+      "type": "file",
+      "size_bytes": 1346880,
+      "sha256": "8d0adceaec32e8cc924a8bda68c973b597bcd2e61c2830c2a07bf732d9440836"
+    },
+    {
+      "path": "F0/dic/atokp.dic",
+      "type": "file",
+      "size_bytes": 939166,
+      "sha256": "8113e180bb5ce68c5e8dfc3252347234339a681ef85706d45d4eb26ad29497bd"
+    },
+    {
+      "path": "F0/dic/aux0.dic",
+      "type": "file",
+      "size_bytes": 14886,
+      "sha256": "ea2460d417c8e137fa25c959ee8339dd0066c4bfd6aad9c3172e2dc94b1a50d9"
+    },
+    {
+      "path": "F0/dic/aux1.dic",
+      "type": "file",
+      "size_bytes": 9647,
+      "sha256": "2a844460cb5c3b0b3e27122f9a30f23edd27108043710fc179844ee127d09b18"
+    },
+    {
+      "path": "F0/dic/aux2.dic",
+      "type": "file",
+      "size_bytes": 4631,
+      "sha256": "0d4e55e39b33eae09569eee57984b99bc7cd46e189d40e6d8b70bd74592467ac"
+    },
+    {
+      "path": "F0/dic/aux3.dic",
+      "type": "file",
+      "size_bytes": 13172,
+      "sha256": "d79adf5018ccb14aa289d5aa40cfd2aff43e4efb055532be9bed15df2f364330"
+    },
+    {
+      "path": "F0/font",
+      "type": "directory"
+    },
+    {
+      "path": "F0/font/arib.pgf",
+      "type": "file",
+      "size_bytes": 185512,
+      "sha256": "b58f41682e14be79dd0638777168258cd19c507d8216232db26a02927af034c9"
+    },
+    {
+      "path": "F0/font/gb3s1518.bwfon",
+      "type": "file",
+      "size_bytes": 1023372,
+      "sha256": "05c9991fc82c96672026d5e71da595d0a5b028a74607d726e613099db8a3699a"
+    },
+    {
+      "path": "F0/font/imagefont.bin",
+      "type": "file",
+      "size_bytes": 12331,
+      "sha256": "b583709522fd9ca7acb257bdca485b1f279d79baf53177c088bcdf1f77aa0de8"
+    },
+    {
+      "path": "F0/font/jpn0.pgf",
+      "type": "file",
+      "size_bytes": 1581700,
+      "sha256": "7a5773a751725ca041b62425b7714d247f268ec954717d365584108fa82bcebb"
+    },
+    {
+      "path": "F0/font/kr0.pgf",
+      "type": "file",
+      "size_bytes": 394192,
+      "sha256": "bac796bc7b0869d024ccccac33714a31961f548f19d4b65eeabb8a0b7beb137c"
+    },
+    {
+      "path": "F0/font/ltn0.pgf",
+      "type": "file",
+      "size_bytes": 69108,
+      "sha256": "9caade8e32074501b721277946a9056585ba92090842db5976339591c0f5b595"
+    },
+    {
+      "path": "F0/font/ltn1.pgf",
+      "type": "file",
+      "size_bytes": 65124,
+      "sha256": "3f71c97d9eb6c4a9736822e14a48a15b8ff46ca39f97faae2c44bc99bf5b610d"
+    },
+    {
+      "path": "F0/font/ltn10.pgf",
+      "type": "file",
+      "size_bytes": 42692,
+      "sha256": "ad2ff67767d555dd41a266ae456a3d663bc91f48822220501a59367303a1afd8"
+    },
+    {
+      "path": "F0/font/ltn11.pgf",
+      "type": "file",
+      "size_bytes": 41488,
+      "sha256": "087724b44c08227b42302d26b18fa1ed9fdb3059488f7bbe752fc36f7d509544"
+    },
+    {
+      "path": "F0/font/ltn12.pgf",
+      "type": "file",
+      "size_bytes": 43136,
+      "sha256": "233e6ce9541d5572df1f9b43bd802e097987eb7bfa286ce04dcfb18d873c8920"
+    },
+    {
+      "path": "F0/font/ltn13.pgf",
+      "type": "file",
+      "size_bytes": 41772,
+      "sha256": "9814d98a7bc72fc02beafa791bf953c5a7f86c46cc582d2716832a9f8cc33eba"
+    },
+    {
+      "path": "F0/font/ltn14.pgf",
+      "type": "file",
+      "size_bytes": 45184,
+      "sha256": "bb7bf6c67e1439b5fee2605328caf74bf583ff347eee659c1519762b61e65b04"
+    },
+    {
+      "path": "F0/font/ltn15.pgf",
+      "type": "file",
+      "size_bytes": 43044,
+      "sha256": "08ef126a7f40297f61eaab5add570940753b2a727050af043daf05db2f07e100"
+    },
+    {
+      "path": "F0/font/ltn2.pgf",
+      "type": "file",
+      "size_bytes": 72948,
+      "sha256": "f243bef19e2b51d6903703d16a1f9c5e6885b06d770ae47aeb3033f92b2d2967"
+    },
+    {
+      "path": "F0/font/ltn3.pgf",
+      "type": "file",
+      "size_bytes": 67700,
+      "sha256": "86c94f13fe09ed41a4b1d15a46be75b076ba41d32ccb3fbfa92ee639708ba71a"
+    },
+    {
+      "path": "F0/font/ltn4.pgf",
+      "type": "file",
+      "size_bytes": 72828,
+      "sha256": "d0ed6d7397ba0d42ab0d991da803ec2c2adb847efc453a89b07da6d4f717a94f"
+    },
+    {
+      "path": "F0/font/ltn5.pgf",
+      "type": "file",
+      "size_bytes": 68220,
+      "sha256": "9e4e4c89510965f0235161373e9318f7b2efca8e4729dc09655f0c45f8d73f44"
+    },
+    {
+      "path": "F0/font/ltn6.pgf",
+      "type": "file",
+      "size_bytes": 77032,
+      "sha256": "dbd43a14c0990856b8712f7077b3ec249070b52cb864f03624a25981c428ec2c"
+    },
+    {
+      "path": "F0/font/ltn7.pgf",
+      "type": "file",
+      "size_bytes": 71144,
+      "sha256": "aef70e8e4ff0d6284c8a379efd368e70bde7f99496ccc2f0adbcba4a9fbc4b3e"
+    },
+    {
+      "path": "F0/font/ltn8.pgf",
+      "type": "file",
+      "size_bytes": 41000,
+      "sha256": "3c842878632fae835f78f83aee6f74a91d255fc5fdb32b163340033645e6b17f"
+    },
+    {
+      "path": "F0/font/ltn9.pgf",
+      "type": "file",
+      "size_bytes": 40164,
+      "sha256": "2e175c98df0d02d97c1b5c2ce1c75991a20625163c6b79bae584b23d6137653c"
+    },
+    {
+      "path": "F0/kd",
+      "type": "directory"
+    },
+    {
+      "path": "F0/kd/amctrl.prx",
+      "type": "file",
+      "size_bytes": 6102,
+      "sha256": "977baf8255ed4c208e0c7532455e848c038be6b20a1c779b0d17e0bcdcc24d82"
+    },
+    {
+      "path": "F0/kd/ata.prx",
+      "type": "file",
+      "size_bytes": 18598,
+      "sha256": "f8134d458ed47d54acbb5c2cdacecb2fc44ee15762b74259edb6053eff434574"
+    },
+    {
+      "path": "F0/kd/audio.prx",
+      "type": "file",
+      "size_bytes": 14844,
+      "sha256": "e5920c32b87da1da7062496a60809001460eb940a268815b172bddfb0fe4dfac"
+    },
+    {
+      "path": "F0/kd/audiocodec_260.prx",
+      "type": "file",
+      "size_bytes": 4004,
+      "sha256": "56a6f2d54047dabafae5ec2c7e16c10cd27dd1d10794f7106afead417bee7f01"
+    },
+    {
+      "path": "F0/kd/avcodec.prx",
+      "type": "file",
+      "size_bytes": 19066,
+      "sha256": "48a4acd55b83e4a22cb2ca5fdb88e2127cb2dd54c61d7fa9eb52af8c082e2824"
+    },
+    {
+      "path": "F0/kd/cert_loader.prx",
+      "type": "file",
+      "size_bytes": 4020,
+      "sha256": "de9017872fc0e7ff2b768ca8515b465ad5de574ff7fa2ee07255b237e4848922"
+    },
+    {
+      "path": "F0/kd/chkreg.prx",
+      "type": "file",
+      "size_bytes": 2646,
+      "sha256": "0d7d63fcfd14506cf0d7eaac2c51f6b756a22d2d06b71483d5151843cc16cf58"
+    },
+    {
+      "path": "F0/kd/chnnlsv.prx",
+      "type": "file",
+      "size_bytes": 7502,
+      "sha256": "4659e5e76c3d6e2c86e429967768f597c7d66522a34acfe1e308a660aac318d6"
+    },
+    {
+      "path": "F0/kd/clockgen.prx",
+      "type": "file",
+      "size_bytes": 2870,
+      "sha256": "2fe6a33896855b4a8074e3f270b175f465cdcf10a322aa3db6f0c1bd74aa5ea8"
+    },
+    {
+      "path": "F0/kd/codec.prx",
+      "type": "file",
+      "size_bytes": 5814,
+      "sha256": "4add8768083d4e2e00a06318f5dfb78f1bec660691b3ff80a06b6880e4562cf1"
+    },
+    {
+      "path": "F0/kd/ctrl.prx",
+      "type": "file",
+      "size_bytes": 8970,
+      "sha256": "cbba243ec97d51240515fb82a82004b98fb9adff1826e2ec0311edf828b5bfd9"
+    },
+    {
+      "path": "F0/kd/display.prx",
+      "type": "file",
+      "size_bytes": 20334,
+      "sha256": "d0a3a93eb811991d943ce3a7162a0f35c551f71ca445123a983cbd41582b4582"
+    },
+    {
+      "path": "F0/kd/dmacman.prx",
+      "type": "file",
+      "size_bytes": 8986,
+      "sha256": "6aa70375d93d874372f7f7000252c56a6e029e148763615f7acfe7694d3c74af"
+    },
+    {
+      "path": "F0/kd/dve.prx",
+      "type": "file",
+      "size_bytes": 4416,
+      "sha256": "e47c53480d18b63e658fbdcc3f5bd9391792d3b81a678e2564df599febd78166"
+    },
+    {
+      "path": "F0/kd/exceptionman.prx",
+      "type": "file",
+      "size_bytes": 3992,
+      "sha256": "7f5a0b86d88bc402af09f56ee811d26472d4956ff27b2abb6e7e2f7c3c13dae5"
+    },
+    {
+      "path": "F0/kd/fatmsmod.prx",
+      "type": "file",
+      "size_bytes": 94370,
+      "sha256": "77ff9396a6be4294ca6859c6efc8a7d62c96ca7f3b5e29494c09225d7e6844e4"
+    },
+    {
+      "path": "F0/kd/g729.prx",
+      "type": "file",
+      "size_bytes": 5026,
+      "sha256": "940b857cbdfbee99996718173cccaae9f2316c55f94e8311989550bee17e4381"
+    },
+    {
+      "path": "F0/kd/ge.prx",
+      "type": "file",
+      "size_bytes": 28592,
+      "sha256": "f31f2540aa9216e12fca7700c7f7e63ce656be08d54b10d11d1de71180fee6bd"
+    },
+    {
+      "path": "F0/kd/hibari.prx",
+      "type": "file",
+      "size_bytes": 7670,
+      "sha256": "59a005385db7e44876782fa8981ba3dee7ba9ecf81a9f4471ea7c78819e6cad0"
+    },
+    {
+      "path": "F0/kd/hpremote_01g.prx",
+      "type": "file",
+      "size_bytes": 11340,
+      "sha256": "1b1d6e7957c6fcf313a6ca7c541c43560b2bdb1f89669241e86eb31356213299"
+    },
+    {
+      "path": "F0/kd/hpremote_02g.prx",
+      "type": "file",
+      "size_bytes": 15836,
+      "sha256": "2552be603bd604c0cc19249f840450f1a588437a38bdcea9cf425dcca0cdae53"
+    },
+    {
+      "path": "F0/kd/http_storage.prx",
+      "type": "file",
+      "size_bytes": 2560,
+      "sha256": "2b1b56a1d2e555cc223fc7348c0f68e24ab0208d1439b8b3f90e0e0091141ca0"
+    },
+    {
+      "path": "F0/kd/idmanager.prx",
+      "type": "file",
+      "size_bytes": 2894,
+      "sha256": "48905f7fdd1e07f160b73bad4d2a7dbaefe7d1ed16407909cac17b7e9ccf5eb3"
+    },
+    {
+      "path": "F0/kd/idstorage.prx",
+      "type": "file",
+      "size_bytes": 9970,
+      "sha256": "bbaf0046db008ab425feae1fa192e7d9b22d431a2abbf6756a4ffb678efa5e12"
+    },
+    {
+      "path": "F0/kd/ifhandle.prx",
+      "type": "file",
+      "size_bytes": 16314,
+      "sha256": "7cee0d1cdd908fcf4da81d0be3b3ea0453e6c30a2f5b7aa52c465436efe75e2f"
+    },
+    {
+      "path": "F0/kd/impose.prx",
+      "type": "file",
+      "size_bytes": 83874,
+      "sha256": "b564d1397f5a23876b0691f544cb8dce85414554278f6b56ebe4afb4309683cd"
+    },
+    {
+      "path": "F0/kd/init.prx",
+      "type": "file",
+      "size_bytes": 10308,
+      "sha256": "05ca0021c53550f2b46b35f37622d79f899302701c892222e89b8fe40baf6fed"
+    },
+    {
+      "path": "F0/kd/interruptman.prx",
+      "type": "file",
+      "size_bytes": 23246,
+      "sha256": "d36f67c5c3f89462833fb50c6ca243bebab121ab200721372f15dbdba9d69ff3"
+    },
+    {
+      "path": "F0/kd/iofilemgr.prx",
+      "type": "file",
+      "size_bytes": 28716,
+      "sha256": "bac58e4349cddd2d6f03961b269523809e5329c6dfaf4ad689e9c8c3db960d0a"
+    },
+    {
+      "path": "F0/kd/iofilemgr_dnas.prx",
+      "type": "file",
+      "size_bytes": 7860,
+      "sha256": "d98da3686ba8cf50b7eddc4b99390ea8d7352bfa9b417cdf168b9b72e452ef05"
+    },
+    {
+      "path": "F0/kd/irda.prx",
+      "type": "file",
+      "size_bytes": 6864,
+      "sha256": "7cf42964f26b3c967d3ee03663190eb3411b4c114b78c2549976e713a3806d70"
+    },
+    {
+      "path": "F0/kd/isofs.prx",
+      "type": "file",
+      "size_bytes": 30296,
+      "sha256": "638be3c2b22111ae4f205e1db6471b3288c40bccee01577d1810790b65585f37"
+    },
+    {
+      "path": "F0/kd/led.prx",
+      "type": "file",
+      "size_bytes": 3504,
+      "sha256": "2923041685e2c2971a06357fd8c5ff29f65bc1f7e09411e10d3a1f8c62019174"
+    },
+    {
+      "path": "F0/kd/lfatfs.prx",
+      "type": "file",
+      "size_bytes": 52528,
+      "sha256": "b153e96b0c3f633a02ea3261919d56624ded2028341b1bb3180b5bd59bebecac"
+    },
+    {
+      "path": "F0/kd/lflash_fatfmt.prx",
+      "type": "file",
+      "size_bytes": 6608,
+      "sha256": "d95b2b9e7ee161bcbe29f28d3e38cd3d08b7e011ecd686e2a6e063a81500b4c0"
+    },
+    {
+      "path": "F0/kd/libaac.prx",
+      "type": "file",
+      "size_bytes": 6414,
+      "sha256": "14c9adbd744a2680ff1cb8be53b054725054b081bbd3700d19ec81137b28d684"
+    },
+    {
+      "path": "F0/kd/libasfparser.prx",
+      "type": "file",
+      "size_bytes": 56844,
+      "sha256": "1963d02ef2b0f2d5c833bb5a9519a16a7d7ab263c24131972abc19cd55458c20"
+    },
+    {
+      "path": "F0/kd/libatrac3plus.prx",
+      "type": "file",
+      "size_bytes": 15666,
+      "sha256": "fd367bfd056537ebb82302951d7d0bbf1b54684638d8909964f3051b2c85099f"
+    },
+    {
+      "path": "F0/kd/libaudiocodec2.prx",
+      "type": "file",
+      "size_bytes": 20550,
+      "sha256": "20e6dbaf18404656efb2bd4f6b90992037183ba8c027f914867ff8192d2bf06d"
+    },
+    {
+      "path": "F0/kd/libdnas.prx",
+      "type": "file",
+      "size_bytes": 15904,
+      "sha256": "c80ef49e610197b66f9885cb27e64a70ca7fdb5fe57ff0902b58ef906f8bb7d5"
+    },
+    {
+      "path": "F0/kd/libdnas_core.prx",
+      "type": "file",
+      "size_bytes": 12654,
+      "sha256": "6080a8ee44bafd3112e7139276cb368c771455a53d12807bf741b7ad39a7f7bb"
+    },
+    {
+      "path": "F0/kd/libhttp.prx",
+      "type": "file",
+      "size_bytes": 110522,
+      "sha256": "85e14391e37fefee95a4bc7d84cc94e7a7fb471a34ef628d21ff6b02d3a59a3a"
+    },
+    {
+      "path": "F0/kd/libmp3.prx",
+      "type": "file",
+      "size_bytes": 6296,
+      "sha256": "7ad276bd3607428650723ed14349088d3d242a5d619bfd1a0ee6e98e9e8944f4"
+    },
+    {
+      "path": "F0/kd/libmp3_9094.prx",
+      "type": "file",
+      "size_bytes": 6014,
+      "sha256": "170c1bf1c07cc50b826172daed6047f62542df08e0e836232295174a71ef0b73"
+    },
+    {
+      "path": "F0/kd/libparse_http.prx",
+      "type": "file",
+      "size_bytes": 2542,
+      "sha256": "004e9233d04cf30cc261f126d5dd767777b53be60efab0d57e8f5b7c1897e876"
+    },
+    {
+      "path": "F0/kd/libparse_uri.prx",
+      "type": "file",
+      "size_bytes": 12070,
+      "sha256": "daedb11843f07bd164912e9afcafcd7ddecb60a479b728c918d9f9763fc92f71"
+    },
+    {
+      "path": "F0/kd/libssl.prx",
+      "type": "file",
+      "size_bytes": 213700,
+      "sha256": "ddc607f100cf37ea5b6c1f084e47ab4999bd9a56b4e199799b31aabe30ea1f3e"
+    },
+    {
+      "path": "F0/kd/loadcore.prx",
+      "type": "file",
+      "size_bytes": 39136,
+      "sha256": "aa3cc154a248487110ff63fc50428303be86bdf8cbed593018191c0c27d5e6da"
+    },
+    {
+      "path": "F0/kd/loadexec.prx",
+      "type": "file",
+      "size_bytes": 50358,
+      "sha256": "9894cfd7ff163971c278843424a79abc9aac35b3d6d23759ad0503d46b2d8997"
+    },
+    {
+      "path": "F0/kd/loadexec_02g.prx",
+      "type": "file",
+      "size_bytes": 50470,
+      "sha256": "bb06906077efd5204dd1f8abd084dd2818a358e35eb262007f3014e3ec2a8a59"
+    },
+    {
+      "path": "F0/kd/lowio.prx",
+      "type": "file",
+      "size_bytes": 53758,
+      "sha256": "abd4e35ec045df5da48e4555d1238bb02dd9c952a1fe500bb4a6efdc8ad6154a"
+    },
+    {
+      "path": "F0/kd/mcctrl.prx",
+      "type": "file",
+      "size_bytes": 5478,
+      "sha256": "3c8d7607e71022d50c412d33563b48adbab06117e9f2baac541502967b9832e1"
+    },
+    {
+      "path": "F0/kd/me_wrapper.prx",
+      "type": "file",
+      "size_bytes": 12474,
+      "sha256": "59892b299ecfe4e62164467ca81ecaeafaa29f73be710a91a622d80399f863ba"
+    },
+    {
+      "path": "F0/kd/mediaman.prx",
+      "type": "file",
+      "size_bytes": 5850,
+      "sha256": "8f20c6e5692427fca3d32c402884fd5b47bc83399502a0cd5ef5211c6f0ac714"
+    },
+    {
+      "path": "F0/kd/mediasync.prx",
+      "type": "file",
+      "size_bytes": 9536,
+      "sha256": "0ee982f413a63cd4ebcbb356e7e202cefe4d27bd618a74676f820d4a00ce0276"
+    },
+    {
+      "path": "F0/kd/memab.prx",
+      "type": "file",
+      "size_bytes": 13160,
+      "sha256": "48f412d27f93a4f1688640b3fab382ab4a78159bf8d7d24289f475d84ab63e66"
+    },
+    {
+      "path": "F0/kd/memlmd.prx",
+      "type": "file",
+      "size_bytes": 12832,
+      "sha256": "f3f995493fd5bf34fa3f7fdf7b8080707f0de98745f20d4e3530b0823debfaf7"
+    },
+    {
+      "path": "F0/kd/memlmd_02g.prx",
+      "type": "file",
+      "size_bytes": 13110,
+      "sha256": "21f9fe7f0d61c4287982e10112949e22ff5830d0145568c45994388f53987b04"
+    },
+    {
+      "path": "F0/kd/mesg_led.prx",
+      "type": "file",
+      "size_bytes": 33814,
+      "sha256": "12dce47d9952bf6ac2e0f28612d1d878b5dd6354536642f03eedd3959b537b70"
+    },
+    {
+      "path": "F0/kd/mesg_led_02g.prx",
+      "type": "file",
+      "size_bytes": 37790,
+      "sha256": "aa7b227b26c406cdd9371a6967e1d6bc24628c51cb3953264d5e6cb5157d2a36"
+    },
+    {
+      "path": "F0/kd/mgr.prx",
+      "type": "file",
+      "size_bytes": 51190,
+      "sha256": "c15002c516b924ae23e9138b2cb04ee17082a24388eed38d43e2fdff574dddb4"
+    },
+    {
+      "path": "F0/kd/mgvideo.prx",
+      "type": "file",
+      "size_bytes": 46918,
+      "sha256": "c8de42fcd3b51892a14e5f446580161e2134f87827e42cf25f32e0f06fd85b6e"
+    },
+    {
+      "path": "F0/kd/mlnbridge.prx",
+      "type": "file",
+      "size_bytes": 63950,
+      "sha256": "751410462e300e5a45fd0ba729b1678a70fb1e1077ed3a69d8f1a9daa3870971"
+    },
+    {
+      "path": "F0/kd/modulemgr.prx",
+      "type": "file",
+      "size_bytes": 39202,
+      "sha256": "062ed5538d8ee8536ac0d6f8a3a09edd221516571c1eb4de24667dff70958a3f"
+    },
+    {
+      "path": "F0/kd/mpeg.prx",
+      "type": "file",
+      "size_bytes": 32018,
+      "sha256": "6a31d1d1865ff66d6329d308ab37c1af9ebcf378d46e3e76347c6157a713d8c8"
+    },
+    {
+      "path": "F0/kd/mpeg_vsh.prx",
+      "type": "file",
+      "size_bytes": 43804,
+      "sha256": "263bc792886bbe596f2b930ed4a6a8c9259743ebe05992006cb3f579e0259ee2"
+    },
+    {
+      "path": "F0/kd/mpegbase_260.prx",
+      "type": "file",
+      "size_bytes": 7096,
+      "sha256": "341717b3514877560681a22031ec67bede627597bf21724ca84a2c751fa0aa53"
+    },
+    {
+      "path": "F0/kd/msaudio.prx",
+      "type": "file",
+      "size_bytes": 29878,
+      "sha256": "0f370f577e452d2ed84cbbb32ae17326d6a0c5f42c58ea6c7a29fe3dba530836"
+    },
+    {
+      "path": "F0/kd/msstor.prx",
+      "type": "file",
+      "size_bytes": 69432,
+      "sha256": "084f024e4691d15273c72f7676fc4c74c8c25234a061240eccf64ff4a66ad2c4"
+    },
+    {
+      "path": "F0/kd/np.prx",
+      "type": "file",
+      "size_bytes": 23678,
+      "sha256": "3c9eebe61d839c456d88ee2c3813e8212ce8b4d170244ab0f80684d3d8438be2"
+    },
+    {
+      "path": "F0/kd/np9660.prx",
+      "type": "file",
+      "size_bytes": 25804,
+      "sha256": "351c46ada62892b3449a200e6eaebb90e81b01fe30fb439396fba796d211e4ac"
+    },
+    {
+      "path": "F0/kd/np_auth.prx",
+      "type": "file",
+      "size_bytes": 12270,
+      "sha256": "2007a8f537e0a5b27a623ba5b73bb3235030a3b158a14c8ef6d03711db5ff96e"
+    },
+    {
+      "path": "F0/kd/np_core.prx",
+      "type": "file",
+      "size_bytes": 3936,
+      "sha256": "f994361d2ec765cc60cadcc6669f43d83b593936c69cab5fd6d9c6542e2da92b"
+    },
+    {
+      "path": "F0/kd/np_matching2.prx",
+      "type": "file",
+      "size_bytes": 202734,
+      "sha256": "f551a93a1ea9c53f1e8c7e22c6a7911760d0b4ab1050793b38cd9308920441bc"
+    },
+    {
+      "path": "F0/kd/np_service.prx",
+      "type": "file",
+      "size_bytes": 64278,
+      "sha256": "dd0b0f9e0c6cacc64dc1e193720ea7a48962ea915fc5c88fc01071974f54d661"
+    },
+    {
+      "path": "F0/kd/npdrm.prx",
+      "type": "file",
+      "size_bytes": 18230,
+      "sha256": "35dd1a1ccbbf5bf457ce444f9c5ebbe0f29019d345ea99fd0509e95482a1b228"
+    },
+    {
+      "path": "F0/kd/openpsid.prx",
+      "type": "file",
+      "size_bytes": 10310,
+      "sha256": "9ac88f79a66b6151006f7099e4244559ff4cb63ad7552c6a453bf93978971cb0"
+    },
+    {
+      "path": "F0/kd/pops.prx",
+      "type": "file",
+      "size_bytes": 1244694,
+      "sha256": "011f50008898ba7ee2447e98b2b063094ab189335f46d05f69b082febf943294"
+    },
+    {
+      "path": "F0/kd/popsman.prx",
+      "type": "file",
+      "size_bytes": 15336,
+      "sha256": "39aae27576dc13140b6a88c739c6f80f1e2800874a97dc5c330f0921b27986ca"
+    },
+    {
+      "path": "F0/kd/power.prx",
+      "type": "file",
+      "size_bytes": 30510,
+      "sha256": "72f87f27956b82737e9efac3f1640b67ad1ce27b268038d46bb69eaee6ece103"
+    },
+    {
+      "path": "F0/kd/psheet.prx",
+      "type": "file",
+      "size_bytes": 12610,
+      "sha256": "0ae4a7e0d7903c17a1d530f5283f696a0cf27b8d1e3816ed968d8a3387f0553e"
+    },
+    {
+      "path": "F0/kd/pspbtcnf.bin",
+      "type": "file",
+      "size_bytes": 3763,
+      "sha256": "a9801b60c869ff0a6e122ae907ea50247a817d8121822f3077ce29d1de396466"
+    },
+    {
+      "path": "F0/kd/pspbtcnf_02g.bin",
+      "type": "file",
+      "size_bytes": 3916,
+      "sha256": "3e5ac6dde32899142032f0036621588284ee6695a662ed40ce3b1dcc426632ac"
+    },
+    {
+      "path": "F0/kd/pspnet.prx",
+      "type": "file",
+      "size_bytes": 48938,
+      "sha256": "c2145dfb6b1b66689c0adc608075ff1c6a39eb6c76e39cbb98326d42ad7d61cf"
+    },
+    {
+      "path": "F0/kd/pspnet_adhoc.prx",
+      "type": "file",
+      "size_bytes": 34248,
+      "sha256": "c41d8512c907f5f6352b04d28a99bfc88e395efa8fe4bb1825e0b4fda1e753a4"
+    },
+    {
+      "path": "F0/kd/pspnet_adhoc_auth.prx",
+      "type": "file",
+      "size_bytes": 21068,
+      "sha256": "51172ad322509149d623869ce68611bb4a14ebbc2898dae9cd9d48121454b863"
+    },
+    {
+      "path": "F0/kd/pspnet_adhoc_discover.prx",
+      "type": "file",
+      "size_bytes": 5474,
+      "sha256": "8817f9832c2020e885c3740521d77d629b2785d6c410296a5cd1bcbcad73b22e"
+    },
+    {
+      "path": "F0/kd/pspnet_adhoc_download.prx",
+      "type": "file",
+      "size_bytes": 17614,
+      "sha256": "d4ec21a64ab977a25a96db363fe03691f245078e2bdf14acf774be3bbfd3ffab"
+    },
+    {
+      "path": "F0/kd/pspnet_adhoc_matching.prx",
+      "type": "file",
+      "size_bytes": 20540,
+      "sha256": "9b0202f58e328127318df53ffee6416125bb725ce909e9d6de25fae11a35bcff"
+    },
+    {
+      "path": "F0/kd/pspnet_adhoc_transfer_int.prx",
+      "type": "file",
+      "size_bytes": 10622,
+      "sha256": "21bf0c01a7d8b4880b055ef4d90e122fa7247904eee6e9d2730d4c15b970efaa"
+    },
+    {
+      "path": "F0/kd/pspnet_adhocctl.prx",
+      "type": "file",
+      "size_bytes": 28292,
+      "sha256": "a4c8a17615ce024634474324d1bc5a4a0a33cce4a2b6c889fdfdcfcdc3e2de89"
+    },
+    {
+      "path": "F0/kd/pspnet_apctl.prx",
+      "type": "file",
+      "size_bytes": 81988,
+      "sha256": "b673747606c0490c4d940af7a6b3ee80e3c013af13a4193872bab9a4a0262c5b"
+    },
+    {
+      "path": "F0/kd/pspnet_inet.prx",
+      "type": "file",
+      "size_bytes": 216206,
+      "sha256": "b811976684e6f2e020ffddfa819083dd8f01b236c6217e107abb2cc623bf0d9b"
+    },
+    {
+      "path": "F0/kd/pspnet_resolver.prx",
+      "type": "file",
+      "size_bytes": 11798,
+      "sha256": "50073abd6e70ee86613d3c724402fe6d49da2b91d4bc1ed2e10f30cd001d651c"
+    },
+    {
+      "path": "F0/kd/pspnet_upnp.prx",
+      "type": "file",
+      "size_bytes": 43188,
+      "sha256": "752dff8155ec8e97c7e23bcb7cd8002e85a4700fab40cf59a3317499c54b4bc4"
+    },
+    {
+      "path": "F0/kd/pspnet_wispr.prx",
+      "type": "file",
+      "size_bytes": 13398,
+      "sha256": "a6cb2266dea145eeaad418121188cf1304fdae4bfe2fbbab456b8e803631c3b3"
+    },
+    {
+      "path": "F0/kd/registry.prx",
+      "type": "file",
+      "size_bytes": 30804,
+      "sha256": "0242c058e3f9d00d560af3598c844d5c8bf6cb4f3986df761b3dbc59f05bc5a5"
+    },
+    {
+      "path": "F0/kd/resource",
+      "type": "directory"
+    },
+    {
+      "path": "F0/kd/resource/big5_table.dat",
+      "type": "file",
+      "size_bytes": 27946,
+      "sha256": "64f28322c5b480f9f45479152baf607829b301bbe7d17bc1b6c998c31c206de0"
+    },
+    {
+      "path": "F0/kd/resource/cp949_table.dat",
+      "type": "file",
+      "size_bytes": 47750,
+      "sha256": "8dce10fb349b90d7685b694ba0b5b4f7bc73ae47dd64986613abd033e2c6d63a"
+    },
+    {
+      "path": "F0/kd/resource/gbk_table.dat",
+      "type": "file",
+      "size_bytes": 48132,
+      "sha256": "7fcc69273be4ecfe3c8c9b4a1677a74d28ae86eb007d200a2888f593d23a5e45"
+    },
+    {
+      "path": "F0/kd/resource/impose.rsc",
+      "type": "file",
+      "size_bytes": 67576,
+      "sha256": "31214758fcdb68701b67242879e9c3af01e446cc4e3714783ea71e927a6daf6e"
+    },
+    {
+      "path": "F0/kd/resource/me_blimg.img",
+      "type": "file",
+      "size_bytes": 207900,
+      "sha256": "b768ae0e120136052e264208883d7935dc4c599c343202d57be417d64da4236b"
+    },
+    {
+      "path": "F0/kd/resource/me_blimg.img.2",
+      "type": "file",
+      "size_bytes": 155084,
+      "sha256": "a130a4a15a4852ba2b2e99e2ba6e31fff0623470fdc87b48da8309277c8f72c8"
+    },
+    {
+      "path": "F0/kd/resource/me_sdimg.img",
+      "type": "file",
+      "size_bytes": 537212,
+      "sha256": "4aad6ccd059f061a9e51c6fbc76e6690200e8edc1666d25b4df8be9f523bc0ab"
+    },
+    {
+      "path": "F0/kd/resource/me_t2img.img",
+      "type": "file",
+      "size_bytes": 582420,
+      "sha256": "529b9fa04c93e66fb9515331bfe7fc787fa6d77a3389cd3be6b89576f1b9c5e7"
+    },
+    {
+      "path": "F0/kd/resource/me_t2img.img.2",
+      "type": "file",
+      "size_bytes": 592960,
+      "sha256": "2177a5cab454b47d8d1fe39937bb1b15e35c99fecc674cd3490acb7e06e5b1ab"
+    },
+    {
+      "path": "F0/kd/resource/meimg.img",
+      "type": "file",
+      "size_bytes": 509284,
+      "sha256": "fb1e7f6ede14e3b587095b97188ee5cfae2368b72193f4ebeb5dab03c18a8c03"
+    },
+    {
+      "path": "F0/kd/resource/meimg.img.2",
+      "type": "file",
+      "size_bytes": 568816,
+      "sha256": "990f92e0d56a62112209886da3fabff50aa7a1cd94dac1f890046d7da8b6e296"
+    },
+    {
+      "path": "F0/kd/rtc.prx",
+      "type": "file",
+      "size_bytes": 19410,
+      "sha256": "afd9683b4df570cf895dd2ac8bd0ca4639eb9aac5aaf42f26292f36d62838e84"
+    },
+    {
+      "path": "F0/kd/sc_sascore.prx",
+      "type": "file",
+      "size_bytes": 11560,
+      "sha256": "955f459ba67827c9f95dbcf6f8b0d4780d207bae1dc6c47d9fb25aaa4d72a643"
+    },
+    {
+      "path": "F0/kd/semawm.prx",
+      "type": "file",
+      "size_bytes": 28942,
+      "sha256": "4b177c429ff2b615a5dba585245a92c36fa5f07671d1107deebff7308f911229"
+    },
+    {
+      "path": "F0/kd/sircs.prx",
+      "type": "file",
+      "size_bytes": 11468,
+      "sha256": "dc47d52b4e034d76a88b39e939df5ae0f69e3e656ecc7f99273ef9f981615a82"
+    },
+    {
+      "path": "F0/kd/syscon.prx",
+      "type": "file",
+      "size_bytes": 19102,
+      "sha256": "43ccf9871bed17bd160ec15cc2de8863280aad9edba6181bd8e81f0dd0110a79"
+    },
+    {
+      "path": "F0/kd/sysmem.prx",
+      "type": "file",
+      "size_bytes": 83902,
+      "sha256": "3537d3a1e2087598f401f9247c39daa8581f7cb867a119f00c14ca95f3627357"
+    },
+    {
+      "path": "F0/kd/systimer.prx",
+      "type": "file",
+      "size_bytes": 3426,
+      "sha256": "27d9519b8868709dfb2bacf93778b4f41f620d8b888837d8d49d7a673b443e6d"
+    },
+    {
+      "path": "F0/kd/threadman.prx",
+      "type": "file",
+      "size_bytes": 111010,
+      "sha256": "9aab301241ee2a783317612e55ffad20a3d8878b48f48ecd2a86d9dbf6c906cc"
+    },
+    {
+      "path": "F0/kd/umd9660.prx",
+      "type": "file",
+      "size_bytes": 30194,
+      "sha256": "9ee0146fe01c387fb11a91fdba24cd17a7579844cddbcad8e468fa8b124bebf1"
+    },
+    {
+      "path": "F0/kd/umdcache.prx",
+      "type": "file",
+      "size_bytes": 18516,
+      "sha256": "6cfe04a0e751fc796aa9398ce0d5587793852723e2fe9cfddeeb57ec71e0a461"
+    },
+    {
+      "path": "F0/kd/umdman.prx",
+      "type": "file",
+      "size_bytes": 72432,
+      "sha256": "51fb4a88e6820332662798f787a861521753a0d41625d1d331666e52d9ac936c"
+    },
+    {
+      "path": "F0/kd/usb.prx",
+      "type": "file",
+      "size_bytes": 41010,
+      "sha256": "16613679a5f6ccb71ae915bf686ae6175a78bdfbcdb1d78df6e292bb87e0528e"
+    },
+    {
+      "path": "F0/kd/usb1seg.prx",
+      "type": "file",
+      "size_bytes": 23412,
+      "sha256": "0be8addb017ad23a577a22b1f540266baafc3feefae85fde23032724a452d6ea"
+    },
+    {
+      "path": "F0/kd/usbacc.prx",
+      "type": "file",
+      "size_bytes": 3900,
+      "sha256": "a7259202d5b25e9bb7c5cb84bafdd083dc854fba172d313dcd002c1e9dcbbf03"
+    },
+    {
+      "path": "F0/kd/usbcam.prx",
+      "type": "file",
+      "size_bytes": 55144,
+      "sha256": "12662625c77462874464ba73c50de58d13891a4fb321aff3bb92f05d9d7f8303"
+    },
+    {
+      "path": "F0/kd/usbgps.prx",
+      "type": "file",
+      "size_bytes": 25606,
+      "sha256": "729d02a87ba79062674e0a5a061262f775f1486d07119d1c028bd2c6d8f65e58"
+    },
+    {
+      "path": "F0/kd/usbmic.prx",
+      "type": "file",
+      "size_bytes": 7680,
+      "sha256": "cfce262603987652b95b6ba88146b83249b0708d539b0f23523a704494d42fbd"
+    },
+    {
+      "path": "F0/kd/usbpspcm.prx",
+      "type": "file",
+      "size_bytes": 18454,
+      "sha256": "00e29849d42a9e5edac007e4f5bb818528fe27ca460956385aac7b2d823dc7ca"
+    },
+    {
+      "path": "F0/kd/usbstor.prx",
+      "type": "file",
+      "size_bytes": 10404,
+      "sha256": "6a6aece862d427678cf238445e3be05db63b5451b435e97b404a1b36dff0a2c6"
+    },
+    {
+      "path": "F0/kd/usbstorboot.prx",
+      "type": "file",
+      "size_bytes": 14446,
+      "sha256": "535d2f41fbe730f4a953f4c1769225f570d2b2816718d63770802ae9fd494493"
+    },
+    {
+      "path": "F0/kd/usbstormgr.prx",
+      "type": "file",
+      "size_bytes": 26164,
+      "sha256": "409a1a89031fef7262405dfe519ad38b4618bb97300992b5cb03963ef4c5e7ca"
+    },
+    {
+      "path": "F0/kd/usbstorms.prx",
+      "type": "file",
+      "size_bytes": 24632,
+      "sha256": "82d98fc2079433d43f23fb7e7ebb9083da4fa87fe9280e7336ac17aed32bbc66"
+    },
+    {
+      "path": "F0/kd/usersystemlib.prx",
+      "type": "file",
+      "size_bytes": 1924,
+      "sha256": "2c29dc1db86acae2302905512300246bc3c2e1b44fd7042aea8d8cc6a91e108d"
+    },
+    {
+      "path": "F0/kd/utility.prx",
+      "type": "file",
+      "size_bytes": 42754,
+      "sha256": "f2bde55eff3dde9fb955a1269f49159309974569292978fc3628a000c579d260"
+    },
+    {
+      "path": "F0/kd/vaudio.prx",
+      "type": "file",
+      "size_bytes": 6212,
+      "sha256": "c8408d15e7e40473e32b9bd6b64f58b4905f290977d7a3fe06b88c358d9468af"
+    },
+    {
+      "path": "F0/kd/videocodec_260.prx",
+      "type": "file",
+      "size_bytes": 4610,
+      "sha256": "9ca163a3c8996c18e1b351ab62ce0c17a761e1c079af85c926dd36cc2ad0f144"
+    },
+    {
+      "path": "F0/kd/vshbridge.prx",
+      "type": "file",
+      "size_bytes": 22522,
+      "sha256": "b2700d89fa2364c990a8cd2a3a08672a34ba90f26773ec77c6167c528ace8572"
+    },
+    {
+      "path": "F0/kd/wlan.prx",
+      "type": "file",
+      "size_bytes": 112800,
+      "sha256": "06629ad5c1e38e92526b54700ff8637b0446e2bbba91f69e50fb1ae5137978d5"
+    },
+    {
+      "path": "F0/kd/wlanfirm_magpie.prx",
+      "type": "file",
+      "size_bytes": 89620,
+      "sha256": "9e0ed666f71da845cf07004a4bcd711d451c36b259507e4822c8e1e3393167f9"
+    },
+    {
+      "path": "F0/kd/wlanfirm_voyager.prx",
+      "type": "file",
+      "size_bytes": 97522,
+      "sha256": "6cf532d0cde16ebe5d984d536c6052ed5ce0057fac4946707c06207f6e0f85c3"
+    },
+    {
+      "path": "F0/vsh",
+      "type": "directory"
+    },
+    {
+      "path": "F0/vsh/etc",
+      "type": "directory"
+    },
+    {
+      "path": "F0/vsh/etc/cptbl.dat",
+      "type": "file",
+      "size_bytes": 209312,
+      "sha256": "e475f00953372751ccb834898ed187d1d408c9c5dfbbea0d0a14c42e4eb01485"
+    },
+    {
+      "path": "F0/vsh/etc/index.dat",
+      "type": "file",
+      "size_bytes": 496,
+      "sha256": "3e002a3758ce5f9de664c482d997ffc84f7935a45695aaa1923e507aaed1a920"
+    },
+    {
+      "path": "F0/vsh/etc/version.txt",
+      "type": "file",
+      "size_bytes": 159,
+      "sha256": "a6239dca2455339eb56921230565af488acd178291034bbbf7b8bdd147a38f95"
+    },
+    {
+      "path": "F0/vsh/module",
+      "type": "directory"
+    },
+    {
+      "path": "F0/vsh/module/adhoc_transfer.prx",
+      "type": "file",
+      "size_bytes": 24654,
+      "sha256": "f7523781db80336443a295f7fd09acbf303b4ae8d3e898dfa1b493cae8286cd0"
+    },
+    {
+      "path": "F0/vsh/module/auth_plugin.prx",
+      "type": "file",
+      "size_bytes": 13328,
+      "sha256": "83501a07272ef0b101ae35415163a0cab10e18e53c5eea8c33a0b48bf43bc5dd"
+    },
+    {
+      "path": "F0/vsh/module/camera_plugin.prx",
+      "type": "file",
+      "size_bytes": 161260,
+      "sha256": "60cec59ccd20c7b352ec9f46ddd41961f49cd6f09ceb7a6d1ffd0abc958f457c"
+    },
+    {
+      "path": "F0/vsh/module/common_gui.prx",
+      "type": "file",
+      "size_bytes": 27012,
+      "sha256": "1b2859fb944d75b9d2b1a6eb2b9f765654e0377999cb3a3e6922350ecbd8f5b8"
+    },
+    {
+      "path": "F0/vsh/module/common_util.prx",
+      "type": "file",
+      "size_bytes": 18854,
+      "sha256": "05c44ffb3ab48d3809afae6009b42617fab0bd1afdf12fcd47e52662df02d0fe"
+    },
+    {
+      "path": "F0/vsh/module/content_browser.prx",
+      "type": "file",
+      "size_bytes": 194524,
+      "sha256": "e333db4dc89eb8acf5828b311e377b10ad3d867b68f8631cd28c46e1120ecd4c"
+    },
+    {
+      "path": "F0/vsh/module/dd_helper.prx",
+      "type": "file",
+      "size_bytes": 204082,
+      "sha256": "0a5f81895663201c4b58bd88d0864af350c580d480f3809573296e5e8e91532f"
+    },
+    {
+      "path": "F0/vsh/module/dd_helper_utility.prx",
+      "type": "file",
+      "size_bytes": 95766,
+      "sha256": "f6a5d3c6551691308954fec1da792097c1edd6986775c9527aacff0692ef396a"
+    },
+    {
+      "path": "F0/vsh/module/dialogmain.prx",
+      "type": "file",
+      "size_bytes": 38846,
+      "sha256": "c779d0a9648eb7a4a42b8aa748a4346128cd061d52d14fe4e4878391e69cd629"
+    },
+    {
+      "path": "F0/vsh/module/dnas_plugin.prx",
+      "type": "file",
+      "size_bytes": 9610,
+      "sha256": "6b50039c811b500ac3b823c5cdaa607558738852a77d1886dd2d696ad147596b"
+    },
+    {
+      "path": "F0/vsh/module/file_parser_base.prx",
+      "type": "file",
+      "size_bytes": 49802,
+      "sha256": "b7fd458b12cc4d53d3abeadf4a3d36cabad86710d539aa998dffc87ea4deb350"
+    },
+    {
+      "path": "F0/vsh/module/game_install_plugin.prx",
+      "type": "file",
+      "size_bytes": 18556,
+      "sha256": "7690eef079f5e25ee60652c08894dfce5bb1ef78cf3dfe82eb7daf4becfaa35b"
+    },
+    {
+      "path": "F0/vsh/module/game_plugin.prx",
+      "type": "file",
+      "size_bytes": 103322,
+      "sha256": "0d07b84ac6c5f2df9156f99eec78941cf88de3cadd2f4fd3f0217e72c5a2db41"
+    },
+    {
+      "path": "F0/vsh/module/heaparea1.prx",
+      "type": "file",
+      "size_bytes": 1808,
+      "sha256": "0ae8dda5f5c2facc9d27eb78af917256b789b8bb7070acfff6022b86092f9ded"
+    },
+    {
+      "path": "F0/vsh/module/heaparea2.prx",
+      "type": "file",
+      "size_bytes": 1794,
+      "sha256": "36c8f3a41c029b74106207f00735e78add856d003759a40a64f115cdcb2207ba"
+    },
+    {
+      "path": "F0/vsh/module/htmlviewer_plugin.prx",
+      "type": "file",
+      "size_bytes": 108228,
+      "sha256": "79f45ee950e91a913285c60cd0e15b7bcf3590f2c16606ac870ce591f6e085cb"
+    },
+    {
+      "path": "F0/vsh/module/htmlviewer_ui.prx",
+      "type": "file",
+      "size_bytes": 423202,
+      "sha256": "303feead9b942071d07053e30d93fbd3436f361dace3f78151596a0f0419a6b7"
+    },
+    {
+      "path": "F0/vsh/module/htmlviewer_utility.prx",
+      "type": "file",
+      "size_bytes": 37528,
+      "sha256": "16e9629a01311049591d7f9ffb4a38a8e7e41eb373d43997ad3faacc1deff531"
+    },
+    {
+      "path": "F0/vsh/module/hvauth_r.prx",
+      "type": "file",
+      "size_bytes": 5296,
+      "sha256": "99996aac4f393fd232e09c38c407e03b5a8e2d96f18d629dc37fbf1164467218"
+    },
+    {
+      "path": "F0/vsh/module/impose_plugin.prx",
+      "type": "file",
+      "size_bytes": 7678,
+      "sha256": "86cb8aa47b08e20882c862a148177770326deda31c6f36de48562e478279a1d7"
+    },
+    {
+      "path": "F0/vsh/module/launcher_plugin.prx",
+      "type": "file",
+      "size_bytes": 21612,
+      "sha256": "47aed973094a75b1e89a778b45e3e5afffe1cf4ce81bd6b3112db38f47712746"
+    },
+    {
+      "path": "F0/vsh/module/lftv_main_plugin.prx",
+      "type": "file",
+      "size_bytes": 443422,
+      "sha256": "d275216470f92af35338cbfb081d51f13c73ac3fc34f7f187d447c76a2f12629"
+    },
+    {
+      "path": "F0/vsh/module/lftv_middleware.prx",
+      "type": "file",
+      "size_bytes": 423334,
+      "sha256": "d5b2258fbcbd0294dfe8c40ab90655b4339fe861fb605961673b16dd7ef11d8c"
+    },
+    {
+      "path": "F0/vsh/module/lftv_plugin.prx",
+      "type": "file",
+      "size_bytes": 19078,
+      "sha256": "33c933f3243efb1358deb880ae90723ebd43fa7aaba47730d26c3e5c6ccc34f4"
+    },
+    {
+      "path": "F0/vsh/module/libfont_arib.prx",
+      "type": "file",
+      "size_bytes": 66030,
+      "sha256": "e7ae42d5d92409bf5e2dd994f24edd46755168b4468ffdadf23bd4c6237dbabd"
+    },
+    {
+      "path": "F0/vsh/module/libfont_hv.prx",
+      "type": "file",
+      "size_bytes": 51336,
+      "sha256": "cc2204c698759fe25b460304479f613192b46c65061a381e58e9d3a36cd03e3b"
+    },
+    {
+      "path": "F0/vsh/module/libpspvmc.prx",
+      "type": "file",
+      "size_bytes": 39506,
+      "sha256": "97870d522eca7d13d34d6181488db5d587a63b03a244f81ec961a40a73bc6bff"
+    },
+    {
+      "path": "F0/vsh/module/libslim.prx",
+      "type": "file",
+      "size_bytes": 91400,
+      "sha256": "18dfbd37e83dfa96f4e50110578e9f729e6d4d7b6c5077c5df0c185cc83812c7"
+    },
+    {
+      "path": "F0/vsh/module/libwww.prx",
+      "type": "file",
+      "size_bytes": 930992,
+      "sha256": "e3115ecd7a27c6aa0e1c723a863d2c374afe9478855c86e0368f6e2b3de861ea"
+    },
+    {
+      "path": "F0/vsh/module/mcore.prx",
+      "type": "file",
+      "size_bytes": 223946,
+      "sha256": "697638ec0bd9b196df70991e2d3c6c21bea4216ddff1e04062e8148a54a90c64"
+    },
+    {
+      "path": "F0/vsh/module/mlnusb.prx",
+      "type": "file",
+      "size_bytes": 25912,
+      "sha256": "3e2e82512aa0bcaa0a83da1499090cff9646da113d2a6b650eb2693ce96f89af"
+    },
+    {
+      "path": "F0/vsh/module/mm_flash.prx",
+      "type": "file",
+      "size_bytes": 937724,
+      "sha256": "fd4245f064619655cfb7623bc2a8779d01bf394a005c84ea7048200ecc78b46f"
+    },
+    {
+      "path": "F0/vsh/module/msgdialog_plugin.prx",
+      "type": "file",
+      "size_bytes": 8928,
+      "sha256": "f1bc39ef0b11ceec5dad7735cc7a381ee3813d83055ab489ab2373c3d69098dc"
+    },
+    {
+      "path": "F0/vsh/module/msvideo_main_plugin.prx",
+      "type": "file",
+      "size_bytes": 907744,
+      "sha256": "bbc107b647b788d9d0ba0fb8fee0ffcd41715bf3606a4199937e483e72fdf73c"
+    },
+    {
+      "path": "F0/vsh/module/msvideo_plugin.prx",
+      "type": "file",
+      "size_bytes": 17972,
+      "sha256": "d73d792acafb979e3fb0b965c55a073f5a0fd54d1986d67f76bc8d15c59da600"
+    },
+    {
+      "path": "F0/vsh/module/music_browser.prx",
+      "type": "file",
+      "size_bytes": 180806,
+      "sha256": "3bf96ee6b5ed1f29bd7b8f0f6877e6b6efc90d521fcbd1d1904ff2e8f1c746fb"
+    },
+    {
+      "path": "F0/vsh/module/music_main_plugin.prx",
+      "type": "file",
+      "size_bytes": 10880,
+      "sha256": "80d70a7252ab2d65c4314ccd2949d8bcefeb3a081dddd27b8edb708651d13c72"
+    },
+    {
+      "path": "F0/vsh/module/music_parser.prx",
+      "type": "file",
+      "size_bytes": 114790,
+      "sha256": "06f96a548e7674a1c54d9ddf20f9ae2b1bcdc27f0237578926b8ec2d34556447"
+    },
+    {
+      "path": "F0/vsh/module/music_player.prx",
+      "type": "file",
+      "size_bytes": 314200,
+      "sha256": "7c796b55c12fd8db9957718e32ae69cf0e1f9bca829bd50d23af71e7d7637830"
+    },
+    {
+      "path": "F0/vsh/module/netconf_plugin.prx",
+      "type": "file",
+      "size_bytes": 182252,
+      "sha256": "2629cd56417d56aeaaec1f30d7606374803dee3970cbe301b9a4ab81c32cf012"
+    },
+    {
+      "path": "F0/vsh/module/netconf_plugin_auto_bfl.prx",
+      "type": "file",
+      "size_bytes": 20744,
+      "sha256": "352bb5cefe91c030a5f95363b1b318393d7a30df3bfd9cb1d1c30fc7db39d186"
+    },
+    {
+      "path": "F0/vsh/module/netconf_plugin_auto_nec.prx",
+      "type": "file",
+      "size_bytes": 35902,
+      "sha256": "5f3a7bddb258d20801be15997c0ab5dab8b4b511895eeb67457d5b3c1d02cdc4"
+    },
+    {
+      "path": "F0/vsh/module/netfront.prx",
+      "type": "file",
+      "size_bytes": 1264126,
+      "sha256": "a7f81890e065a6be192bfa145969579b42165cf3af528c01d1400214fc3ba0ae"
+    },
+    {
+      "path": "F0/vsh/module/netplay_client_plugin.prx",
+      "type": "file",
+      "size_bytes": 39490,
+      "sha256": "5f644eb20a5e1410b25d60fbd6fa2bd5b8f70105c1eb01c8e98e8d4a871c371a"
+    },
+    {
+      "path": "F0/vsh/module/netplay_server_plus_utility.prx",
+      "type": "file",
+      "size_bytes": 20988,
+      "sha256": "272537f5f2e848821affbc760627d228fede52bae2ab3fa2b472bb077f1c7fea"
+    },
+    {
+      "path": "F0/vsh/module/netplay_server_utility.prx",
+      "type": "file",
+      "size_bytes": 20608,
+      "sha256": "18dea1d1a4d7c8bd4f4e20493389473526c56764f4aed8dffb5453e2f2e27284"
+    },
+    {
+      "path": "F0/vsh/module/npsignin_plugin.prx",
+      "type": "file",
+      "size_bytes": 35206,
+      "sha256": "a99c37351bbbecec3b6e8a13fd7d3aabd12b9fadd93dc10a0a9ad6358af3778b"
+    },
+    {
+      "path": "F0/vsh/module/oneseg_core.prx",
+      "type": "file",
+      "size_bytes": 455460,
+      "sha256": "3414fa7022586f9c1a9d7a52f34c9828d95f5248d22c05640c8dca31dc154c8e"
+    },
+    {
+      "path": "F0/vsh/module/oneseg_hal_toolbox.prx",
+      "type": "file",
+      "size_bytes": 41730,
+      "sha256": "cd52af9be2f97cdd542b47a26591156d19a090c267614afd484005c517e3db4c"
+    },
+    {
+      "path": "F0/vsh/module/oneseg_launcher_plugin.prx",
+      "type": "file",
+      "size_bytes": 15488,
+      "sha256": "0ce5ae3fbe70ab1f6bbb0c48ae30628febf2b76ec92f7541cf7a6f2a74f6cc05"
+    },
+    {
+      "path": "F0/vsh/module/oneseg_plugin.prx",
+      "type": "file",
+      "size_bytes": 641188,
+      "sha256": "92b626d1e46ef1fae856bac33296658f2e3dfb20f0034eb90ac2dcbd90a643b9"
+    },
+    {
+      "path": "F0/vsh/module/oneseg_sal.prx",
+      "type": "file",
+      "size_bytes": 16978,
+      "sha256": "7de53eabbb95dfa88e7173bfbaa213b7214b736c67aa0e33c8fa085b9b6fe83a"
+    },
+    {
+      "path": "F0/vsh/module/oneseg_sdk.prx",
+      "type": "file",
+      "size_bytes": 1443274,
+      "sha256": "f1105a525f243b532e5a005b1d6fdb1211c7cbb2aabc838cf507ae487706bf15"
+    },
+    {
+      "path": "F0/vsh/module/oneseg_sdkcore.prx",
+      "type": "file",
+      "size_bytes": 82280,
+      "sha256": "fed00d160443ce6b0a1ce12c5daff45616b9b0053cd5b9fcf45d20cb3fe8629a"
+    },
+    {
+      "path": "F0/vsh/module/opening_plugin.prx",
+      "type": "file",
+      "size_bytes": 61536,
+      "sha256": "1f03d97f709ee3428133d6aa03a3a985a53ea7abdb6ca359ee8878e9f8efe650"
+    },
+    {
+      "path": "F0/vsh/module/osk_plugin.prx",
+      "type": "file",
+      "size_bytes": 132138,
+      "sha256": "ca20379f0b869df05f6281e21a1b847399b2daf56623423c9ceea48e3b7c9cae"
+    },
+    {
+      "path": "F0/vsh/module/paf.prx",
+      "type": "file",
+      "size_bytes": 1756118,
+      "sha256": "11c857cfb06a40e1d68d25dd4e82e932a0b73695b5a3051f03a01160009eb0ca"
+    },
+    {
+      "path": "F0/vsh/module/pafmini.prx",
+      "type": "file",
+      "size_bytes": 936734,
+      "sha256": "5dbcbdb89f14b31a8a488e4795b01e7fbbb687734871543cd509230fab9dc3cc"
+    },
+    {
+      "path": "F0/vsh/module/photo_browser.prx",
+      "type": "file",
+      "size_bytes": 110760,
+      "sha256": "91ea8da2c25cc4864b7690afe9649e5efe35f920001216c61111e972eca5dfbe"
+    },
+    {
+      "path": "F0/vsh/module/photo_main_plugin.prx",
+      "type": "file",
+      "size_bytes": 10122,
+      "sha256": "ddc03800ec8753a42051fa667c10f3c1414ad8489ea92da0e0c240d943cc2b43"
+    },
+    {
+      "path": "F0/vsh/module/photo_player.prx",
+      "type": "file",
+      "size_bytes": 265118,
+      "sha256": "a4a94f0a52b7bb292469a2d21cfb22b077bb6ea2181d42a5601bf2463aaf615b"
+    },
+    {
+      "path": "F0/vsh/module/premo_plugin.prx",
+      "type": "file",
+      "size_bytes": 223906,
+      "sha256": "e4eac095097d279b5a30bc6dc44faea9d773fbedf54057e745588ffe1ad27e10"
+    },
+    {
+      "path": "F0/vsh/module/ps3scan_plugin.prx",
+      "type": "file",
+      "size_bytes": 26242,
+      "sha256": "d995cf3dca09dcee497cee234f417c5bbbe07700642ebd3c7c71e2c3bde76d8a"
+    },
+    {
+      "path": "F0/vsh/module/radioshack_plugin.prx",
+      "type": "file",
+      "size_bytes": 149118,
+      "sha256": "51b7208cccdca6c37283b866de3320244f20c31e88aa2f685d533b9ab6a75fcf"
+    },
+    {
+      "path": "F0/vsh/module/rss_browser.prx",
+      "type": "file",
+      "size_bytes": 108548,
+      "sha256": "59a380f9a33d97c7dbcaf070f5a5e741f0987230a69c25febc7b76d821e37b89"
+    },
+    {
+      "path": "F0/vsh/module/rss_common.prx",
+      "type": "file",
+      "size_bytes": 61200,
+      "sha256": "d6218490988779ce0d84bbd22943fce0d888ea20615bf0b455eff972abee260f"
+    },
+    {
+      "path": "F0/vsh/module/rss_downloader.prx",
+      "type": "file",
+      "size_bytes": 110488,
+      "sha256": "9d14489d430e6a2ffc8878ec6214923ffe326b4527ed51bb71f119372a7b5e67"
+    },
+    {
+      "path": "F0/vsh/module/rss_main_plugin.prx",
+      "type": "file",
+      "size_bytes": 22664,
+      "sha256": "d73d179f06c70a05e6fde0259782dcc74117ec90952f37ad2771ba43352cb018"
+    },
+    {
+      "path": "F0/vsh/module/rss_subscriber.prx",
+      "type": "file",
+      "size_bytes": 30666,
+      "sha256": "0cdbc50bf34583765a91611d9c922b39d2bc4e4162bfc094fe9eda45f12f9583"
+    },
+    {
+      "path": "F0/vsh/module/savedata_auto_dialog.prx",
+      "type": "file",
+      "size_bytes": 89022,
+      "sha256": "131e1c9037ddbd306aa22023814be1fb2d7b473bf20fe15738458256f09d13c8"
+    },
+    {
+      "path": "F0/vsh/module/savedata_plugin.prx",
+      "type": "file",
+      "size_bytes": 122730,
+      "sha256": "c6642524a6c84432c8db64ed7b406f03bfcbc75861fc790b59135b7ae36969b6"
+    },
+    {
+      "path": "F0/vsh/module/savedata_utility.prx",
+      "type": "file",
+      "size_bytes": 132624,
+      "sha256": "f4b683801ce8f0864f8555b20eaa72991a661bac752e1ccfc56eb8fcf3ec51dd"
+    },
+    {
+      "path": "F0/vsh/module/screenshot_plugin.prx",
+      "type": "file",
+      "size_bytes": 77498,
+      "sha256": "5a06d4563c7aa5c86886eb20997045a4c3fe5b0f6ff5633cd4695d20f724f198"
+    },
+    {
+      "path": "F0/vsh/module/skype_main_plugin.prx",
+      "type": "file",
+      "size_bytes": 632736,
+      "sha256": "6ac877d1f53cc60f52bb28fabd38096921b987740ff29a1443608de1488636d9"
+    },
+    {
+      "path": "F0/vsh/module/skype_plugin.prx",
+      "type": "file",
+      "size_bytes": 16564,
+      "sha256": "7ccc3f4ad073f36cd2acd9a1ff265c8802b578a01823e19862e5a9e63b455280"
+    },
+    {
+      "path": "F0/vsh/module/skype_skyhost.prx",
+      "type": "file",
+      "size_bytes": 2263414,
+      "sha256": "50ab899fd5abd831a674940c8777416d1822c178568e77533a738384aae493de"
+    },
+    {
+      "path": "F0/vsh/module/skype_ve.prx",
+      "type": "file",
+      "size_bytes": 142872,
+      "sha256": "0796caff4b8bcf2aaec773e5bdafade7d282c24b9c44230c5e621f2f20b811dd"
+    },
+    {
+      "path": "F0/vsh/module/sysconf_plugin.prx",
+      "type": "file",
+      "size_bytes": 194944,
+      "sha256": "fc4516c9dc13fbc176121d7924253cb6c2d488972fe18a85552e719f79b89429"
+    },
+    {
+      "path": "F0/vsh/module/update_plugin.prx",
+      "type": "file",
+      "size_bytes": 50140,
+      "sha256": "a2c5735a4fdcb8cf98ee2375a65fcd337de627a911744b26270c1c52cc201936"
+    },
+    {
+      "path": "F0/vsh/module/video_main_plugin.prx",
+      "type": "file",
+      "size_bytes": 351794,
+      "sha256": "0f1c65a6230d067d3daba2cdf4056d0c072633e18ea7849fbd31b7aeca6c4afc"
+    },
+    {
+      "path": "F0/vsh/module/video_plugin.prx",
+      "type": "file",
+      "size_bytes": 14734,
+      "sha256": "6d8bff8cf53ca76ad003ed38258487a5f57728576c281d939f0538eb37fc99e7"
+    },
+    {
+      "path": "F0/vsh/module/visualizer_plugin.prx",
+      "type": "file",
+      "size_bytes": 92030,
+      "sha256": "846a802b13661c1e364e0cffff8f8a822ed4a7810ca9ce665d99ce9ab055ff37"
+    },
+    {
+      "path": "F0/vsh/module/vshmain.prx",
+      "type": "file",
+      "size_bytes": 310996,
+      "sha256": "f623bce13bd0e2736e3769983edd4a758aba6d3fd316398cad9115ab02140528"
+    },
+    {
+      "path": "F0/vsh/resource",
+      "type": "directory"
+    },
+    {
+      "path": "F0/vsh/resource/01-12.bmp",
+      "type": "file",
+      "size_bytes": 74112,
+      "sha256": "98c390b197334a411eab065b88a5febe5e1130f8db1b7da17ca2a9a05769de5d"
+    },
+    {
+      "path": "F0/vsh/resource/13-27.bmp",
+      "type": "file",
+      "size_bytes": 92640,
+      "sha256": "f383c89d5e22d84a2487295f8e24bf34fd8b9652d73cd0712067703cfbf9e267"
+    },
+    {
+      "path": "F0/vsh/resource/adhoc_transfer.rco",
+      "type": "file",
+      "size_bytes": 3464,
+      "sha256": "f706d9690fc0686cc1f75d87f5ce05cb65e2483acbfcef9c621dc0ced7303d57"
+    },
+    {
+      "path": "F0/vsh/resource/auth_plugin.rco",
+      "type": "file",
+      "size_bytes": 1816,
+      "sha256": "41825bc28125e730f13a1d0c92c150b3218256dd5bde816d2c23de895df0efbe"
+    },
+    {
+      "path": "F0/vsh/resource/camera_plugin.rco",
+      "type": "file",
+      "size_bytes": 172800,
+      "sha256": "debb27861e001df49acf96d2f2700a58ccee2342d8737af80feeda0172ded393"
+    },
+    {
+      "path": "F0/vsh/resource/common_page.rco",
+      "type": "file",
+      "size_bytes": 239,
+      "sha256": "2e4449bcf76300513b058e99aebaf3799e47646f507b8ee59214ba266e6df293"
+    },
+    {
+      "path": "F0/vsh/resource/content_browser_plugin.rco",
+      "type": "file",
+      "size_bytes": 39652,
+      "sha256": "4357f0c35a0339270a859bda9a5e27f5a2e376a2de1b537d8139df244e0528bb"
+    },
+    {
+      "path": "F0/vsh/resource/custom_theme.dat",
+      "type": "file",
+      "size_bytes": 442424,
+      "sha256": "7f755c563fa55ea77597dc6e17264717c9ba915bd42457351403aebba91dc3c0"
+    },
+    {
+      "path": "F0/vsh/resource/dd_helper.rco",
+      "type": "file",
+      "size_bytes": 94432,
+      "sha256": "b5dfd9032ed08ebe6696931dab2aa9eb67dd52dd30845759a1ebd8f622bd8c26"
+    },
+    {
+      "path": "F0/vsh/resource/dnas_plugin.rco",
+      "type": "file",
+      "size_bytes": 32000,
+      "sha256": "926b102a0681dc0a0aed6cd01c7cb9426084691c68e87f7bee279c4aa47a1318"
+    },
+    {
+      "path": "F0/vsh/resource/game_install_plugin.rco",
+      "type": "file",
+      "size_bytes": 7824,
+      "sha256": "3db23db5a85bfb29b4517e0d6f85b5505623dc74f9e4f8fb3855c6d4209a6cda"
+    },
+    {
+      "path": "F0/vsh/resource/game_plugin.rco",
+      "type": "file",
+      "size_bytes": 33432,
+      "sha256": "7bd222aa5c08798cb28b7cadf4b37f89fe915c7968122eb39094c4439d16c9a4"
+    },
+    {
+      "path": "F0/vsh/resource/gameboot.pmf",
+      "type": "file",
+      "size_bytes": 200704,
+      "sha256": "a41e209c649b5d3dceea17339915e9ffb6c318505407993dc0a5b68a938ff84d"
+    },
+    {
+      "path": "F0/vsh/resource/htmlviewer.res",
+      "type": "file",
+      "size_bytes": 138337,
+      "sha256": "c0c761282768e6bcf9d18bf52a9dc8e4729fdb951c130bfaed4a993b8e71a64f"
+    },
+    {
+      "path": "F0/vsh/resource/htmlviewer_plugin.rco",
+      "type": "file",
+      "size_bytes": 39152,
+      "sha256": "87c48efcc365821594617b36ca939388461ab2c8ff1f66d3f961c9278f156cde"
+    },
+    {
+      "path": "F0/vsh/resource/impose_plugin.rco",
+      "type": "file",
+      "size_bytes": 68920,
+      "sha256": "b28581661f63d1d9695e71e5db2ed8e8a2d7c2e713c492d347996d1930434e6a"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_main_plugin.rco",
+      "type": "file",
+      "size_bytes": 109268,
+      "sha256": "a3ed53a789c026bdf10bc76abb2460cd7efb114c937cef0f4cc35ba4f937145c"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_rmc_univer3in1.rco",
+      "type": "file",
+      "size_bytes": 55760,
+      "sha256": "4b1837ad7c73baddc9b76bd3bc54818ddd3f114872c99737ae40ea827922235c"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_rmc_univer3in1_jp.rco",
+      "type": "file",
+      "size_bytes": 55728,
+      "sha256": "2ad6ba1b82611c86c15bbc66e2efa7d88d4284594218bfd364ad25af8c781b07"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_rmc_univerpanel.rco",
+      "type": "file",
+      "size_bytes": 19672,
+      "sha256": "e0806b730d54bb99a7d0f81c2423d8fdb1badaf96cb99e7bf7106669d5c7e9cb"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_rmc_univerpanel_jp.rco",
+      "type": "file",
+      "size_bytes": 19700,
+      "sha256": "a5b9abd68721a0100357cc237f28e235db1c992d4e25da0d4b9a6611f679f2e4"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_rmc_univertuner.rco",
+      "type": "file",
+      "size_bytes": 36832,
+      "sha256": "675c976d2d0687e9dc48f0fffd3f304f3d6caff4398a8fe823225f0538caf452"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_rmc_univertuner_jp.rco",
+      "type": "file",
+      "size_bytes": 37316,
+      "sha256": "5f7258f5e330ece5feee014b326d7e3cf01918353d7ccb6f2169f03c4e88438c"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_tuner_jp_jp.rco",
+      "type": "file",
+      "size_bytes": 17880,
+      "sha256": "cc94cd59cb2f49af8ba84a4f287de55e1c7ff6747e4cbf6e38059e971c0f703d"
+    },
+    {
+      "path": "F0/vsh/resource/lftv_tuner_us_en.rco",
+      "type": "file",
+      "size_bytes": 21768,
+      "sha256": "a23e6f53ce39664753f38b3812c8d8e613c27b947730ab848ea25083f830a542"
+    },
+    {
+      "path": "F0/vsh/resource/msgdialog_plugin.rco",
+      "type": "file",
+      "size_bytes": 13208,
+      "sha256": "60ca2a6e7160ec9e7dd220a6cf2b95ee6b27e236831cdc9e6a018af3c353b6fa"
+    },
+    {
+      "path": "F0/vsh/resource/msvideo_main_plugin.rco",
+      "type": "file",
+      "size_bytes": 191728,
+      "sha256": "4d1ceb731f0b7878fd0b576e7aa3318f319b8a3bdc5a9f562e47164d66036962"
+    },
+    {
+      "path": "F0/vsh/resource/music_browser_plugin.rco",
+      "type": "file",
+      "size_bytes": 55800,
+      "sha256": "09f53eb9457437453f1e0aa38ebc80d7d450d9c0a0e2d74910bdb7db83268c89"
+    },
+    {
+      "path": "F0/vsh/resource/music_player_plugin.rco",
+      "type": "file",
+      "size_bytes": 35824,
+      "sha256": "0e0658125bd7d3fd06b0b10e55444c466587bf2fa252694cbf1c6bcb282cdf75"
+    },
+    {
+      "path": "F0/vsh/resource/netconf_dialog.rco",
+      "type": "file",
+      "size_bytes": 69960,
+      "sha256": "80c5a4362e871e77f2ad74ed0b0652863eb4b301ef00190a002d677e208c8ce1"
+    },
+    {
+      "path": "F0/vsh/resource/netplay_plugin.rco",
+      "type": "file",
+      "size_bytes": 10868,
+      "sha256": "54c608b78453799eb4224287d92ee8fa945f681bc6aa820f64d0c1494330bdc9"
+    },
+    {
+      "path": "F0/vsh/resource/npsignin_plugin.rco",
+      "type": "file",
+      "size_bytes": 13064,
+      "sha256": "cafc50fa56f736d1315785dab64d4e8e925e5ccddd0f31b4e8010eeb784fdf5e"
+    },
+    {
+      "path": "F0/vsh/resource/oneseg_plugin.rco",
+      "type": "file",
+      "size_bytes": 338580,
+      "sha256": "0bc34166a1df75ab6f981544de1ccb62f9c322b36cf96e820df97df75c7a1610"
+    },
+    {
+      "path": "F0/vsh/resource/opening_plugin.rco",
+      "type": "file",
+      "size_bytes": 30368,
+      "sha256": "49a23cd47911b64a51bb87fa94a8d5b37408b6f033957411e21b416875f07618"
+    },
+    {
+      "path": "F0/vsh/resource/osk_plugin.rco",
+      "type": "file",
+      "size_bytes": 500068,
+      "sha256": "98051abd12bca5c0668d6162db42a6ab91c57fa9b8b1a5b6ddbea9e07ab43a6f"
+    },
+    {
+      "path": "F0/vsh/resource/osk_utility.rco",
+      "type": "file",
+      "size_bytes": 154056,
+      "sha256": "56c3c52d3d2226456205a6da9e6f1c63612bedc10e1504d9e902a324d98c672a"
+    },
+    {
+      "path": "F0/vsh/resource/photo_browser_plugin.rco",
+      "type": "file",
+      "size_bytes": 60668,
+      "sha256": "eada5834f361c8a9f64280d1a5d0d24fee8632347a1e09634de2f5fb2ee0b9f5"
+    },
+    {
+      "path": "F0/vsh/resource/photo_player_plugin.rco",
+      "type": "file",
+      "size_bytes": 72180,
+      "sha256": "199863caee38fb21bd54f599b1df458fc68a8fc99b6c6fe087d7a2dacdef6711"
+    },
+    {
+      "path": "F0/vsh/resource/premo_plugin.rco",
+      "type": "file",
+      "size_bytes": 53280,
+      "sha256": "768036cf36ca2eb0e72ece6aa39331495178836a3af1f93fea46e49d93694ab9"
+    },
+    {
+      "path": "F0/vsh/resource/ps3scan_plugin.rco",
+      "type": "file",
+      "size_bytes": 4428,
+      "sha256": "e54e04867f725f88de97b0420266c4716f106d636590af4fe60b7edccd1c745f"
+    },
+    {
+      "path": "F0/vsh/resource/radioshack_plugin.rco",
+      "type": "file",
+      "size_bytes": 66096,
+      "sha256": "6e16853845a5a206b2d1888860ca8553f7a25deb7b0491f5a205add9d5600ed9"
+    },
+    {
+      "path": "F0/vsh/resource/rss_browser_plugin.rco",
+      "type": "file",
+      "size_bytes": 62972,
+      "sha256": "ffbeaa8a7e42e51dfc7755611615a5c3e3ca9b8be89f0118bd5dd5bdde24dd25"
+    },
+    {
+      "path": "F0/vsh/resource/rss_downloader_plugin.rco",
+      "type": "file",
+      "size_bytes": 19260,
+      "sha256": "84ff6a32a85d1e95bc177baf92a73b7c2144dea816443495079367c27fff8b40"
+    },
+    {
+      "path": "F0/vsh/resource/rss_subscriber.rco",
+      "type": "file",
+      "size_bytes": 12156,
+      "sha256": "f1c38d6f5e29bb9f5ea5c21126abbbc532ac3119c63b949673e4baaa9b29e9a1"
+    },
+    {
+      "path": "F0/vsh/resource/savedata_plugin.rco",
+      "type": "file",
+      "size_bytes": 51724,
+      "sha256": "f48b2dc0c01ee96649a7c6b57a665729b472d97054c07edd81211dc775d5be4b"
+    },
+    {
+      "path": "F0/vsh/resource/savedata_utility.rco",
+      "type": "file",
+      "size_bytes": 48516,
+      "sha256": "699c318b97f6e6c8ed6395259b6979ffb94f5250d45df14bbd286331a71397d9"
+    },
+    {
+      "path": "F0/vsh/resource/screenshot_plugin.rco",
+      "type": "file",
+      "size_bytes": 16508,
+      "sha256": "824690e5e8ce5f8b093b53c1caa85cbd004c77fe6ec29cfdd872d5de4e0a64e7"
+    },
+    {
+      "path": "F0/vsh/resource/skype_main_plugin.rco",
+      "type": "file",
+      "size_bytes": 309096,
+      "sha256": "71f68604c2b3d83b72e7d029b70e561e2d63d880423d3917f185e465fc0b8d71"
+    },
+    {
+      "path": "F0/vsh/resource/sysconf_plugin.rco",
+      "type": "file",
+      "size_bytes": 154504,
+      "sha256": "f5fef77c0f424d1da910f4d3b11f8fae2be98ee27f7eaa7a540eafd39e93ec54"
+    },
+    {
+      "path": "F0/vsh/resource/sysconf_plugin_about.rco",
+      "type": "file",
+      "size_bytes": 204932,
+      "sha256": "9e1745d16d1765eb84752dd85cd2fabd69e8579f2b357b3c46701fa7465068c1"
+    },
+    {
+      "path": "F0/vsh/resource/system_plugin.rco",
+      "type": "file",
+      "size_bytes": 85028,
+      "sha256": "7eb4be0f387078abd3b65fbc1ea725d58f8b1428986599d9f625e3463b79b216"
+    },
+    {
+      "path": "F0/vsh/resource/system_plugin_bg.rco",
+      "type": "file",
+      "size_bytes": 8352,
+      "sha256": "c92e8ff82aa8e72d0c946047a5dc78595631b3fddad9a94e8ef500c5addc29e4"
+    },
+    {
+      "path": "F0/vsh/resource/system_plugin_fg.rco",
+      "type": "file",
+      "size_bytes": 34348,
+      "sha256": "db92a76d916100593d82d87d1ed41094e513f9ee20d2e527d86b233eb8a59b48"
+    },
+    {
+      "path": "F0/vsh/resource/topmenu_icon.rco",
+      "type": "file",
+      "size_bytes": 195584,
+      "sha256": "739a49ed3041a4e9ba2d08d82de7ed9e884ca3114a6237eb9c64f304747c7609"
+    },
+    {
+      "path": "F0/vsh/resource/topmenu_plugin.rco",
+      "type": "file",
+      "size_bytes": 27404,
+      "sha256": "f870f6a831c5b3229885d88a04c3313438c81aef9bc6bfbe7da01655696afa0c"
+    },
+    {
+      "path": "F0/vsh/resource/update_plugin.rco",
+      "type": "file",
+      "size_bytes": 13996,
+      "sha256": "a59430e11b7ff03ec961029bca8e337bd7c978ed506171021491b2a9223a6a63"
+    },
+    {
+      "path": "F0/vsh/resource/video_main_plugin.rco",
+      "type": "file",
+      "size_bytes": 35148,
+      "sha256": "291806e82ccb6117dd49329e0dee273e605e2b3c97ed8069672606b2358d6878"
+    },
+    {
+      "path": "F0/vsh/resource/video_plugin_videotoolbar.rco",
+      "type": "file",
+      "size_bytes": 70852,
+      "sha256": "2fe21a65256fb0ad3a4a45dd9b2278e9d1bf8d78c84da2bf1c7204ee55ae3d26"
+    },
+    {
+      "path": "F0/vsh/resource/visualizer_plugin.rco",
+      "type": "file",
+      "size_bytes": 30524,
+      "sha256": "503497f7f2729ca9b48397b73ee1d7ac3a816590d2d0d6acc9d21d2cf1c3b21e"
+    },
+    {
+      "path": "F1",
+      "type": "directory"
+    },
+    {
+      "path": "F1/dic",
+      "type": "directory"
+    },
+    {
+      "path": "F1/gps",
+      "type": "directory"
+    },
+    {
+      "path": "F1/net",
+      "type": "directory"
+    },
+    {
+      "path": "F1/net/http",
+      "type": "directory"
+    },
+    {
+      "path": "F1/registry",
+      "type": "directory"
+    },
+    {
+      "path": "F1/vsh",
+      "type": "directory"
+    },
+    {
+      "path": "F1/vsh/theme",
+      "type": "directory"
+    },
+    {
+      "path": "PSARDUMPER",
+      "type": "directory"
+    },
+    {
+      "path": "PSARDUMPER/00001_files_table.bin",
+      "type": "file",
+      "size_bytes": 1080,
+      "sha256": "105582e099457df4387c37794df4cb18417f292c8d03ec2d232768daabab65dd"
+    },
+    {
+      "path": "PSARDUMPER/00002_files_table.bin",
+      "type": "file",
+      "size_bytes": 1816,
+      "sha256": "4e74f23027aacb731ac24668370e7aa9291d1db4f16bbde56c0bff89b3b123df"
+    },
+    {
+      "path": "PSARDUMPER/common_files_table.bin",
+      "type": "file",
+      "size_bytes": 10840,
+      "sha256": "10532f9052cc7b9f03d96ac7d29970e785013bba629614b52ac53ae90d5c2087"
+    },
+    {
+      "path": "PSARDUMPER/kkeys_nandipl_psp02h.ipl",
+      "type": "file",
+      "size_bytes": 32,
+      "sha256": "f0861fd0694e8a75f95d68728caaba4f4fcd6e1260927817715341c852548773"
+    },
+    {
+      "path": "PSARDUMPER/kkeys_nandipl_psp1000.bin",
+      "type": "file",
+      "size_bytes": 32,
+      "sha256": "3e7e9abd6db319d03b9bc121d990b7d92b502d4ac12541829a6ef0ceb1eadabd"
+    },
+    {
+      "path": "PSARDUMPER/nandipl_psp02h.ipl",
+      "type": "file",
+      "size_bytes": 143360,
+      "sha256": "f271ee49b19d8e1ed53ff4ee4c9bb880e558bd9aad8e501e1738a5923216c3c3"
+    },
+    {
+      "path": "PSARDUMPER/nandipl_psp1000.bin",
+      "type": "file",
+      "size_bytes": 143360,
+      "sha256": "151bfbfff250f7e13ef6f6dc6052c338b8d2e57e503c9e74ea59b112c95a25ad"
+    },
+    {
+      "path": "PSARDUMPER/reboot.bin",
+      "type": "file",
+      "size_bytes": 68272,
+      "sha256": "7dc44910abde8c4c38202c861778dbfa099006e2d835f55738cf9b2ea35275f1"
+    },
+    {
+      "path": "PSARDUMPER/reboot_02g.bin",
+      "type": "file",
+      "size_bytes": 68512,
+      "sha256": "8ab13b85170952f5b0b2cd51e3d7109d8db3503f65376ca3b5536e0789651385"
+    },
+    {
+      "path": "PSARDUMPER/stage1_nandipl_psp02h.ipl",
+      "type": "file",
+      "size_bytes": 135376,
+      "sha256": "8f6e45eca8a69bc4782399b954b1911a82689a2efe219c109f69cfcc0501edd8"
+    },
+    {
+      "path": "PSARDUMPER/stage1_nandipl_psp1000.bin",
+      "type": "file",
+      "size_bytes": 135120,
+      "sha256": "967fef58f511308ae8bd42543f7fe7e76b33694e89a544c15b5e1924df1caef2"
+    },
+    {
+      "path": "PSARDUMPER/stage2_nandipl_psp02h.ipl",
+      "type": "file",
+      "size_bytes": 50884,
+      "sha256": "015c13db5b04ee09eff6d8a7ca472a6c6f50826fe66c2ec292de7accf39b2825"
+    },
+    {
+      "path": "PSARDUMPER/stage2_nandipl_psp1000.bin",
+      "type": "file",
+      "size_bytes": 46788,
+      "sha256": "2e1f126f722a5b47981d7af7d9b8140d3161fc9fc0f05c43de9c8d8e580144df"
+    },
+    {
+      "path": "PSARDUMPER/stage3_nandipl_psp02h.ipl",
+      "type": "file",
+      "size_bytes": 69668,
+      "sha256": "f11dfab9ea86fa1261567763d3dc8176c677fc9df5eeb56081a702ef589911dd"
+    },
+    {
+      "path": "PSARDUMPER/stage3_nandipl_psp1000.bin",
+      "type": "file",
+      "size_bytes": 69424,
+      "sha256": "04a276df20d84d0772c059afc87eb633bec2f7b89eaae272c91aad194692e3b1"
+    }
+  ]
+}

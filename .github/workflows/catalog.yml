@@ -1,0 +1,51 @@
+name: Validate catalog contributions
+
+on:
+  pull_request:
+    paths:
+      - 'catalog/**'
+      - 'schemas/**'
+      - 'tools/**'
+      - 'website/pspdb/server.py'
+      - 'website/pspdb/export.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/catalog.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'catalog/**'
+      - 'schemas/**'
+      - 'tools/**'
+      - 'website/pspdb/server.py'
+      - 'website/pspdb/export.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/catalog.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: '3.13'
+      - name: Validate schemas, identities, and result pairs
+        run: uv run --locked python tools/validate_catalog.py
+      - name: Preserve existing catalog results
+        if: github.event_name == 'pull_request'
+        env:
+          CATALOG_BASE: ${{ github.event.pull_request.base.sha }}
+        run: uv run --locked python tools/validate_catalog.py --base "$CATALOG_BASE"
+      - name: Test contribution validation and website export
+        run: |
+          uv run --locked python -m unittest discover -s tools/tests
+          uv run --locked python -m unittest discover -s website/tests
+          uv run --locked pspdb-web export --catalog catalog --output dist/catalog-preview

@@ -5,7 +5,7 @@ inventory; optional file contents live in a separate deduplicated object store.
 
 - `ingest/`: Zig ISO/ZIP ingester and ingest tests.
 - `website/`: Python server, browser assets, and website tests.
-- `schemas/`: shared catalog format. Generated `catalog/` stays at the root.
+- `schemas/`: shared catalog format. `catalog/` contains versioned metadata and inventories contributed through PRs.
 
 Run the following commands from the repository root.
 
@@ -20,26 +20,69 @@ Requires **Zig 0.16.0** and **libarchive** development headers/library.
 
 Discovers ISO files and ISO members in ZIP archives. A root `UMD_DATA.BIN` is
 required. `--store` is optional. `--threads N` caps threads (default: logical CPU
-count); `--no-progress` disables terminal progress. `--skip-existing` skips known
-ISO hashes when `--catalog` is set; it is **off by default**. Rebuild catalogs
-from source inputs after incompatible format changes.
+count); `--no-progress` disables terminal progress. `--skip-existing` skips current
+ISO results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
 
 Filesystem discovery stays parallel, but only one ISO is admitted through hashing,
 metadata parsing, and its immediate file walk at a time. Nested extractors share
 the worker pool and retain their input bytes in memory; they can overlap the next ISO.
 
-Metadata is written to `catalog/<extractor>/<hash>.json`,
-with the directory identifying the extractor. Every extractor writes its output
-inventory to `catalog/trees/<source-hash>.json` using the same
-[tree schema](schemas/tree.schema.json). Different ISO hashes retain separate trees,
-even with identical entries. See the [metadata schema](schemas/record.schema.json).
-Inputs are read-only. Generated
-catalogs, object stores, and source images should not be committed.
+Each extractor revision owns a namespace under `catalog/<extractor>/v<version>/`.
+For example, ISO extractor revision 1 writes two adjacent files:
+
+```text
+catalog/iso/v1/<source-sha256>-ingest.json
+catalog/iso/v1/<source-sha256>-tree.json
+```
+
+The ingest record contains source metadata; the tree contains the immediate
+output inventory and tool provenance. See the [metadata schema](schemas/record.schema.json)
+and [tree schema](schemas/tree.schema.json). The tree is published before its
+ingest record. Results are immutable within a revision; different results in the
+same namespace raise `CatalogConflict`. New revisions preserve previous results.
+Inputs are read-only. Catalog JSON is tracked in Git; object stores and source
+images stay local. See [CONTRIBUTING.md](CONTRIBUTING.md) to submit ingested content
+and validate new metadata/tree pairs.
 
 Metadata is read independently before file inventory/storage: `UMD_DATA.BIN`
 and both game/video `PARAM.SFO` paths. When both SFOs exist, game metadata takes
 precedence. If neither exists, the updater SFO supplies the title and version; its generic
 ID does not replace the disc identifier.
+
+## Extractor revisions and regeneration
+
+[tools/extractor_versions.json](tools/extractor_versions.json) is the shared revision
+registry for native and external extractors. Revisions are positive integer strings; folder names add a `v` prefix (`v1`, `v2`, etc.).
+To change the ISO extractor, increment `iso` (for example, `"1"` to `"2"`) and rebuild:
+
+```sh
+(cd ingest && zig build -Doptimize=ReleaseSafe)
+uv run --locked python tools/catalog_status.py --catalog catalog
+# Add --json for per-source provenance and affected ISO hashes.
+./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store --skip-existing
+```
+
+The status command is read-only. It compares revisions, executable SHA-256 hashes,
+and extraction options (including the RCOMage INI digest), and follows child hashes
+to report affected ISO roots. Missing tools are reported as unavailable, never current.
+If a tool/configuration changes within the same revision, bump that extractor's
+revision before regenerating; existing results will not be overwritten.
+Changes to adapter behavior, naming rules, metadata parsing, or file detection also
+require a revision bump for the extractor whose output changes. `schema_version`
+remains the JSON format version, independent of extractor revisions.
+
+`--skip-existing` uses uv/Python for the read-only provenance scan at startup.
+Affected ISOs are read again, while current intermediate
+extractions reuse verified stored child bytes. Missing stored children cause that
+extractor to run again. Source ISOs/ZIPs must still be available; this command does
+not regenerate arbitrary sources directly from the object store. Without
+`--skip-existing`, all encountered sources are processed as before.
+
+The website/export selects the highest numeric **complete** revision per source
+hash, so old revisions do not create duplicate browser rows. An incomplete newer
+pair does not hide an older complete result. Legacy `catalog/<extractor>/<hash>.json`
+and `catalog/trees/<hash>.json` remain readable, but the status command reports
+them as unversioned; regeneration writes versioned pairs and leaves them intact.
 
 ## Browse
 
@@ -79,6 +122,12 @@ A private repository requires a Pages-capable paid
 GitHub plan; the exported site is normally public.
 
 ## Check
+
+Validate the tracked catalog without source images or external extractors:
+
+```sh
+uv run --locked python tools/validate_catalog.py
+```
 
 The ingest CLI tests build the current executable and generate their own ISO/ZIP fixtures.
 
@@ -122,7 +171,9 @@ suffix. Shared inventories retain canonical paths, so identical content can appe
 under different filenames without conflicting catalog records.
 RCO outputs include native resources and generated XML; provenance includes the
 binary hash and configuration digest. Child failures fail their ISO's ingest.
-`--skip-existing` skips nested processing along with the parent ISO. The thread
+`--skip-existing` skips an ISO only when its result and known reachable extraction
+results are current. Current intermediate trees can be reused from the object store
+while outdated descendants are extracted again. The thread
 cap applies to ingest itself; external tools run in child processes.
 
 KL decoding uses `pspdecrypt-kle` on PATH (`PSPDECRYPT_KLE` override): build
