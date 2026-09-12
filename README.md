@@ -56,7 +56,11 @@ and both game/video `PARAM.SFO` paths. When both SFOs exist, game metadata takes
 precedence. If neither exists, the updater SFO supplies the title and version; its generic
 ID does not replace the disc identifier.
 
-PKGs write their own versioned pairs under `catalog/pkg/v4/`. Package metadata
+ISO revision 4 and nested ISO9660 revision 2 resolve shared-extent file aliases
+by exact path, preserving distinct case-sensitive filenames. Metadata lookup
+remains case-insensitive; it must not determine which bytes an inventory path owns.
+
+PKGs write their own versioned pairs under `catalog/pkg/v5/`. Package metadata
 includes content ID, title ID, content type, and available PSP title/version/firmware
 fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
 static export display packages under **psn**, alongside **umd**. Embedded PBP files
@@ -208,9 +212,9 @@ Install `pkg2zip-npumdimg` on PATH (`PKG2ZIP_NPUMDIMG` override). Ingest retains
 `DATA.BIN`, attaches `disc.iso` beneath it, and inventories that ISO through
 libarchive under the `iso9660` extractor. Its executable files recurse normally.
 Derived ISOs stay beneath their PSN package rather than becoming UMD roots.
-This disc decoder handles NPUMDIMG; PS1 disc extraction and EDAT payloads remain
-unsupported. PS1 executable decryption uses the whole-PBP helper described below. The PBP, ISO and PKG revisions were bumped so existing inputs are
-revisited to discover these previously opaque children.
+This disc decoder handles NPUMDIMG, not PS1 disc payloads or EDAT. PS1 executable
+decryption and disc reconstruction use the whole-PBP helpers described below.
+The PBP, ISO and PKG revisions were bumped to discover previously opaque children.
 
 For NPUMDIMG PBPs, the Zig [DATA.PSP parser](tools/patches/data-psp.md) verifies the
 SFO/content-ID signature using OpenSSL libcrypto. Generated verification reports

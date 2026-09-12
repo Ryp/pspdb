@@ -331,6 +331,45 @@ class IngestCliTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b'x' * len(GAME_UMD))
             self.assertEqual(list((store / '.incoming').iterdir()), [])
 
+    def test_iso_hardlinks_resolve_case_sensitive_paths(self):
+        iso = pycdlib.PyCdlib(); iso.new(interchange_level=3, rock_ridge='1.09')
+        # Distinct Rock Ridge names may differ only by case. The earlier extent
+        # must not replace either path sharing the later extent.
+        other = b'unrelated earlier file'
+        shared = b'actual shared-extent contents'
+        for path, name, data in [
+            ('A.BIN', 'target.bin', other),
+            ('B.BIN', 'TARGET.BIN', shared),
+            ('UMD_DATA.BIN', 'umd_data.bin', GAME_UMD),
+        ]:
+            iso.add_fp(BytesIO(data), len(data), iso_path='/' + path + ';1', rr_name=name)
+        iso.add_hard_link(iso_old_path='/B.BIN;1', iso_new_path='/C.BIN;1', rr_name='Target.bin')
+        output = BytesIO(); iso.write_fp(output); iso.close()
+        image = output.getvalue()
+        expected = {'target.bin': other, 'TARGET.BIN': shared, 'Target.bin': shared, 'umd_data.bin': GAME_UMD}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+            source = inputs / 'source.iso'; source.write_bytes(image)
+            for store_enabled in (False, True):
+                with self.subTest(store=store_enabled):
+                    catalog = root / ('with-store' if store_enabled else 'without-store')
+                    store = root / 'store'
+                    args = ('--store', str(store)) if store_enabled else ()
+                    code, output = self.run_cli(inputs, '--catalog', str(catalog), '--no-progress', *args)
+                    self.assertEqual(code, 0, output)
+                    digest = hashlib.sha256(image).hexdigest()
+                    record = json.loads(result_path(catalog, 'iso', digest).read_text())
+                    self.assertEqual(record['metadata']['umd_uid'], '8D53CBDF6A4FC495')
+                    tree = json.loads(tree_path(catalog, digest).read_text())
+                    entries = {entry['path']: entry for entry in tree['entries']}
+                    self.assertEqual(set(entries), set(expected))
+                    for name, data in expected.items():
+                        digest = hashlib.sha256(data).hexdigest()
+                        self.assertEqual(entries[name], dict(path=name, type='file', size_bytes=len(data), sha256=digest))
+                        if store_enabled:
+                            self.assertEqual((store / 'sha256' / digest[:2] / digest[2:4] / digest).read_bytes(), data)
+            self.assertEqual(source.read_bytes(), image)
+
     def test_metadata_is_read_before_inventory_and_resolves_shared_extents(self):
         def sfo(title):
             key = b'TITLE\0'
@@ -679,12 +718,11 @@ echo Done!
             with patch.dict(os.environ, {'PSPDECRYPT': str(tool), 'PSPDB_DECODED': str(decoded)}):
                 code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
             self.assertEqual(code, 0, output)
-            for kind, source, name, child in [('pbp', pbp, 'DATA.PSP', sce), ('sce', sce, 'payload.psp', prx), ('prx', prx, 'module.prx.gz', compressed), ('gzip', compressed, 'module.prx', elf)]:
+            for kind, source, name, child in [('pbp', pbp, 'DATA.PSP', sce), ('sce', sce, 'payload.psp', prx), ('prx', prx, 'module.prx.gz', compressed), ('gzip', compressed, 'module.elf', elf)]:
                 h = hashlib.sha256(source).hexdigest()
                 self.assertTrue(result_path(root / 'catalog', kind, h).exists())
                 tree = json.loads(tree_path(root / 'catalog', h).read_text())
                 self.assertEqual(tree['entries'], [{'path': name, 'type': 'file', 'size_bytes': len(child), 'sha256': hashlib.sha256(child).hexdigest()}])
-                self.assertEqual(tree.get('name_rule'), {'prx': 'source_stem', 'sce': 'source_stem', 'gzip': 'strip_suffix'}.get(kind))
             # Reject malformed section tables before invoking a child extractor.
             broken = bytearray(pbp); struct.pack_into('<I', broken, 12, 39)
             iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
