@@ -1,0 +1,38 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "9d7e927dc1764d0a18d4de64866d8af2a8fbe92a3f806cdd06dbf3306315d156",
+  "size_bytes": 28827648,
+  "extractor": {
+    "name": "pmftools-mpegps",
+    "sha256": "a0cc061cb997eeaed4a00a345d5655e9adaa1070953a4ed99817382ae279a7e9",
+    "version": "1",
+    "options": [
+      "upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4",
+      "raw-mpeg2:1",
+      "opaque-private-pes:1",
+      "manifest:1",
+      "manifest-budget-env:1"
+    ]
+  },
+  "entries": [
+    {
+      "path": "pes-e0.bin",
+      "type": "file",
+      "size_bytes": 25857998,
+      "sha256": "e5b92ca998162eba28c27a24edee2305959b0a8b3992d42a86bc632e2f5cae7c"
+    },
+    {
+      "path": "private-bd.bin",
+      "type": "file",
+      "size_bytes": 2451996,
+      "sha256": "e2a64b72b0b0881d7073d472e48fbd3b95c951bad85abe7131d45d71cd877360"
+    },
+    {
+      "path": "structure.json",
+      "type": "file",
+      "size_bytes": 4699964,
+      "sha256": "e74722f0f28edff0b497f4caacba03d1d5c87e8e99d9c97a91d5d11dc58f6dd0"
+    }
+  ]
+}
