@@ -19,6 +19,9 @@ VERSIONS = None
 PSMF_SOURCE_LIMIT = 128 * 1024 * 1024
 PSMF_MANIFEST_LIMIT = 16 * 1024 * 1024
 PSMF_UPSTREAM = 'upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4'
+MPEGPS_SOURCE_LIMIT = 64 * 1024 * 1024
+MPEGPS_MANIFEST_LIMIT = 16 * 1024 * 1024
+MPEGPS_UPSTREAM = 'upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4'
 
 
 def versions():
@@ -36,16 +39,21 @@ def tool_provenance(kind, tool=None, data=None):
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
     if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp'):
         return result
-    if kind == 'psmf':
+    if kind in ('psmf', 'mpegps'):
         tool = tool.resolve(strict=True)
-        reported = json.loads(run_psmf([str(tool), '--provenance'], timeout=30))
+        runner = run_psmf if kind == 'psmf' else run_mpegps
+        reported = json.loads(runner([str(tool), '--provenance'], timeout=30),
+                              object_pairs_hook=manifest_object)
+        name = 'pmftools' if kind == 'psmf' else 'pmftools-mpegps'
+        required = ({PSMF_UPSTREAM, 'manifest-budget-env:1'} if kind == 'psmf' else
+                    {MPEGPS_UPSTREAM, 'raw-mpeg2:1', 'opaque-private-pes:1',
+                     'manifest:1', 'manifest-budget-env:1'})
         if (not isinstance(reported, dict) or set(reported) != {'name', 'options'}
-                or reported['name'] != 'pmftools' or not isinstance(reported['options'], list)
+                or reported['name'] != name or not isinstance(reported['options'], list)
                 or any(not isinstance(option, str) or not option for option in reported['options'])
                 or len(set(reported['options'])) != len(reported['options'])
-                or PSMF_UPSTREAM not in reported['options']
-                or 'manifest-budget-env:1' not in reported['options']):
-            raise ValueError('Invalid PSMF helper provenance')
+                or not required.issubset(reported['options'])):
+            raise ValueError(f'Invalid {kind.upper()} helper provenance')
         with tool.open('rb') as stream:
             digest = hashlib.file_digest(stream, 'sha256').hexdigest()
         return dict(result, name=reported['name'], options=reported['options'], sha256=digest)
@@ -97,6 +105,8 @@ def current_provenance():
                 tool = executable('PSPDB_DOCUMENT', 'pspdb-document')
             elif kind == 'psmf':
                 tool = executable('PSPDB_PSMF', 'pspdb-psmf')
+            elif kind == 'mpegps':
+                tool = executable('PSPDB_MPEGPS', 'pspdb-mpegps')
             elif kind == 'rco':
                 tool = executable('RCOMAGE', 'rcomage').resolve(strict=True)
                 data = Path(os.environ.get('RCOMAGE_DATA', tool.parent.parent / 'share' / 'rcomage'))
@@ -293,55 +303,63 @@ def extract_document(source, output, tool, docinfo=None):
 
 
 
-def run_psmf(command, timeout):
+def run_pmftools(command, timeout, kind, manifest_limit):
     # CoreCLR's JIT uses a 2 TiB anonymous memfd: RLIMIT_FSIZE breaks startup.
     # Raw output is bounded by source spans; the reader enforces the manifest cap.
     env = dict(os.environ, DOTNET_GCHeapHardLimit='0x10000000',
-               COMPlus_GCHeapHardLimit='0x10000000',
-               PSPDB_PSMF_MANIFEST_LIMIT=str(PSMF_MANIFEST_LIMIT))
+               COMPlus_GCHeapHardLimit='0x10000000')
+    env[f'PSPDB_{kind}_MANIFEST_LIMIT'] = str(manifest_limit)
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         try:
             result = subprocess.run(command, stdout=stdout, stderr=stderr, env=env,
                                     timeout=timeout)
         except subprocess.TimeoutExpired as error:
-            raise ValueError(f'PSMF helper exceeded {timeout} seconds') from error
+            raise ValueError(f'{kind} helper exceeded {timeout} seconds') from error
         stderr.seek(0)
         if result.returncode:
-            raise ValueError(f'PSMF helper exited {result.returncode}: ' + stderr.read(65536).decode('utf-8', errors='replace'))
+            raise ValueError(f'{kind} helper exited {result.returncode}: ' + stderr.read(65536).decode('utf-8', errors='replace'))
         stdout.seek(0)
         data = stdout.read(65537)
         if len(data) > 65536:
-            raise ValueError('PSMF helper stdout exceeds 64 KiB')
+            raise ValueError(f'{kind} helper stdout exceeds 64 KiB')
         return data
 
 
-def psmf_object(pairs):
+def run_psmf(command, timeout):
+    return run_pmftools(command, timeout, 'PSMF', PSMF_MANIFEST_LIMIT)
+
+
+def run_mpegps(command, timeout):
+    return run_pmftools(command, timeout, 'MPEGPS', MPEGPS_MANIFEST_LIMIT)
+
+
+def manifest_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError('Duplicate PSMF manifest key')
+            raise ValueError('Duplicate manifest key')
         result[key] = value
     return result
 
 
-def psmf_fields(value, fields):
+def manifest_fields(value, fields):
     if not isinstance(value, dict) or set(value) != set(fields):
-        raise ValueError('Invalid PSMF manifest fields')
+        raise ValueError('Invalid manifest fields')
 
 
-def psmf_integer(value):
-    if type(value) is not int or not 0 <= value <= PSMF_SOURCE_LIMIT:
-        raise ValueError('Invalid PSMF manifest integer')
+def manifest_integer(value, limit):
+    if type(value) is not int or not 0 <= value <= limit:
+        raise ValueError('Invalid manifest integer')
     return value
 
 
-def psmf_regular_file(path, limit):
+def regular_file(path, limit):
     # O_NONBLOCK prevents an unexpected FIFO from blocking before fstat.
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
-            raise ValueError('Invalid PSMF file type or size')
+            raise ValueError('Invalid file type or size')
         return os.fdopen(descriptor, 'rb')
     except BaseException:
         os.close(descriptor)
@@ -380,15 +398,15 @@ def validate_psmf(data, source_hash, directory):
         raise ValueError('PSMF source changed during extraction')
     if not stat.S_ISDIR(directory.lstat().st_mode):
         raise ValueError('Invalid PSMF helper directory')
-    with psmf_regular_file(directory / 'manifest.json', PSMF_MANIFEST_LIMIT) as stream:
-        manifest = json.load(stream, object_pairs_hook=psmf_object)
-    psmf_fields(manifest, ('source_sha256', 'source_size_bytes', 'data_start', 'data_end',
+    with regular_file(directory / 'manifest.json', PSMF_MANIFEST_LIMIT) as stream:
+        manifest = json.load(stream, object_pairs_hook=manifest_object)
+    manifest_fields(manifest, ('source_sha256', 'source_size_bytes', 'data_start', 'data_end',
                            'consumed_end', 'declared_streams', 'packets', 'outputs'))
     if (manifest['source_sha256'] != source_hash
-            or psmf_integer(manifest['source_size_bytes']) != len(data)
-            or psmf_integer(manifest['data_start']) != start
-            or psmf_integer(manifest['data_end']) != end
-            or psmf_integer(manifest['consumed_end']) != end):
+            or manifest_integer(manifest['source_size_bytes'], PSMF_SOURCE_LIMIT) != len(data)
+            or manifest_integer(manifest['data_start'], PSMF_SOURCE_LIMIT) != start
+            or manifest_integer(manifest['data_end'], PSMF_SOURCE_LIMIT) != end
+            or manifest_integer(manifest['consumed_end'], PSMF_SOURCE_LIMIT) != end):
         raise ValueError('PSMF source identity or declared range mismatch')
     streams = manifest['declared_streams']
     if (not isinstance(streams, list) or any(not isinstance(key, str) for key in streams)
@@ -400,12 +418,12 @@ def validate_psmf(data, source_hash, directory):
     expected_names = set(declared.values())
     metadata = {}
     for item in outputs:
-        psmf_fields(item, ('path', 'size_bytes', 'sha256'))
+        manifest_fields(item, ('path', 'size_bytes', 'sha256'))
         name, digest = item['path'], item['sha256']
         if not isinstance(name, str) or name not in expected_names or name in metadata:
             raise ValueError('Invalid or duplicate PSMF output path')
         if (not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)
-                or not psmf_integer(item['size_bytes'])):
+                or not manifest_integer(item['size_bytes'], PSMF_SOURCE_LIMIT)):
             raise ValueError('Invalid PSMF output identity')
         metadata[name] = item
     if {entry.name for entry in directory.iterdir()} != expected_names | {'manifest.json'}:
@@ -413,17 +431,17 @@ def validate_psmf(data, source_hash, directory):
     observed = set()
     consumed = start
     with ExitStack() as stack:
-        files = {name: stack.enter_context(psmf_regular_file(directory / name, PSMF_SOURCE_LIMIT))
+        files = {name: stack.enter_context(regular_file(directory / name, PSMF_SOURCE_LIMIT))
                  for name in expected_names}
         hashes = {name: hashlib.sha256() for name in expected_names}
         for name, stream in files.items():
             if os.fstat(stream.fileno()).st_size != metadata[name]['size_bytes']:
                 raise ValueError('PSMF output size mismatch')
         for packet in packets:
-            psmf_fields(packet, ('start', 'end', 'packet_id', 'stream', 'payload_start', 'payload_end'))
-            packet_start = psmf_integer(packet['start'])
-            packet_end = psmf_integer(packet['end'])
-            sid = psmf_integer(packet['packet_id'])
+            manifest_fields(packet, ('start', 'end', 'packet_id', 'stream', 'payload_start', 'payload_end'))
+            packet_start = manifest_integer(packet['start'], PSMF_SOURCE_LIMIT)
+            packet_end = manifest_integer(packet['end'], PSMF_SOURCE_LIMIT)
+            sid = manifest_integer(packet['packet_id'], PSMF_SOURCE_LIMIT)
             if (packet_start != consumed or not packet_start + 4 <= packet_end <= end
                     or data[packet_start:packet_start + 3] != b'\x00\x00\x01'
                     or data[packet_start + 3] != sid):
@@ -468,8 +486,8 @@ def validate_psmf(data, source_hash, directory):
                     or packet['payload_end'] != payload_end):
                 raise ValueError('PSMF payload source range mismatch')
             if key is not None:
-                psmf_integer(packet['payload_start'])
-                psmf_integer(packet['payload_end'])
+                manifest_integer(packet['payload_start'], PSMF_SOURCE_LIMIT)
+                manifest_integer(packet['payload_end'], PSMF_SOURCE_LIMIT)
                 observed.add(key)
                 name = declared[key]
                 while payload_start < payload_end:
@@ -491,7 +509,7 @@ def validate_psmf(data, source_hash, directory):
 def extract_psmf(source, output, tool):
     if not stat.S_ISDIR(output.lstat().st_mode) or any(output.iterdir()):
         raise ValueError('PSMF output must be an existing empty directory')
-    with psmf_regular_file(source, PSMF_SOURCE_LIMIT) as stream, mmap.mmap(
+    with regular_file(source, PSMF_SOURCE_LIMIT) as stream, mmap.mmap(
             stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
         psmf_header(data)
         source_hash = hashlib.sha256(data).hexdigest()
@@ -502,17 +520,213 @@ def extract_psmf(source, output, tool):
             directory = Path(temporary) / 'streams'
             run_psmf([str(tool), str(source.resolve(strict=True)), str(directory.resolve())], timeout=120)
             names = validate_psmf(data, source_hash, directory)
-            published = []
-            try:
-                for name in names + ['manifest.json']:
-                    target = output / ('structure.json' if name == 'manifest.json' else name)
-                    (directory / name).rename(target)
-                    published.append(target)
-            except BaseException:
-                for target in published:
-                    target.unlink()
-                raise
+            publish_streams(names, directory, output)
         return provenance
+
+
+def mpegps_packets(data):
+    """Derive packet and payload boundaries from bytes, never helper metadata."""
+    end = len(data)
+    if not 14 <= end <= MPEGPS_SOURCE_LIMIT or data[:4] != b'\x00\x00\x01\xba':
+        raise ValueError('Invalid raw MPEGPS source')
+    start = 0
+    while start < end:
+        if start + 4 > end or data[start:start + 3] != b'\x00\x00\x01':
+            raise ValueError('Invalid MPEGPS packet prefix or trailing bytes')
+        sid = data[start + 3]
+        key = payload_start = payload_end = None
+        if sid == 0xba:
+            if start + 14 > end:
+                raise ValueError('Short MPEGPS pack header')
+            if (data[start + 4] & 0xc4 != 0x44 or data[start + 6] & 4 != 4
+                    or data[start + 8] & 4 != 4 or data[start + 9] & 1 != 1
+                    or data[start + 12] & 3 != 3 or data[start + 13] & 0xf8 != 0xf8):
+                raise ValueError('Invalid or unsupported MPEG2 pack header')
+            packet_end = start + 14 + (data[start + 13] & 7)
+            if packet_end > end or any(value != 0xff for value in data[start + 14:packet_end]):
+                raise ValueError('Invalid MPEGPS pack stuffing')
+        elif sid == 0xb9:
+            packet_end = start + 4
+            if packet_end != end:
+                raise ValueError('Premature MPEGPS program end')
+        elif sid in (0xbb, 0xbe, 0xbf, 0xbd) or 0xe0 <= sid <= 0xef:
+            if start + 6 > end:
+                raise ValueError('Short MPEGPS packet length')
+            size = int.from_bytes(data[start + 4:start + 6], 'big')
+            packet_end = start + 6 + size
+            if not size or packet_end > end:
+                raise ValueError('Zero-length or out-of-range MPEGPS packet')
+            # System, padding and private-2 packets are opaque, length-delimited spans.
+            if sid == 0xbd or 0xe0 <= sid <= 0xef:
+                payload_start = mpegps_payload_start(data, start, packet_end)
+                payload_end = packet_end
+                key = f'{sid:02x}'
+        else:
+            raise ValueError('Unsupported MPEGPS packet ID')
+        yield dict(start=start, end=packet_end, packet_id=sid, stream=key,
+                   payload_start=payload_start, payload_end=payload_end)
+        start = packet_end
+
+
+def mpegps_payload_start(data, start, end):
+    if start + 9 > end or data[start + 6] & 0xc0 != 0x80:
+        raise ValueError('Invalid or unsupported MPEG2 PES header')
+    if data[start + 6] & 0x30:
+        raise ValueError('Scrambled MPEGPS PES is unsupported')
+    flags, length = data[start + 7], data[start + 8]
+    payload = start + 9 + length
+    if payload >= end:
+        raise ValueError('Empty payload or out-of-range MPEGPS optional header')
+    timestamps = flags >> 6
+    if timestamps == 1 or flags & 0x3e:
+        raise ValueError('Invalid or unsupported MPEGPS optional PES flags')
+    timestamp_length = 10 if timestamps == 3 else 5 if timestamps == 2 else 0
+    if length < timestamp_length:
+        raise ValueError('MPEGPS timestamp exceeds optional header')
+    cursor = start + 9
+    if timestamps:
+        mpegps_timestamp(data, cursor, 3 if timestamps == 3 else 2)
+        cursor += 5
+        if timestamps == 3:
+            mpegps_timestamp(data, cursor, 1)
+            cursor += 5
+    if flags & 1:
+        if cursor == payload:
+            raise ValueError('Missing MPEGPS PES extension flags')
+        extension = data[cursor]
+        cursor += 1
+        if extension & 0x0e != 0x0e or extension & 0xe1:
+            raise ValueError('Invalid or unsupported MPEGPS PES extension')
+        if extension & 0x10:
+            if cursor + 2 > payload or data[cursor] & 0xc0 != 0x40:
+                raise ValueError('Invalid MPEGPS P-STD buffer field')
+            cursor += 2
+    if any(value != 0xff for value in data[cursor:payload]):
+        raise ValueError('Invalid MPEGPS PES header stuffing')
+    # In particular, private-bd substream prefixes are payload, not headers.
+    return payload
+
+
+def mpegps_timestamp(data, start, prefix):
+    if (data[start] >> 4 != prefix or not data[start] & 1
+            or not data[start + 2] & 1 or not data[start + 4] & 1):
+        raise ValueError('Invalid MPEGPS timestamp prefix or markers')
+
+
+def validate_mpegps(data, source_hash, directory):
+    if hashlib.sha256(data).hexdigest() != source_hash:
+        raise ValueError('MPEGPS source changed during extraction')
+    if not stat.S_ISDIR(directory.lstat().st_mode):
+        raise ValueError('Invalid MPEGPS helper directory')
+    with regular_file(directory / 'manifest.json', MPEGPS_MANIFEST_LIMIT) as stream:
+        raw = stream.read(MPEGPS_MANIFEST_LIMIT + 1)
+    if len(raw) > MPEGPS_MANIFEST_LIMIT:
+        raise ValueError('MPEGPS manifest exceeds size limit')
+    manifest = json.loads(raw, object_pairs_hook=manifest_object)
+    manifest_fields(manifest, ('source_sha256', 'source_size_bytes', 'data_start', 'data_end',
+                              'consumed_end', 'observed_streams', 'packets', 'outputs'))
+    if manifest['source_sha256'] != source_hash:
+        raise ValueError('MPEGPS source hash mismatch')
+    for field, expected in (('source_size_bytes', len(data)), ('data_start', 0),
+                            ('data_end', len(data)), ('consumed_end', len(data))):
+        if manifest_integer(manifest[field], MPEGPS_SOURCE_LIMIT) != expected:
+            raise ValueError('MPEGPS source identity or range mismatch')
+    streams, packets, outputs = (manifest['observed_streams'], manifest['packets'],
+                                manifest['outputs'])
+    if (not isinstance(streams, list) or not streams
+            or any(not isinstance(key, str) or not re.fullmatch(r'bd|e[0-9a-f]', key) for key in streams)
+            or len(set(streams)) != len(streams)
+            or not isinstance(packets, list) or not isinstance(outputs, list)
+            or len(outputs) != len(streams)):
+        raise ValueError('Invalid MPEGPS stream, packet or output inventory')
+    names = {key: 'private-bd.bin' if key == 'bd' else f'pes-{key}.bin' for key in streams}
+    metadata = {}
+    for item in outputs:
+        manifest_fields(item, ('path', 'size_bytes', 'sha256'))
+        name, digest = item['path'], item['sha256']
+        if not isinstance(name, str) or name not in names.values() or name in metadata:
+            raise ValueError('Invalid or duplicate MPEGPS output path')
+        if (not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)
+                or not manifest_integer(item['size_bytes'], MPEGPS_SOURCE_LIMIT)):
+            raise ValueError('Invalid MPEGPS output identity')
+        metadata[name] = item
+    if {entry.name for entry in directory.iterdir()} != set(metadata) | {'manifest.json'}:
+        raise ValueError('Unexpected or missing MPEGPS helper output')
+    observed = set()
+    count = 0
+    with ExitStack() as stack:
+        files = {key: stack.enter_context(regular_file(directory / name, MPEGPS_SOURCE_LIMIT))
+                 for key, name in names.items()}
+        hashes = {key: hashlib.sha256() for key in streams}
+        for key, stream in files.items():
+            if os.fstat(stream.fileno()).st_size != metadata[names[key]]['size_bytes']:
+                raise ValueError('MPEGPS output size mismatch')
+        for expected in mpegps_packets(data):
+            if count == len(packets):
+                raise ValueError('Missing MPEGPS packet')
+            packet = packets[count]
+            manifest_fields(packet, expected)
+            for field in ('start', 'end', 'packet_id', 'payload_start', 'payload_end'):
+                if packet[field] is not None or field in ('start', 'end', 'packet_id'):
+                    manifest_integer(packet[field], MPEGPS_SOURCE_LIMIT)
+            if packet != expected:
+                raise ValueError('MPEGPS packet or payload source range mismatch')
+            count += 1
+            key = expected['stream']
+            if key is None:
+                continue
+            if key not in files:
+                raise ValueError('Uninventoried MPEGPS stream')
+            observed.add(key)
+            start, end = expected['payload_start'], expected['payload_end']
+            while start < end:
+                chunk_end = min(start + 65536, end)
+                chunk = files[key].read(chunk_end - start)
+                if chunk != data[start:chunk_end]:
+                    raise ValueError('MPEGPS output differs from source payload bytes')
+                hashes[key].update(chunk)
+                start = chunk_end
+        if count != len(packets) or observed != set(streams):
+            raise ValueError('Incomplete MPEGPS packet or stream inventory')
+        for key, stream in files.items():
+            if stream.read(1) or hashes[key].hexdigest() != metadata[names[key]]['sha256']:
+                raise ValueError('MPEGPS output hash or concatenated size mismatch')
+    return sorted(metadata)
+
+
+def extract_mpegps(source, output, tool):
+    if not stat.S_ISDIR(output.lstat().st_mode) or any(output.iterdir()):
+        raise ValueError('MPEGPS output must be an existing empty directory')
+    with regular_file(source, MPEGPS_SOURCE_LIMIT) as stream, mmap.mmap(
+            stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        if len(data) < 14 or data[:4] != b'\x00\x00\x01\xba':
+            raise ValueError('Invalid raw MPEGPS source')
+        source_hash = hashlib.sha256(data).hexdigest()
+        tool = tool.resolve(strict=True)
+        provenance = tool_provenance('mpegps', tool)
+        with tempfile.TemporaryDirectory(prefix='pspdb-mpegps-', dir=output.parent) as temporary:
+            directory = Path(temporary) / 'streams'
+            run_mpegps([str(tool), str(source.resolve(strict=True)), str(directory.resolve())], timeout=120)
+            opened, current = os.fstat(stream.fileno()), source.lstat()
+            if (opened.st_size != len(data) or not stat.S_ISREG(current.st_mode)
+                    or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino)):
+                raise ValueError('MPEGPS source file changed during extraction')
+            names = validate_mpegps(data, source_hash, directory)
+            publish_streams(names, directory, output)
+        return provenance
+
+
+def publish_streams(names, directory, output):
+    published = []
+    try:
+        for name in names + ['manifest.json']:
+            target = output / ('structure.json' if name == 'manifest.json' else name)
+            (directory / name).rename(target)
+            published.append(target)
+    except BaseException:
+        for target in published:
+            target.unlink()
+        raise
 
 
 def executable(variable, name):
@@ -521,7 +735,7 @@ def executable(variable, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['psar', 'rco', 'prx', 'gzip', 'kl3e', 'kl4e', 'npumdimg', 'pops', 'psx', 'document', 'psmf'])
+    parser.add_argument('kind', choices=['psar', 'rco', 'prx', 'gzip', 'kl3e', 'kl4e', 'npumdimg', 'pops', 'psx', 'document', 'psmf', 'mpegps'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--docinfo', type=Path)
@@ -545,6 +759,8 @@ def main():
             provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
         elif args.kind == 'psmf':
             provenance = extract_psmf(args.source, args.output, executable('PSPDB_PSMF', 'pspdb-psmf'))
+        elif args.kind == 'mpegps':
+            provenance = extract_mpegps(args.source, args.output, executable('PSPDB_MPEGPS', 'pspdb-mpegps'))
         elif args.kind == 'prx':
             provenance = extract_prx(args.source, args.output, executable('PSPDECRYPT', 'pspdecrypt'))
         elif args.kind in ('kl3e', 'kl4e'):

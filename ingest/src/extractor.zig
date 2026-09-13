@@ -1,7 +1,7 @@
 const std = @import("std");
 const memory = @import("bytes.zig");
 
-pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp, document, psmf };
+pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp, document, psmf, mpegps };
 
 const document_prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
 
@@ -20,6 +20,7 @@ pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "NPUMDIMG")) return .npumdimg;
     // Recognize the family even when truncated or unsupported; the adapter rejects it.
     if (std.mem.startsWith(u8, bytes, "PSMF")) return .psmf;
+    if (std.mem.startsWith(u8, bytes, "\x00\x00\x01\xba")) return .mpegps;
     if (bytes.len >= 32775 and bytes[32768] == 1 and std.mem.eql(u8, bytes[32769..32774], "CD001") and bytes[32774] == 1) return .iso9660;
     if (std.mem.startsWith(u8, bytes, "PSAR")) return .psar;
     if (std.mem.startsWith(u8, bytes, "\x00PRF")) return .rco;
@@ -128,6 +129,17 @@ test "format detection uses signatures" {
     try std.testing.expectEqual(Kind.psmf, detect("PSMF9999").?);
     try std.testing.expectEqual(null, detect("PSM"));
     try std.testing.expectEqual(null, detect("not an archive"));
+}
+
+test "raw MPEG pack detection preserves fail-closed adapter dispatch" {
+    try std.testing.expectEqual(Kind.mpegps, detect("\x00\x00\x01\xba").?);
+    try std.testing.expectEqual(Kind.mpegps, detect("\x00\x00\x01\xba\x44").?);
+    // Unsupported MPEG1 headers still reach the adapter instead of staying opaque.
+    try std.testing.expectEqual(Kind.mpegps, detect("\x00\x00\x01\xba\x21").?);
+    try std.testing.expectEqual(null, detect("\x00\x00\x01"));
+    try std.testing.expectEqual(null, detect("\x00\x00\x01\xbb"));
+    try std.testing.expectEqual(null, detect("\x00\x00\x01\xe0"));
+    try std.testing.expectEqual(null, detect("prefix\x00\x00\x01\xba"));
 }
 
 test "legacy DOC signatures remain distinct from generic PGD" {

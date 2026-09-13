@@ -19,28 +19,32 @@ uv run --locked ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
 Use a fresh staging catalog for each contribution. Include the store option to
 produce nested extraction trees. This command writes metadata and hashes to the
 staging catalog; extracted bytes go only to your local object store.
-For supported manuals and PSMFs, configure the [DOCUMENT helper](README.md#legacy-document-manuals)
-and [PSMF helper](README.md#psmf-raw-stream-traversal) before ingestion and freshness
-checks. Missing helpers are not successful extraction.
+For supported manuals, PSMFs and raw MPEG2-PS streams, configure the
+[DOCUMENT helper](README.md#legacy-document-manuals),
+[PSMF helper](README.md#psmf-raw-stream-traversal) and
+[MPEG2-PS helper](README.md#raw-mpeg2-program-stream-ranges) before ingestion and
+freshness checks. Missing helpers are not successful extraction.
 
-The [raw MPEG2-PS range helper](README.md#standalone-raw-mpeg2-program-stream-ranges)
-is standalone-only: it is not auto-ingested and produces no catalog contribution
-pairs. Its opaque private/PES bytes and packet spans are not codec or
-multichannel validation. Keep its source files, manifests and extracted bytes
-local; do not configure it as the PSMF helper.
+The MPEG2-PS helper supports standalone extraction and automatic `mpegps/v1`
+catalog pairs. Set `PSPDB_MPEGPS`, not `PSPDB_PSMF`; the default PSMF behavior is
+unchanged. Its strict supported subset and ingestion budgets are documented in
+the link above. A malformed or unsupported recognized stream, missing helper or
+verification failure rejects the containing root. Opaque private/PES bytes and
+packet spans do not establish codec or multichannel validity. Keep source files,
+manifest contents and extracted bytes local; contribute only metadata/tree pairs.
 
 Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v8/<source-sha256>-ingest.json
-catalog/iso/v8/<source-sha256>-tree.json
+catalog/iso/v9/<source-sha256>-ingest.json
+catalog/iso/v9/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v10/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v11/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
-Include new nested pairs too, such as `prx/v3/`, `gzip/v2/` and `psmf/v1/`.
+Include new nested pairs too, such as `prx/v3/`, `gzip/v2/`, `psmf/v1/` and `mpegps/v1/`.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same
 revision, report the discrepancy instead of replacing it. Tool executable hashes

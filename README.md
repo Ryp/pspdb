@@ -219,7 +219,7 @@ node website/tests/tree-catalog.mjs
 ## Extractors
 
 PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E, KL4E, VMP,
-PSMF and supported legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
+PSMF, raw MPEG2-PS and supported legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
 when both catalog and store are set:
 
 ```sh
@@ -439,11 +439,11 @@ streams matched independent raw references. A complete original Daxter package
 accepted with 65 unique PSMFs and then fresh-skipped. These checks establish
 exact raw payload identity, **not codec validity or complete PSMF support**.
 
-### Standalone raw MPEG2 program-stream ranges
+### Raw MPEG2 program-stream ranges
 
-The raw MPEG2-PS helper is a separate, **standalone-only** mode of the same pinned
-builder. It is **not automatically detected, ingested or cataloged**, and does
-not change the PSMF helper or `psmf/v1` behavior. Using .NET SDK **8.0.425**:
+The `mpegps/v1` extractor uses a separate mode of the same pinned builder.
+It supports both standalone extraction and automatic recursive ingestion, without
+changing the default PSMF helper or `psmf/v1` behavior. Build using .NET SDK **8.0.425**:
 
 ```sh
 # Clone once if .work/pmftools does not already exist.
@@ -452,6 +452,7 @@ uv run --locked python tools/build_psmf.py --format mpegps \
   --source .work/pmftools --dotnet /path/to/dotnet \
   --output .work/pspdb-mpegps
 .work/pspdb-mpegps --provenance
+export PSPDB_MPEGPS="$PWD/.work/pspdb-mpegps"
 .work/pspdb-mpegps /path/to/source.mpg .work/mpegps-output
 ```
 
@@ -465,6 +466,9 @@ executable only after successful publication. No installed .NET runtime is
 needed to run it. `--provenance` identifies `pmftools-mpegps`, the pinned upstream
 revision and the capabilities `raw-mpeg2:1`, `opaque-private-pes:1`, `manifest:1`
 and `manifest-budget-env:1`.
+Configure `PSPDB_MPEGPS` for ingestion and freshness checks, or put `pspdb-mpegps`
+on PATH. Provenance includes the SHA-256 of the complete bundled executable;
+changing it invalidates dependent ISO and PKG roots.
 
 Invocation is `pspdb-mpegps SOURCE NEW_OUTPUT_DIRECTORY`. The output directory
 must not already exist: successful extraction publishes it atomically, including
@@ -477,6 +481,27 @@ with `PSPDB_MPEGPS_MANIFEST_LIMIT`, a positive decimal byte count no larger than
 PSPDB_MPEGPS_MANIFEST_LIMIT=33554432 \
   .work/pspdb-mpegps /path/to/source.mpg .work/mpegps-output-large
 ```
+
+Automatic discovery recognizes the complete four-byte pack signature
+`00 00 01 ba` at offset zero, regardless of filename. Even truncated packs and
+unsupported MPEG1 headers reach the adapter and fail closed rather than remaining
+silently opaque. Missing helpers, invalid recognized descendants, budget overruns
+and verification failures reject the containing root.
+
+Ingestion enforces **64 MiB sources**, **16 MiB manifests**, **120 seconds** of
+helper execution and a **256 MiB managed GC heap** limit (not a total-process
+RSS limit). It explicitly sets `PSPDB_MPEGPS_MANIFEST_LIMIT`; the larger standalone
+override above does not enlarge ingestion's budget. As with PSMF, `RLIMIT_FSIZE`
+is not used because CoreCLR needs its large anonymous JIT backing file.
+Private temporary output is removed on failure.
+
+Before publication the adapter independently verifies every source packet and
+payload range, full source consumption, output inventory, safe regular-file paths,
+sizes, hashes and exact source-span concatenations. It publishes the verified
+manifest as `structure.json` alongside the raw files under `mpegps/v1`; raw
+outputs follow normal recursive signature dispatch. Only catalog metadata and
+inventories are contributions: source bytes, raw outputs and manifest contents
+remain in the local object store.
 
 Outputs are neutral byte ranges, not decoded media: `private-bd.bin` concatenates
 the full private-stream PES payloads, including their original prefixes, and
@@ -499,3 +524,11 @@ copy-info/CRC fields and other PES extension features are rejected explicitly.
 EOF is accepted at a complete packet boundary without a program-end marker;
 an explicit program-end marker must be last. Timestamp ordering, buffer semantic
 values and structural packet contents are not validated.
+
+Discovery revisions ISO **9**, PBP **11**, PKG **11**, ISO9660 **5** and PSAR **5**
+make newly recognized MPEG streams reachable during `--skip-existing`. A root
+previously considered fresh can otherwise hide an unrecorded descendant; freshness
+cannot infer that missing edge from old hashes alone. Current intermediate
+inventories still replay verified stored children through signature dispatch.
+These discovery bumps do not revise unrelated decoders or `psmf/v1`.
+Regeneration adds new revision pairs and leaves historical revisions immutable.

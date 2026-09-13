@@ -18,6 +18,7 @@ CONTEXTUAL_KINDS = {
     'pspdb-pops': 'pops',
     'PSP-DOCUMENT.DAT': 'document',
     'pmftools': 'psmf',
+    'pmftools-mpegps': 'mpegps',
 }
 
 
