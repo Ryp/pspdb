@@ -1,4 +1,4 @@
-"""Inventory PSP/PSX TSV snapshots and acquire bounded public Zeus packages.
+"""Inventory PSP/PSX TSV snapshots and acquire bounded public Sony packages.
 
 No network access without --limit N. State and verified packages are machine-local;
 this does not run ingestion or establish current extractor coverage.
@@ -23,7 +23,10 @@ from urllib.parse import urlsplit
 
 HASH = re.compile(r'[0-9a-fA-F]{64}\Z')
 SNAPSHOT = re.compile(r'(PSP_(?:GAMES|DEMOS|DLCS|THEMES|UPDATES)|PSX_GAMES)(?:\(\d+\))?\.tsv\Z', re.I)
-HOST = 'zeus.dl.playstation.net'
+HOST_PATHS = {
+    'zeus.dl.playstation.net': re.compile(r'/cdn/[A-Za-z0-9_./-]+\.pkg'),
+    'b0.ww.np.dl.playstation.net': re.compile(r'/tppkg/np/[A-Za-z0-9_./-]+\.pkg'),
+}
 CHUNK = 1024 * 1024
 FIELDS = {'Title ID': 'title_id', 'Region': 'region', 'Name': 'name',
           'Content ID': 'content_id', 'Last Modification Date': 'modified',
@@ -62,10 +65,10 @@ def safe_url(url):
             raise ValueError
     except ValueError:
         raise ValueError('unsafe_url') from None
-    if parts.hostname in ('ares.dl.playstation.net', 'b0.ww.np.dl.playstation.net'):
+    if parts.hostname == 'ares.dl.playstation.net':
         raise ValueError('unsupported_host')
-    if (parts.hostname != HOST or
-            not re.fullmatch(r'/cdn/[A-Za-z0-9_./-]+\.pkg', parts.path)):
+    pattern = HOST_PATHS.get(parts.hostname)
+    if pattern is None or not pattern.fullmatch(parts.path):
         raise ValueError('unsafe_url')
     return parts
 
@@ -94,7 +97,7 @@ def public_connection(address, timeout=30, source_address=None):
 def request(url, headers, timeout):
     parts = safe_url(url)
     cls = http.client.HTTPSConnection if parts.scheme == 'https' else http.client.HTTPConnection
-    connection = cls(HOST, timeout=timeout)
+    connection = cls(parts.hostname, timeout=timeout)
     connection._create_connection = public_connection
     try:
         connection.request('GET', parts.path, headers=headers)

@@ -128,17 +128,24 @@ class AcquisitionTests(unittest.TestCase):
     def test_url_policy_and_dns_block_private_targets_without_leaking_credentials(self):
         for url in ['http://127.0.0.1/cdn/a.pkg', URL.replace('zeus.', 'zeus.evil.'),
                     URL.replace('http://', 'http://user:SECRET@'), URL + '?token=SECRET',
-                    URL.replace('/cdn/', '/cdn/../'), URL.replace('http:', 'file:')]:
+                    URL.replace('/cdn/', '/cdn/../'), URL.replace('http:', 'file:'),
+                    'http://b0.ww.np.dl.playstation.net/cdn/a.pkg',
+                    'http://zeus.dl.playstation.net/tppkg/np/a.pkg']:
             with self.subTest(url=url), self.assertRaises(ValueError):
                 acquire.safe_url(url)
         with self.assertRaisesRegex(ValueError, 'unsupported_host'):
-            acquire.safe_url('http://b0.ww.np.dl.playstation.net/tppkg/np/a.pkg')
+            acquire.safe_url('http://ares.dl.playstation.net/cdn/a.pkg')
+        update_url = 'http://b0.ww.np.dl.playstation.net/tppkg/np/NPUG80251/update.pkg'
+        path = self.snapshot('PSP_UPDATES.tsv', [{'PKG direct link': update_url}])
+        update = acquire.inventory([path])['packages'][0]
+        self.assertEqual(update['urls'], [update_url])
+        self.assertEqual(update['issues'], [])
         path = self.snapshot('PSP_GAMES.tsv', [{'PKG direct link': URL + '?token=SECRET'}])
         self.assertNotIn('SECRET', json.dumps(acquire.inventory([path])))
         answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 80))]
         with patch.object(socket, 'getaddrinfo', return_value=answers), patch.object(socket, 'socket') as connect:
             with self.assertRaises(acquire.AcquisitionError):
-                acquire.public_connection((acquire.HOST, 80))
+                acquire.public_connection(('b0.ww.np.dl.playstation.net', 80))
             connect.assert_not_called()
 
     def test_interrupted_download_resumes_only_validated_prefix(self):

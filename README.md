@@ -99,7 +99,7 @@ retains duplicate-source attribution and conflicting references, and excludes
 license columns. Counts describe reference/package candidates, not a complete
 enumeration of PSN. Missing hashes or sizes remain unknown.
 
-Download a bounded batch from listed public Zeus URLs, then ingest separately:
+Download a bounded batch from listed public Sony package URLs, then ingest separately:
 
 ```sh
 uv run --locked python tools/psn_acquire.py /path/to/tsvs \
@@ -115,7 +115,10 @@ Interrupted transfers resume only with a strong remote ETag and a matching saved
 local prefix; otherwise they restart. Repeated runs reuse verified files.
 Use `--package` with a report candidate ID for exact selection, `--reuse` for
 existing local packages, and `--retry-failed` to revisit permanent failures.
-Other hosts and redirects remain explicitly unhandled rather than followed.
+Supported sources are `zeus.dl.playstation.net/cdn/` and the update host
+`b0.ww.np.dl.playstation.net/tppkg/np/`. Host-specific paths, public DNS targets,
+and credential-free URLs are enforced. Other hosts and redirects remain
+explicitly unhandled rather than followed.
 
 Re-run inventory against the resulting catalog to distinguish exact ingested
 hash/size matches from downloaded packages. Catalog matching does not establish
