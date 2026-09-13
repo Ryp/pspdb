@@ -90,7 +90,7 @@ pub const Package = struct {
         return .{ .name = name, .offset = offset, .size = size, .key = key, .directory = directory };
     }
 
-    pub fn readFile(self: Package, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
+    pub fn read_file(self: Package, allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
         for (0..self.count) |i| {
             const e = try self.entry(allocator, i);
             defer allocator.free(e.name);
@@ -111,10 +111,7 @@ pub const Package = struct {
                 try emit(context, e.name, null);
             } else {
                 const data = try allocator.alloc(u8, e.size);
-                const view = memory.Owner.allocated(allocator, data) catch |err| {
-                    allocator.free(data);
-                    return err;
-                };
+                const view = try memory.Owner.take_allocated(allocator, data);
                 defer view.release();
                 try self.decrypt(e.offset, data, e.key);
                 try emit(context, e.name, view);

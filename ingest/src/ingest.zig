@@ -2,6 +2,8 @@ const std = @import("std");
 const processor = @import("processor.zig");
 const zip = @import("zip.zig");
 const inventory = @import("inventory.zig");
+const memory = @import("bytes.zig");
+const extractor = @import("extractor.zig");
 
 pub const Stats = struct {
     directories: usize = 0,
@@ -77,7 +79,7 @@ const Pool = struct {
     catalog: ?[]const u8,
     skip_existing: bool,
     state: ?*const @import("catalog_state.zig").State = null,
-    extractor_adapter: ?processor.extractor.Adapter,
+    extractor_adapter: ?extractor.Adapter,
     mutex: std.Io.Mutex = .init,
     changed: std.Io.Condition = .init,
     jobs: std.ArrayList(Job) = .empty,
@@ -321,10 +323,7 @@ const Pool = struct {
 
     fn process_zip_member(self: *Pool, member: Member, dispatch: ?*processor.Dispatch) !?inventory.Result {
         const bytes = try member.source.archive.read(member.entry, member.name, self.allocator);
-        const input = processor.memory.Owner.allocated(self.allocator, bytes) catch |err| {
-            self.allocator.free(bytes);
-            return err;
-        };
+        const input = try memory.Owner.take_allocated(self.allocator, bytes);
         defer input.release();
         return if (is_pkg(member.name)) processor.process_pkg_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch) else processor.process_iso_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch);
     }
@@ -412,7 +411,7 @@ pub fn log(io: std.Io, comptime format: []const u8, args: anytype) void {
     stderr.file_writer.interface.flush() catch {};
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, extractor_adapter: ?processor.extractor.Adapter, state: ?*const @import("catalog_state.zig").State) !Stats {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, extractor_adapter: ?extractor.Adapter, state: ?*const @import("catalog_state.zig").State) !Stats {
     std.debug.assert(worker_count >= 1);
     var pool: Pool = .{
         .allocator = allocator,

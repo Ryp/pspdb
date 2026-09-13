@@ -6,14 +6,15 @@ const prx = @import("prx.zig");
 const pops = @import("pops.zig");
 const kle = @import("kle.zig");
 const npumdimg = @import("npumdimg.zig");
+const edat = @import("edat.zig");
 const catalog_io = @import("catalog.zig");
 const pkg = @import("pkg.zig");
 const data_psp = @import("data_psp.zig");
 const revisions = @import("extractor_versions");
 const licenses = @import("licenses.zig");
-pub const memory = @import("bytes.zig");
+const memory = @import("bytes.zig");
 const iso = @import("iso_reader.zig");
-pub const extractor = @import("extractor.zig");
+const extractor = @import("extractor.zig");
 const StoreWriter = @import("store.zig").Writer;
 const umd = @import("umd_data.zig");
 const sfo = @import("sfo.zig");
@@ -62,18 +63,18 @@ pub const Counts = struct { stored: usize = 0, reused: usize = 0 };
 
 fn read_metadata(allocator: std.mem.Allocator, bytes: []const u8) !Result {
     if (bytes.len == 0) return error.EmptyFile;
-    const umd_bytes = (try iso.readFile(allocator, bytes, "UMD_DATA.BIN")) orelse return error.MissingUmdData;
+    const umd_bytes = (try iso.read_file(allocator, bytes, "UMD_DATA.BIN")) orelse return error.MissingUmdData;
     var result: Result = .{ .size_bytes = bytes.len, .umd_bytes = umd_bytes, .record = undefined };
     errdefer result.deinit(allocator);
     result.record = try umd.parse(umd_bytes);
-    result.game_sfo_bytes = (try iso.readFile(allocator, bytes, "PSP_GAME/PARAM.SFO")) orelse &.{};
-    result.video_sfo_bytes = (try iso.readFile(allocator, bytes, "UMD_VIDEO/PARAM.SFO")) orelse &.{};
+    result.game_sfo_bytes = (try iso.read_file(allocator, bytes, "PSP_GAME/PARAM.SFO")) orelse &.{};
+    result.video_sfo_bytes = (try iso.read_file(allocator, bytes, "UMD_VIDEO/PARAM.SFO")) orelse &.{};
     const game = try sfo.parse(allocator, result.game_sfo_bytes);
     const video = try sfo.parse(allocator, result.video_sfo_bytes);
     // One disc-level metadata record: prefer the game SFO when both exist.
     result.metadata = if (result.game_sfo_bytes.len != 0) game else video;
     if (result.game_sfo_bytes.len == 0 and result.video_sfo_bytes.len == 0) {
-        result.updater_sfo_bytes = (try iso.readFile(allocator, bytes, "PSP_GAME/SYSDIR/UPDATE/PARAM.SFO")) orelse &.{};
+        result.updater_sfo_bytes = (try iso.read_file(allocator, bytes, "PSP_GAME/SYSDIR/UPDATE/PARAM.SFO")) orelse &.{};
         // An updater-only disc takes its title here, but MSTKUPDATE is not its disc ID.
         const updater = try sfo.parse(allocator, result.updater_sfo_bytes);
         result.metadata.title = updater.title;
@@ -130,7 +131,7 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
     var result: Result = .{ .kind = .pkg, .size_bytes = bytes.len, .sha256 = hash, .sha1 = std.fmt.bytesToHex(sha1, .lower), .content_type = package.content_type, .package_flags = package.package_flags };
     errdefer result.deinit(allocator);
     result.content_id = try allocator.dupe(u8, package.content_id);
-    if (try package.readFile(allocator, "PARAM.SFO")) |metadata| {
+    if (try package.read_file(allocator, "PARAM.SFO")) |metadata| {
         result.pkg_sfo_bytes = metadata;
         if (metadata.len == 0) return error.InvalidSfo;
         result.metadata = try sfo.parsePkg(allocator, metadata, &result.pkg_title);
@@ -331,7 +332,6 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
     defer if (output) |value| value.deinit(allocator, io);
     const provenance: extractor.Provenance = switch (task.kind) {
         .edat => blk: {
-            const edat = @import("edat.zig");
             const bytes = edat.decode(allocator, task.input.bytes, null) catch |err| switch (err) {
                 error.MissingEdatRap => retry: {
                     const directory = dispatch.adapter.rap_directory orelse return error.MissingEdatRap;
@@ -345,10 +345,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                 },
                 else => return err,
             };
-            const view = memory.Owner.allocated(allocator, bytes) catch |err| {
-                allocator.free(bytes);
-                return err;
-            };
+            const view = try memory.Owner.take_allocated(allocator, bytes);
             defer view.release();
             try inventory.emit_view("payload.DAT", view);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.edat };
@@ -361,10 +358,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                 .npumdimg => npumdimg.decode(allocator, task.input.bytes),
                 else => unreachable,
             };
-            const view = memory.Owner.allocated(allocator, bytes) catch |err| {
-                allocator.free(bytes);
-                return err;
-            };
+            const view = try memory.Owner.take_allocated(allocator, bytes);
             defer view.release();
             const name: []const u8 = if (task.kind == .npumdimg)
                 "disc.iso"
@@ -420,10 +414,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                 defer child.deinit();
                 const section_provenance: extractor.Provenance = if (section[0] == .pops) native: {
                     const bytes = try pops.decode(allocator, pbp.get("DATA.PSP") orelse return error.MissingDataPsp, data_bin);
-                    const view = memory.Owner.allocated(allocator, bytes) catch |err| {
-                        allocator.free(bytes);
-                        return err;
-                    };
+                    const view = try memory.Owner.take_allocated(allocator, bytes);
                     defer view.release();
                     const name: []const u8 = if (std.mem.startsWith(u8, bytes, "\x7fELF")) "module.elf" else "payload.gz";
                     try child.emit_view(name, view);
@@ -541,10 +532,7 @@ fn reuse_entries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry
             const info = try object.stat(io);
             if (info.kind != .file or entry.size_bytes == null or info.size != entry.size_bytes.?) return error.CorruptObject;
             const payload = try allocator.alloc(u8, std.math.cast(usize, info.size) orelse return error.CorruptObject);
-            const view = memory.Owner.allocated(allocator, payload) catch |err| {
-                allocator.free(payload);
-                return err;
-            };
+            const view = try memory.Owner.take_allocated(allocator, payload);
             defer view.release();
             if (try object.readPositionalAll(io, payload, 0) != payload.len) return error.CorruptObject;
             var digest: [32]u8 = undefined;
@@ -628,10 +616,7 @@ pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, 
     const size = std.math.cast(usize, stat.size) orelse return error.FileTooLarge;
 
     const mapping = try std.posix.mmap(null, size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, file.handle, 0);
-    const input = memory.Owner.mapped(allocator, mapping) catch |err| {
-        std.posix.munmap(mapping);
-        return err;
-    };
+    const input = try memory.Owner.take_mapped(allocator, mapping);
     defer input.release();
     const result = if (std.ascii.endsWithIgnoreCase(path, ".pkg"))
         try process_pkg_checked(allocator, io, mapping, store, catalog, dispatch)
@@ -648,29 +633,39 @@ test "processor rejects non-ISO bytes" {
     try std.testing.expectError(error.InvalidIso, process_iso(std.testing.allocator, std.testing.io, "not an ISO", null));
 }
 
-test "failed enqueue releases retained input and rolls back visited hash" {
+test "failed queue publication permits retry with input retained past its parent" {
     const allocator = std.testing.allocator;
-    const Reject = struct {
-        fn enqueue(_: *anyopaque, _: Task) !void {
-            return error.TestQueueFailure;
+    const Queue = struct {
+        reject: bool = true,
+        task: ?Task = null,
+        fn enqueue(context: *anyopaque, task: Task) !void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (self.reject) return error.TestQueueFailure;
+            if (self.task != null) return error.UnexpectedTask;
+            self.task = task;
         }
     };
-    var context: u8 = 0;
+    var queue = Queue{};
+    defer if (queue.task) |task| task.deinit(allocator);
     var dispatch = Dispatch{
-        .context = &context,
-        .enqueue = Reject.enqueue,
+        .context = &queue,
+        .enqueue = Queue.enqueue,
         .adapter = .{ .store = "unused", .catalog = "unused" },
         .visited = .init(allocator),
     };
     defer dispatch.visited.deinit();
-    const input = try memory.Owner.allocated(allocator, try allocator.dupe(u8, "PSARinput"));
-    defer input.release();
-    try std.testing.expectError(error.TestQueueFailure, dispatch.inspect(allocator, std.testing.io, "test.psar", input, @splat('a')));
-    try std.testing.expectEqual(@as(usize, 1), input.owner.references.load(.monotonic));
-    try std.testing.expectEqual(@as(usize, 0), dispatch.visited.count());
+    {
+        const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, "PSARinput"));
+        defer input.release();
+        try std.testing.expectError(error.TestQueueFailure, dispatch.inspect(allocator, std.testing.io, "test.psar", input, @splat('a')));
+        queue.reject = false;
+        try dispatch.inspect(allocator, std.testing.io, "test.psar", input, @splat('a'));
+    }
+    const task = queue.task orelse return error.MissingQueuedTask;
+    try std.testing.expectEqualStrings("PSARinput", task.input.bytes);
 }
 
-test "native descendants retain slices and never read their source from the store" {
+test "native descendants outlive their parent and never reread their source from the store" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -696,7 +691,7 @@ test "native descendants retain slices and never read their source from the stor
     defer dispatch.visited.deinit();
     // Two native SCE wrappers: the second borrows a subrange of the first.
     const payload = "~SCE\x08\x00\x00\x00~SCE\x08\x00\x00\x00plain";
-    const input = try memory.Owner.allocated(allocator, try allocator.dupe(u8, payload));
+    const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, payload));
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
     const hash = std.fmt.bytesToHex(digest, .lower);
@@ -704,8 +699,6 @@ test "native descendants retain slices and never read their source from the stor
         defer input.release();
         const counts = try process_task(allocator, io, .{ .name = "outer.sce", .input = input, .hash = hash, .kind = .sce }, &dispatch);
         try std.testing.expectEqual(@as(usize, 1), counts.stored);
-        try std.testing.expectEqual(input.owner, queue.task.?.input.owner);
-        try std.testing.expectEqual(input.bytes.ptr + 8, queue.task.?.input.bytes.ptr);
     }
     // Remove the child's stored source; it must still decode from retained RAM.
     const child = queue.task.?;

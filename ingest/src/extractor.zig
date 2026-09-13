@@ -68,10 +68,7 @@ pub const Output = struct {
                 .directory => try emit(context, entry.path, null),
                 .file => {
                     const bytes = try entry.dir.readFileAlloc(io, entry.basename, allocator, .unlimited);
-                    const view = memory.Owner.allocated(allocator, bytes) catch |err| {
-                        allocator.free(bytes);
-                        return err;
-                    };
+                    const view = try memory.Owner.take_allocated(allocator, bytes);
                     defer view.release();
                     try emit(context, entry.path, view);
                     files += 1;

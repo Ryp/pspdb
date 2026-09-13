@@ -4,14 +4,14 @@ const memory = @import("bytes.zig");
 const IsoView = @import("iso_view.zig").IsoView;
 
 /// Read a named file independently of enumeration order. Caller owns the bytes.
-pub fn readFile(allocator: std.mem.Allocator, bytes: []const u8, wanted: []const u8) !?[]u8 {
+pub fn read_file(allocator: std.mem.Allocator, bytes: []const u8, wanted: []const u8) !?[]u8 {
     const path = if (std.mem.startsWith(u8, wanted, "./")) wanted[2..] else wanted;
-    return readFileDepth(allocator, bytes, path, false, 0);
+    return read_file_depth(allocator, bytes, path, false, 0);
 }
 
 /// Read metadata independently of inventory order. Shared extents are exposed
 /// as hard links by libarchive: reopen and read the target's bytes in that case.
-fn readFileDepth(allocator: std.mem.Allocator, bytes: []const u8, wanted: []const u8, case_sensitive: bool, depth: usize) !?[]u8 {
+fn read_file_depth(allocator: std.mem.Allocator, bytes: []const u8, wanted: []const u8, case_sensitive: bool, depth: usize) !?[]u8 {
     if (depth == 32) return error.InvalidIsoHardlink;
     var view: IsoView = .{ .bytes = bytes };
     const archive = c.archive_read_new() orelse return error.OutOfMemory;
@@ -34,7 +34,7 @@ fn readFileDepth(allocator: std.mem.Allocator, bytes: []const u8, wanted: []cons
             var target = std.mem.span(hardlink);
             if (std.mem.startsWith(u8, target, "./")) target = target[2..];
             // A backend link names an exact path, not a metadata spelling variant.
-            return (try readFileDepth(allocator, bytes, target, true, depth + 1)) orelse error.UnresolvedIsoHardlink;
+            return (try read_file_depth(allocator, bytes, target, true, depth + 1)) orelse error.UnresolvedIsoHardlink;
         }
         if (c.archive_entry_filetype(entry) != c.PSPDB_ARCHIVE_REGULAR) return error.MetadataNotRegularFile;
         const length = c.archive_entry_size(entry);
@@ -80,21 +80,15 @@ pub fn walk(allocator: std.mem.Allocator, bytes: []const u8, context: anytype, c
             // backend detail out of the consumer's file callback.
             var target = std.mem.span(hardlink);
             if (std.mem.startsWith(u8, target, "./")) target = target[2..];
-            const payload = (try readFileDepth(allocator, bytes, target, true, 0)) orelse return error.UnresolvedIsoHardlink;
-            const payload_view = memory.Owner.allocated(allocator, payload) catch |err| {
-                allocator.free(payload);
-                return err;
-            };
+            const payload = (try read_file_depth(allocator, bytes, target, true, 0)) orelse return error.UnresolvedIsoHardlink;
+            const payload_view = try memory.Owner.take_allocated(allocator, payload);
             defer payload_view.release();
             try emit(context, name, payload_view);
         } else if (kind == c.PSPDB_ARCHIVE_REGULAR) {
             const size = c.archive_entry_size(header);
             if (size < 0 or size > bytes.len) return error.InvalidIsoFileSize;
             const payload = try allocator.alloc(u8, @intCast(size));
-            const payload_view = memory.Owner.allocated(allocator, payload) catch |err| {
-                allocator.free(payload);
-                return err;
-            };
+            const payload_view = try memory.Owner.take_allocated(allocator, payload);
             defer payload_view.release();
             var total: usize = 0;
             while (total < payload.len) {
