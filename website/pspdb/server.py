@@ -10,6 +10,40 @@ import stat
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 
+def load_extractor_registry():
+    """Use live checkout revisions when available; installed viewers may not have them."""
+    registry = Path(__file__).resolve().parents[2] / 'tools' / 'extractor_versions.json'
+    try:
+        versions = json.loads(registry.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        versions = {}
+    contextual = Path(__file__).with_name('data') / 'contextual_extractors.json'
+    return versions, json.loads(contextual.read_text(encoding='utf-8'))
+
+
+def annotate_stale_extractions(trees):
+    versions, contextual_kinds = load_extractor_registry()
+
+    def annotate(tree, kind):
+        tree.pop('stale_extraction', None)
+        extractor = tree.get('extractor') or {}
+        version, latest = extractor.get('version'), versions.get(kind)
+        if (isinstance(version, str) and re.fullmatch(r'[1-9][0-9]*', version)
+                and isinstance(latest, str) and re.fullmatch(r'[1-9][0-9]*', latest)
+                and int(version) < int(latest)):
+            tree['stale_extraction'] = {'kind': kind, 'version': version, 'latest_version': latest}
+        for entry in tree['entries']:
+            contextual = entry.get('extraction')
+            if (contextual is not None and contextual.get('sha256') == entry.get('sha256')
+                    and contextual.get('size_bytes') == entry.get('size_bytes')):
+                name = (contextual.get('extractor') or {}).get('name')
+                annotate(contextual, contextual_kinds.get(name))
+
+    for kind, sources in trees.items():
+        for tree in sources.values():
+            annotate(tree, kind)
+
+
 def catalog_data(catalog, redump=None, umdatabase=None):
     records, trees, selected = {}, {}, {}
     legacy_trees, legacy_kinds, sizes = {}, {}, {}
@@ -72,6 +106,7 @@ def catalog_data(catalog, redump=None, umdatabase=None):
                     record['umdatabase'] = matches
         records.setdefault(kind, []).append(record)
     derived_trees(trees)
+    annotate_stale_extractions(trees)
     from .redump import load_psx_matches, annotate_file_matches
     annotate_file_matches(trees, load_psx_matches())
     return {'records': records, 'trees': trees}

@@ -296,6 +296,7 @@ function attachExtraction(node, extractions, ancestors = new Set(), contextual =
   if (extraction === null) throw new Error(`Ambiguous non-root extraction kinds: ${node.hash}`);
   if (!extraction || (contextual && extraction.sha256 !== node.hash) || extraction.size_bytes !== node.size || ancestors.has(extraction)) return;
   node.extraction = extraction.extractor.name;
+  if (extraction.stale_extraction) node.stale_extraction = extraction.stale_extraction;
   addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
 }
 
@@ -555,6 +556,19 @@ function render() {
       }
     }
     if (node.note) { node.noteElement = element("span", "note", node.note); content.append(node.noteElement); }
+    if (container && node.stale_extraction) {
+      const { kind, version, latest_version } = node.stale_extraction;
+      const message = `Outdated ${kind.toUpperCase()} subtree v${version} (latest is v${latest_version})`;
+      const warning = element("span", "stale-extraction");
+      warning.title = message;
+      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("viewBox", "0 0 16 16");
+      icon.setAttribute("aria-hidden", "true");
+      icon.setAttribute("focusable", "false");
+      icon.innerHTML = '<path d="M8 2 15 14H1Z" fill="none" stroke="currentColor" stroke-linejoin="round"/><path d="M8 6v4" stroke="currentColor" stroke-linecap="round"/><circle cx="8" cy="12" r=".75" fill="currentColor"/>';
+      warning.append(icon, element("span", "sr-only", message));
+      content.append(warning);
+    }
     nameCell.append(content);
     const displayedSize = node.size;
     const summed = node.type === "directory";

@@ -12,14 +12,9 @@ else:
 
 HASH = re.compile(r'[0-9a-f]{64}\Z')
 DEPENDENCY_PATH = re.compile(r'^(?!/)(?!.*(?:^|/)\.{1,2}(?:/|$))[^\\:\x00-\x1f]+$')
-CONTEXTUAL_KINDS = {
-    'PSXtract-2': 'psx',
-    'pops': 'pops',
-    'pspdb-pops': 'pops',
-    'PSP-DOCUMENT.DAT': 'document',
-    'pmftools': 'psmf',
-    'pmftools-mpegps': 'mpegps',
-}
+CONTEXTUAL_KINDS = json.loads(
+    (Path(__file__).resolve().parents[1] / 'website' / 'pspdb' / 'data' / 'contextual_extractors.json')
+    .read_text(encoding='utf-8'))
 
 
 def validate_inline_dependencies(entry, inventory):

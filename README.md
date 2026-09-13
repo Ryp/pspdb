@@ -171,6 +171,16 @@ pair does not hide an older complete result. Legacy `catalog/<extractor>/<hash>.
 and `catalog/trees/<hash>.json` remain readable, but the status command reports
 them as unversioned; regeneration writes versioned pairs and leaves them intact.
 
+Extracted containers with an older per-extractor revision show a muted warning
+icon at the right edge of the name column. Its tooltip reads, for example,
+`Outdated PBP subtree v11 (latest is v12)`. Existing contents remain browsable.
+Warnings describe that container's own extraction, not the freshness of its
+descendants. Current, newer, and unknown revisions are not marked.
+The local viewer reads `tools/extractor_versions.json` from its source checkout
+on each catalog request; without that registry, it makes no freshness claim.
+Static exports capture the comparison at export time and must be regenerated
+after a registry change.
+
 ## Browse
 
 Requires **uv** and **Python 3.11+**. The website has no third-party runtime dependencies.
