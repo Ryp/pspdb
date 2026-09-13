@@ -41,14 +41,16 @@ pub fn build(b: *std.Build) void {
     prepare.addFileArg(b.path("../tools/patches/pspdecrypt-prx-native.patch"));
     prepare.addFileArg(b.path("../tools/patches/pspdecrypt-prx-coverage.patch"));
     prepare.addFileArg(b.path("../tools/patches/pspdecrypt-kle-native.patch"));
+    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-pops-native.patch"));
     module.addIncludePath(native_source);
     module.addCSourceFiles(.{
         .root = native_source,
-        .files = &.{ "libkirk/kirk_engine.c", "libkirk/AES.c", "libkirk/SHA1.c", "libkirk/bn.c", "libkirk/ec.c", "kl4e.c" },
+        .files = &.{ "libkirk/kirk_engine.c", "libkirk/amctrl.c", "libkirk/AES.c", "libkirk/SHA1.c", "libkirk/bn.c", "libkirk/ec.c", "kl4e.c" },
         .flags = &.{ "-std=c11", "-fno-strict-aliasing" },
     });
     module.addCSourceFile(.{ .file = native_source.path(b, "PrxDecrypter.cpp"), .flags = &.{ "-std=c++17", "-fno-strict-aliasing" } });
     module.addCSourceFile(.{ .file = b.path("src/prx_native.cpp"), .flags = &.{"-std=c++17"} });
+    module.addCSourceFile(.{ .file = b.path("src/pops_native.cpp"), .flags = &.{"-std=c++17"} });
     module.link_libcpp = true;
     module.addImport("zig_psp_prx_encrypt", b.createModule(.{
         .root_source_file = sdk.path("tools/prxencrypt/prx_encrypt.zig"),

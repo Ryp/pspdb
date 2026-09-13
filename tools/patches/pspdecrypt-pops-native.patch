@@ -1,0 +1,28 @@
+--- a/PrxDecrypter.cpp
++++ b/PrxDecrypter.cpp
+@@ -427,2 +427,6 @@
++static const u8 pops_key[] = {0xCA,0x26,0x7D,0xA2,0xB9,0xCE,0x24,0x6E,0xFD,0x32,0xA8,0x97,0xF4,0x7C,0x19,0x19};
++static const u8 pops_xor[] = {0x77,0x32,0x20,0x31,0xDF,0x7F,0x4B,0x1C,0x8D,0xD7,0xD2,0xC3,0x23,0xA9,0xF8,0xA9};
++static const TAG_INFO2 pops_tag = {0x0DAA06F0, pops_key, 0x65, 5, pops_xor};
++
+ static const TAG_INFO2 g_tagInfo2[] =
+ {
+@@ -1021,9 +1025,12 @@
+ static int pspDecryptType5(const u8 *inbuf, u8 *outbuf, u32 size, const u8 *seed)
+ {
+ 	//INFO_LOG(LOADER, "Decrypting tag %08X", readPrx32(inbuf+0xD0));
+ 	const auto decryptSize = static_cast<int>(readPrx32(inbuf+0xB0));
+-	const auto pti = GetTagInfo2(readPrx32(inbuf+0xD0));
++	auto pti = GetTagInfo2(readPrx32(inbuf+0xD0));
++	// The contextual POPS recipe is never visible to standalone or other types.
++	if (!pti && seed && readPrx32(inbuf+0xD0) == pops_tag.tag)
++		pti = &pops_tag;
+ 
+ 	if (!pti)
+ 	{
+ 		return -1;
+--- a/libkirk/amctrl.c
++++ b/libkirk/amctrl.c
+@@ -29,1 +29,1 @@
+-static u8 kirk_buf[0x0814]; // 1DC0 1DD4
++_Alignas(u32) static _Thread_local u8 kirk_buf[0x0814]; // 1DC0 1DD4

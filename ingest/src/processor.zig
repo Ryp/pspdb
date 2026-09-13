@@ -2,6 +2,7 @@ const std = @import("std");
 
 const containers = @import("containers.zig");
 const prx = @import("prx.zig");
+const pops = @import("pops.zig");
 const kle = @import("kle.zig");
 const catalog_io = @import("catalog.zig");
 const pkg = @import("pkg.zig");
@@ -324,10 +325,6 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
         .paths = .init(allocator),
     };
     defer inventory.deinit();
-    var contextual_outputs: [2]?extractor.Output = .{ null, null };
-    defer for (contextual_outputs) |item| {
-        if (item) |value| value.deinit(allocator, io);
-    };
     var output: ?extractor.Output = null;
     defer if (output) |value| value.deinit(allocator, io);
     const provenance: extractor.Provenance = switch (task.kind) {
@@ -409,23 +406,35 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                 }
             }
             const data_bin = pbp.get("DATA.BIN") orelse &.{};
-            const pops = std.mem.startsWith(u8, data_bin, "PSISOIMG0000") or std.mem.startsWith(u8, data_bin, "PSTITLEIMG0000");
-            if (pops) inventory.suppress_dispatch = "DATA.PSP";
+            const is_pops = std.mem.startsWith(u8, data_bin, "PSISOIMG0000") or std.mem.startsWith(u8, data_bin, "PSTITLEIMG0000");
+            if (is_pops) inventory.suppress_dispatch = "DATA.PSP";
             try containers.walkPbp(task.input.bytes, &inventory, Inventory.emit);
-            if (pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
-                // Whole-PBP context; attach to the corresponding source section.
-                const section_output = try dispatch.adapter.extract(allocator, io, task.hash, task.input.bytes, section[0], null);
-                contextual_outputs[if (section[0] == .pops) 0 else 1] = section_output;
+            if (is_pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
+                // Sibling/container context stays attached to its source section.
                 var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.adapter.store, .dispatch = dispatch, .paths = .init(allocator) };
                 defer child.deinit();
-                try section_output.walk(allocator, io, &child, Inventory.emit_view);
+                const section_provenance: extractor.Provenance = if (section[0] == .pops) native: {
+                    const bytes = try pops.decode(allocator, pbp.get("DATA.PSP") orelse return error.MissingDataPsp, data_bin);
+                    const view = memory.Owner.allocated(allocator, bytes) catch |err| {
+                        allocator.free(bytes);
+                        return err;
+                    };
+                    defer view.release();
+                    const name: []const u8 = if (std.mem.startsWith(u8, bytes, "\x7fELF")) "module.elf" else "payload.gz";
+                    try child.emit_view(name, view);
+                    break :native .{ .name = "pspdb-pops", .version = revisions.pops, .options = &.{"in-memory"} };
+                } else external: {
+                    output = try dispatch.adapter.extract(allocator, io, task.hash, task.input.bytes, .psx, null);
+                    try output.?.walk(allocator, io, &child, Inventory.emit_view);
+                    break :external output.?.provenance.value;
+                };
                 const index = inventory.paths.get(section[1]) orelse return error.MissingDataPsp;
                 const entry = &inventory.entries.items[index];
                 const tree = try allocator.create(InlineExtraction);
                 errdefer allocator.destroy(tree);
                 const hash = try allocator.dupe(u8, &entry.sha256.?);
                 errdefer allocator.free(hash);
-                tree.* = .{ .sha256 = hash, .size_bytes = entry.size_bytes.?, .extractor = section_output.provenance.value, .name_rule = if (section[0] == .psx) "identity" else "source_stem", .entries = try child.finish() };
+                tree.* = .{ .sha256 = hash, .size_bytes = entry.size_bytes.?, .extractor = section_provenance, .name_rule = if (section[0] == .psx) "identity" else "source_stem", .entries = try child.finish() };
                 entry.extraction = tree;
                 inventory.counts.stored += child.counts.stored;
                 inventory.counts.reused += child.counts.reused;

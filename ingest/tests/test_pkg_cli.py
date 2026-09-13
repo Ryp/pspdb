@@ -156,7 +156,7 @@ class PkgCliTests(unittest.TestCase):
                 self.assertIn(error, run.stderr)
                 self.assertFalse(list((catalog/'pkg').rglob('*-ingest.json')))
 
-    def test_pops_uses_parent_pbp_and_attaches_only_to_executable(self):
+    def test_legacy_pops_helper_cannot_bypass_native_authentication(self):
         import gzip
         from unittest.mock import patch
         inner = sfo({'TITLE': 'POPS fixture'})
@@ -170,7 +170,7 @@ class PkgCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); inputs = base/'inputs'; inputs.mkdir()
             (inputs/'pops.pkg').write_bytes(package)
-            catalog, store = base/'catalog', base/'store'
+            catalog = base/'catalog'
             helper = base/'helper'
             compressed = gzip.compress(b'original verified plaintext', mtime=0)
             helper.write_text('#!/usr/bin/env python3\nimport pathlib,sys\n'
@@ -187,32 +187,9 @@ class PkgCliTests(unittest.TestCase):
                 + 'print("Disc successfully converted using prebaked CUE file!")\n')
             wine.chmod(0o755)
             with patch.dict(os.environ, {'PSPDB_POPS': str(helper), 'PSPDB_PSXTRACT2': str(helper), 'PSPDB_WINE': str(wine)}):
-                run = self.run_ingest(inputs, '--catalog', catalog, '--store', store)
-                self.assertEqual(run.returncode, 0, run.stderr)
-                digest = hashlib.sha256(pbp).hexdigest()
-                tree = json.loads(tree_path(catalog, digest).read_text())
-                entries = {e['path']: e for e in tree['entries']}
-                child = entries['DATA.PSP']['extraction']
-                self.assertEqual(child['sha256'], hashlib.sha256(executable).hexdigest())
-                self.assertEqual(child['entries'][0]['sha256'], hashlib.sha256(compressed).hexdigest())
-                disc_tree = entries['DATA.BIN']['extraction']
-                self.assertEqual(disc_tree['sha256'], hashlib.sha256(sections[-1]).hexdigest())
-                self.assertEqual(disc_tree['extractor']['name'], 'PSXtract-2')
-                self.assertEqual(disc_tree['name_rule'], 'identity')
-                self.assertEqual(disc_tree['entries'][0]['path'], 'disc.bin')
-                self.assertEqual(disc_tree['entries'][0]['sha256'], hashlib.sha256(disc).hexdigest())
-                self.assertFalse((catalog/'prx').exists())
-                # Recreate only the root, forcing reuseTask through inline children.
-                for path in (catalog/'pkg').rglob('*.json'): path.unlink()
-                run = self.run_ingest(inputs, '--catalog', catalog, '--store', store, '--skip-existing')
-                self.assertEqual(run.returncode, 0, run.stderr)
-                self.assertNotIn('pops '+digest+':', run.stderr)
-                self.assertEqual(tree, json.loads(tree_path(catalog, digest).read_text()))
-                wine.write_text(wine.read_text() + 'sys.exit(1)\n')
-                failed = base/'failed'
-                run = self.run_ingest(inputs, '--catalog', failed, '--store', store)
-                self.assertNotEqual(run.returncode, 0)
-                self.assertFalse(list((failed/'pkg').rglob('*-ingest.json')))
+                run = self.run_ingest(inputs, '--catalog', catalog)
+                self.assertNotEqual(run.returncode, 0, run.stderr)
+                self.assertFalse(result_path(catalog, 'pkg', hashlib.sha256(package).hexdigest()).exists())
 
     def test_paired_manual_cannot_silently_accept_an_invalid_companion(self):
         document = bytes.fromhex('00504744010000000100000000000000') + bytes(144)

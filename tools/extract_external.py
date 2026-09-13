@@ -31,6 +31,8 @@ def tool_provenance(kind, tool=None, data=None):
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
     if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat'):
         return result
+    if kind == 'pops':
+        return dict(result, name='pspdb-pops', options=['in-memory'])
     if kind == 'document':
         tool = tool.resolve(strict=True)
         reported = json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30),
@@ -49,9 +51,6 @@ def tool_provenance(kind, tool=None, data=None):
     if kind == 'psx':
         result['name'] = 'PSXtract-2'
         result['options'] = ['<parent.pbp>', 'reconstructed-disc', 'wine-sha256:' + hashlib.sha256(executable('PSPDB_WINE', 'wine').resolve(strict=True).read_bytes()).hexdigest()]
-    if kind == 'pops':
-        result['name'] = 'pspdb-pops'
-        result['options'] = ['<parent.pbp>', '<output>']
     if kind == 'npumdimg':
         result['name'] = 'pkg2zip-npumdimg'
         result['options'] = ['<source>', '<output.iso>']
@@ -76,8 +75,6 @@ def current_provenance():
                 tool = executable('PSPDECRYPT', 'pspdecrypt')
             elif kind == 'psx':
                 tool = executable('PSPDB_PSXTRACT2', 'psxtract.exe')
-            elif kind == 'pops':
-                tool = executable('PSPDB_POPS', 'pspdb-pops')
             elif kind == 'npumdimg':
                 tool = executable('PKG2ZIP_NPUMDIMG', 'pkg2zip-npumdimg')
             elif kind == 'document':
@@ -143,29 +140,6 @@ def extract_rco(source, output, tool, data):
     return provenance
 
 
-def decoded_payload_name(header):
-    # Name decoded objects by byte format. PRX is an ELF module subtype,
-    # not another encoding to unwrap after ELF has been recovered.
-    if header.startswith(b'\x7fELF'):
-        return 'module.elf'
-    if header.startswith(b'\x1f\x8b\x08'):
-        return 'payload.gz'
-    return 'payload.bin'
-
-
-def extract_pops(source, output, tool):
-    tool = tool.resolve(strict=True)
-    target = output / 'payload.bin'
-    result = subprocess.run([str(tool), str(source.resolve()), str(target.resolve())],
-                            capture_output=True, text=True, errors='replace')
-    if result.returncode:
-        raise ValueError(f'POPS decryption failed: {result.stdout}{result.stderr}')
-    with target.open('rb') as stream:
-        header = stream.read(20)
-    if not (header.startswith(b'\x1f\x8b\x08') or header.startswith(b'\x7fELF')):
-        raise ValueError('Unexpected decrypted POPS payload')
-    target.rename(output / decoded_payload_name(header))
-    return tool_provenance('pops', tool)
 
 
 
@@ -240,7 +214,7 @@ def executable(variable, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['psar', 'rco', 'npumdimg', 'pops', 'psx', 'document'])
+    parser.add_argument('kind', choices=['psar', 'rco', 'npumdimg', 'psx', 'document'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--docinfo', type=Path)
@@ -258,8 +232,6 @@ def main():
             provenance = extract_npumdimg(args.source, args.output, executable('PKG2ZIP_NPUMDIMG', 'pkg2zip-npumdimg'))
         elif args.kind == 'psx':
             provenance = extract_psx(args.source, args.output, executable('PSPDB_PSXTRACT2', 'psxtract.exe'))
-        elif args.kind == 'pops':
-            provenance = extract_pops(args.source, args.output, executable('PSPDB_POPS', 'pspdb-pops'))
         elif args.kind == 'document':
             provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
         else:

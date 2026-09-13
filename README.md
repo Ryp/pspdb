@@ -363,14 +363,14 @@ damaged ciphertext.
 Generic layouts 3/7/10 and runtime-key-dependent PAUTH/NPDRM modules are not
 supported by the standalone PRX path. PAUTH needs the game's runtime work area;
 NPDRM can require a per-module key. Fixed XOR constants do not replace those keys.
-Supported POPS executables use the existing whole-PBP contextual helper instead.
+Supported POPS executables use the native contextual decoder with their DATA.BIN sibling.
 
 PRX revision 4 decrypts and expands contained gzip/KL/2RLZ data in one extraction,
 publishing the final `module.elf` or `payload.bin` directly. The original PRX
 remains stored; decrypted compressed intermediates are neither stored nor
 cataloged. Revision-1 external and revision-2 native intermediate trees remain
 historical records. Standalone KL extractors remain at revision 2.
-All native decoders use `pspdb-ingest` provenance.
+Native PRX, KL and EDAT decoders use `pspdb-ingest` provenance; contextual POPS uses `pspdb-pops`.
 
 The bounded Zig 2RLZ decoder is adapted from BenHur's libLZR 0.11, licensed
 [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/), not GPLv3.
@@ -458,12 +458,13 @@ are not included in the extracted file inventory.
 Install OpenSSL development headers/library when building ingest. Optional
 STARTDAT and OPNSSMP containers are exposed without decoding their contents.
 
-For supported PS1 PBPs, install [pspdb-pops](tools/pops/README.md) (`PSPDB_POPS`
-override). It reads the full PBP to recover the sibling-derived title key, while
-the catalog attaches decoded output specifically beneath `DATA.PSP`. The file
-hash and download remain those of the original section. This contextual subtree
-is stored in the PBP result, with helper provenance and normal decoded-file
-hashes; it does not create a global standalone PRX result or a generated report.
+Supported PS1 POPS executables decode in memory through the linked
+[POPS decoder](tools/pops/README.md), without a helper installation or `PSPDB_POPS`.
+It recovers the title key from the borrowed DATA.BIN sibling, while the catalog
+attaches decoded output specifically beneath `DATA.PSP`. The file hash and
+download remain those of the original section. This contextual subtree uses
+native `pspdb-pops` revision-2 provenance and normal decoded-file hashes; it does
+not create a global standalone PRX result or a generated report.
 Decoded ELF payloads use `.elf`, including PSP PRX modules. Gzip and KL3E/KL4E
 trees use `decoded_suffix` to retain that format in display and download names,
 without duplicating existing `.elf` suffixes.
