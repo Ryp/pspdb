@@ -1,0 +1,100 @@
+--- a/Linux/make_npdata.c
++++ b/Linux/make_npdata.c
+@@ -119,9 +119,26 @@
+ 	else
+ 		generate_hash(hash_mode, version, hash_final_10, hash);
+ 
++	// Authenticate ciphertext before decryption, allowing safe in-place CBC.
++	bool valid;
++	if ((hash_mode & 0xFF) == 0x01)
++		valid = hmac_hash_compare(hash_final_14, 0x14, in, length, test_hash);
++	else if ((hash_mode & 0xFF) == 0x02)
++		valid = cmac_hash_compare(hash_final_10, 0x10, in, length, test_hash);
++	else if ((hash_mode & 0xFF) == 0x04)
++		valid = hmac_hash_compare(hash_final_10, 0x10, in, length, test_hash);
++	else
++	{
++		printf("ERROR: Unknown hashing algorithm!\n");
++		return false;
++	}
++	if (!valid)
++		return false;
++
+ 	if ((crypto_mode & 0xFF) == 0x01)  // No algorithm.
+ 	{
+-		memcpy(out, in, length);
++		if (out != in)
++			memcpy(out, in, length);
+ 	}
+ 	else if ((crypto_mode & 0xFF) == 0x02)  // AES128-CBC
+ 	{
+@@ -133,25 +150,11 @@
+ 		return false;
+ 	}
+ 
+-	if ((hash_mode & 0xFF) == 0x01) // 0x14 SHA1-HMAC
+-	{
+-		return hmac_hash_compare(hash_final_14, 0x14, in, length, test_hash);
+-	}
+-	else if ((hash_mode & 0xFF) == 0x02)  // 0x10 AES-CMAC
+-	{
+-		return cmac_hash_compare(hash_final_10, 0x10, in, length, test_hash);
+-	}
+-	else if ((hash_mode & 0xFF) == 0x04) //0x10 SHA1-HMAC
+-	{
+-		return hmac_hash_compare(hash_final_10, 0x10, in, length, test_hash);
+-	}
+-	else
+-	{
+-		printf("ERROR: Unknown hashing algorithm!\n");
+-		return false;
+-	}
++	return true;
+ }
+ 
++// The bounded PSPDB wrapper uses only the crypto routines above.
++#ifndef PSPDB_EDAT_CRYPTO_ONLY
+ bool encrypt(int hash_mode, int crypto_mode, int version, unsigned char *in, unsigned char *out, int length, unsigned char *key, unsigned char *iv, unsigned char *hash, unsigned char *test_hash) 
+ {
+ 	// Setup buffers for key, iv and hash.
+@@ -1698,3 +1701,4 @@
+ 		return 0;
+ 	}
+ }
++#endif
+diff --git a/Linux/utils.c b/Linux/utils.c
+--- a/Linux/utils.c
++++ b/Linux/utils.c
+@@ -4,6 +4,7 @@
+ 
+ #include "utils.h"
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <time.h>
+ 
+ // Auxiliary functions (endian swap, xor and prng).
+@@ -170,7 +171,9 @@ void hmac_hash_forge(unsigned char *key, int key_len, unsigned char *in, int in_len,
+ 
+ bool cmac_hash_compare(unsigned char *key, int key_len, unsigned char *in, int in_len, unsigned char *hash)
+ {
+-	unsigned char *out = (unsigned char *) malloc (key_len);
++	unsigned char out[0x10];
++	if (key_len != 0x10)
++		return false;
+ 
+ 	aes_context ctx;
+ 	aes_setkey_enc(&ctx, key, 128);
+@@ -181,13 +184,10 @@ bool cmac_hash_compare(unsigned char *key, int key_len, unsigned char *in, int in_le
+ 	{
+ 		if (out[i] != hash[i])
+ 		{
+-			free(out);
+ 			return false;
+ 		}
+ 	}
+ 
+-	free(out);
+-
+ 	return true;
+ }
+ 

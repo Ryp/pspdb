@@ -128,6 +128,7 @@ pub const Result = struct {
     kind: enum { iso, pkg } = .iso,
     content_id: []u8 = &.{},
     content_type: u32 = 0,
+    package_flags: ?u32 = null,
     pkg_sfo_bytes: []u8 = &.{},
     pkg_title: []u8 = &.{},
     pbp_title: []u8 = &.{},
@@ -226,7 +227,7 @@ pub fn processPkgChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []cons
     std.crypto.hash.Sha1.hash(bytes, &sha1, .{});
     const hash = std.fmt.bytesToHex(digest, .lower);
     if (cache) |value| if (try @import("catalog.zig").contains(allocator, io, value, hash, bytes.len, "pkg")) return null;
-    var result: Result = .{ .kind = .pkg, .size_bytes = bytes.len, .sha256 = hash, .sha1 = std.fmt.bytesToHex(sha1, .lower), .content_type = package.content_type };
+    var result: Result = .{ .kind = .pkg, .size_bytes = bytes.len, .sha256 = hash, .sha1 = std.fmt.bytesToHex(sha1, .lower), .content_type = package.content_type, .package_flags = package.package_flags };
     errdefer result.deinit(allocator);
     result.content_id = try allocator.dupe(u8, package.content_id);
     if (try package.readFile(allocator, "PARAM.SFO")) |metadata| {
@@ -443,7 +444,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
         .pbp => blk: {
             const pbp = try @import("containers.zig").parsePbp(task.input.bytes);
             if (pbp.get("DATA.BIN")) |psar| {
-                if (std.mem.startsWith(u8, psar, "NPUMDIMG")) {
+                if (extractor.detect(psar) == .npumdimg) {
                     const data = try @import("data_psp.zig").Header.parse(pbp.get("DATA.PSP") orelse return error.MissingDataPsp);
                     const param = pbp.get("PARAM.SFO") orelse return error.MissingPbpMetadata;
                     const valid = try data.verify(param);

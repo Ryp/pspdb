@@ -37,14 +37,16 @@ Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v10/<source-sha256>-ingest.json
-catalog/iso/v10/<source-sha256>-tree.json
+catalog/iso/v11/<source-sha256>-ingest.json
+catalog/iso/v11/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v12/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v14/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
 Include new nested pairs too, such as `prx/v3/`, `gzip/v2/`, `psmf/v1/` and `mpegps/v2/`.
+Licensed NPD EDAT extraction also produces `edat/v2/` pairs containing decrypted DAT payloads.
+Keep RAP files and all decrypted byte objects local; submit only catalog JSON.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same
 revision, report the discrepancy instead of replacing it. Tool executable hashes

@@ -18,6 +18,7 @@ pub const Package = struct {
     table: usize,
     content_id: []const u8,
     content_type: u32,
+    package_flags: ?u32 = null,
 
     pub fn init(bytes: []const u8) !Package {
         if (bytes.len < 192 or !std.mem.eql(u8, bytes[0..4], "\x7fPKG")) return error.InvalidPkg;
@@ -43,6 +44,7 @@ pub const Package = struct {
             if (length > end - pos) return error.InvalidPkg;
             const value = bytes[pos..][0..length];
             if (kind == 2) result.content_type = try integer(u32, value, 0);
+            if (kind == 3) result.package_flags = try integer(u32, value, 0);
             if (kind == 13) result.table = try integer(u32, value, 0);
             pos += length;
         }

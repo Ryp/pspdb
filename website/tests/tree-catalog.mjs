@@ -123,6 +123,23 @@ assert.equal(vm.runInContext("packageSerial({title_id:'npug80135'})", context), 
 assert.equal(vm.runInContext("packageSerial({title_id:'NPUG-80135'})", context), 'NPUG-80135');
 console.log('PASS: serial-first package labels share UMD ID formatting.');
 
+context.updateFixture = {records:{pkg:[
+  {sha256:'1'.repeat(64),size_bytes:1,metadata:{content_type:7,package_flags:0x8000021c}},
+  {sha256:'2'.repeat(64),size_bytes:1,metadata:{content_type:7,package_flags:0x20c}},
+  {sha256:'3'.repeat(64),size_bytes:1,metadata:{content_type:9,package_flags:0x21c}},
+  {sha256:'4'.repeat(64),size_bytes:1,metadata:{content_type:7}},
+]},trees:{}};
+vm.runInContext('build(updateFixture)',context);
+const updatePaths = JSON.parse(vm.runInContext(
+  "JSON.stringify([...nodes.values()].filter(n=>n.type==='file').map(n=>n.path).sort())",context));
+assert.deepEqual(updatePaths,[
+  'psn/'+'2'.repeat(64)+'.pkg',
+  'psn/'+'4'.repeat(64)+'.pkg',
+  'psn/theme/'+'3'.repeat(64)+'.pkg',
+  'psn/update/'+'1'.repeat(64)+'.pkg',
+]);
+console.log('PASS: update bit grouping preserves generic, legacy, and non-PSP category routes.');
+
 // Contextual output is bound to one file occurrence, not globally to its hash.
 const sourceHash = '1'.repeat(64), payloadHash = '2'.repeat(64);
 const inlineTree = {sha256:sourceHash,size_bytes:14,extractor:{name:'pops'},name_rule:'source_stem',entries:[

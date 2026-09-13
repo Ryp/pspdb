@@ -308,10 +308,12 @@ function packageSerial(metadata) {
   return id.toUpperCase().replace(/^([A-Z0-9]{4})-?([0-9]{5})$/, "$1-$2");
 }
 
-function packageGroup(contentType) {
+function packageGroup(contentType, packageFlags) {
   switch (contentType) {
     case 6: return "psone_classic";
     case 7:
+      // PSP update heuristic: package metadata entry 3, bit 4.
+      return Number.isInteger(packageFlags) && (packageFlags & 0x10) !== 0 ? "update" : null;
     case 14:
     case 15: return null;
     case 9: return "theme";
@@ -349,7 +351,9 @@ function build(data) {
   $("download-col").hidden = !downloadsEnabled;
   $("download-heading").hidden = !downloadsEnabled;
   $("tree").setAttribute("aria-colcount", downloadsEnabled ? "4" : "3");
-  root = { name: "", path: "", depth: -1, children: [] };
+  root = addGroup(null, "");
+  // Show the aggregate root without changing existing UMD/PSN URL paths.
+  root.name = "psp";
   const umd = addGroup(root, "umd");
   const categories = new Map();
   function mediaGroup(code) {
@@ -389,7 +393,7 @@ function build(data) {
     const groups = new Map([[null, psn]]);
     for (const pkg of packages) {
       const metadata = pkg.metadata || {};
-      const category = packageGroup(metadata.content_type);
+      const category = packageGroup(metadata.content_type, metadata.package_flags);
       if (!groups.has(category)) groups.set(category, addGroup(psn, category));
       const node = add(groups.get(category), `${pkg.sha256}.pkg`, {
         type: "file", hash: pkg.sha256, size: pkg.size_bytes,
@@ -405,7 +409,7 @@ function build(data) {
       || (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : 0));
     for (const child of node.children) summarize(child);
     node.files = (node.type === "file" ? 1 : 0) + node.children.reduce((sum, child) => sum + child.files, 0);
-    if (node.type === "directory" || node === root)
+    if (node.type === "directory")
       node.size = node.children.reduce((sum, child) => sum + child.size, 0);
   }
   summarize(root);
@@ -429,7 +433,7 @@ function select(node, scroll = true, updateURL = true) {
   row.classList.add("selected");
   row.setAttribute("aria-selected", "true");
   $("tree").setAttribute("aria-activedescendant", node.id);
-  $("selected-path").textContent = node.path;
+  $("selected-path").textContent = node.path || label(node);
   $("position").textContent = `${visible.indexOf(node) + 1} / ${number.format(visible.length)} rows`;
   $("notice").textContent = "";
   if (scroll) {
@@ -471,7 +475,7 @@ function render() {
     if (!filterNodes || filterNodes.has(node)) visible.push(node);
     if (filterNodes || !collapsed.has(node.path)) for (const child of node.children) walk(child);
   }
-  for (const child of root.children) walk(child);
+  walk(root);
   if (filterNodes && searchSort) visible.sort(compareSearchResults);
   windowVersion++;
   if (rowElements.size) {
@@ -529,7 +533,7 @@ function render() {
       node.titleElement = element("span", "", label(node).slice(node.gamePrefix.length));
       name.replaceChildren(node.pathElement, node.prefixElement, node.titleElement);
     }
-    name.title = node.extraction ? `${node.path} — extracted with ${node.extraction}`  : node.virtual ? `${node.path} — catalog grouping, not a filesystem directory` : node.path;
+    name.title = node.extraction ? `${node.path} — extracted with ${node.extraction}`  : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
     content.append(name);
     for (const [source, matches] of [["Redump", node.redump || []], ["UMDatabase", node.umdatabase || []]]) {
       for (const match of matches) {
@@ -555,7 +559,7 @@ function render() {
     const displayedSize = node.size;
     const summed = node.type === "directory";
     const bytes = element("td", "size", `${summed ? "Σ " : ""}${formatSize(displayedSize)}`);
-    bytes.title = `${number.format(displayedSize)} bytes${summed ? " — sum of all descendant files, including filtered files" : ""}`;
+    bytes.title = `${number.format(displayedSize)} bytes${summed ? " — sum of contained file sizes, excluding their extracted contents; includes filtered files" : ""}`;
     const hashCell = element("td", "hash");
     const hash = node.hash;
     if (hash) {
@@ -589,7 +593,7 @@ function render() {
 function restore() {
   let path;
   try { path = location.hash.slice(1).split("/").map(decodeURIComponent).join("/"); } catch { path = ""; }
-  jump(nodes.get(path) || root.children[0]);
+  jump(nodes.get(path) || root);
 }
 
 $("tree-search").addEventListener("input", applySearch);
@@ -619,7 +623,7 @@ document.addEventListener("keydown", event => {
   if (filterNodes && ["h", "l", "ArrowLeft", "ArrowRight", "Enter"].includes(key)) return;
   if (key === "h" || key === "ArrowLeft") {
     if (expandable(node) && !collapsed.has(node.path) && node.children.length) toggle(node);
-    else select(node.parent === root ? node : node.parent || node);
+    else select(node.parent || node);
   } else if (["l", "ArrowRight", "Enter"].includes(key)) {
     if (expandable(node)) {
       if (collapsed.has(node.path)) toggle(node);

@@ -63,16 +63,23 @@ ISO revision 4 and nested ISO9660 revision 2 resolve shared-extent file aliases
 by exact path, preserving distinct case-sensitive filenames. Metadata lookup
 remains case-insensitive; it must not determine which bytes an inventory path owns.
 
-PKGs write their own versioned pairs under `catalog/pkg/v12/`. Package metadata
-includes content ID, title ID, content type, and available PSP title/version/firmware
-fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
-static export display packages under **psn**, alongside **umd**. Generic PSP
-packages (content types 7, 14, 15) appear directly under **psn**; they include
-demos, DLC, and updates because header types do not reliably separate those roles.
+PKGs write their own versioned pairs under `catalog/pkg/v14/`. Package metadata
+includes content ID, title ID, content type, raw metadata-entry-3 `package_flags`
+(when present), and available PSP title/version/firmware fields. Whole-package
+SHA-256/SHA-1 identify the unchanged input. The website and static export retain
+the **psp** root row: its size column sums original ISO/PKG sizes without counting
+expanded contents again. Packages appear under **psn**, alongside **umd**.
+
+Generic PSP packages (content types 7, 14, 15) appear directly under **psn**.
+The current update heuristic puts content type 7 with `package_flags & 0x10`
+under **psn/update**. This bit separates all 67 verified updates from 30 non-update
+controls in the observed corpus; it is an empirical heuristic, not a formal
+format guarantee. Legacy type-7 records without flags remain directly under
+**psn** until re-ingested. Other content types do not use the update heuristic.
 Other types select **psone_classic** (6), **neogeo** (16), or **theme** (9, within supported
 PSP packages). Missing or unrecognized types fall under **unknown**; empty groups
 are omitted. Grouping preserves package labels and extracted paths and
-requires no ingestion options or additional metadata.
+requires no ingestion options.
 Embedded PBP files use the existing nested extraction pipeline when both catalog
 and store are set.
 Package title metadata is taken from the already-decrypted EBOOT.PBP during its
@@ -229,7 +236,7 @@ node website/tests/tree-catalog.mjs
 ## Extractors
 
 PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E, KL4E, VMP,
-PSMF, raw MPEG2-PS and supported legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
+PSMF, raw MPEG2-PS, supported NPD EDAT and legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
 when both catalog and store are set:
 
 ```sh
@@ -303,6 +310,39 @@ Derived ISOs stay beneath their PSN package rather than becoming UMD roots.
 This disc decoder handles NPUMDIMG, not PS1 disc payloads or EDAT. PS1 executable
 decryption and disc reconstruction use the whole-PBP helpers described below.
 The PBP, ISO and PKG revisions were bumped to discover previously opaque children.
+
+NPD EDAT files use a separate authenticated helper:
+
+```sh
+uv run --locked python tools/build_edat.py \
+  --make-npdata-source /path/to/make-npdata \
+  --output .work/pspdb-edat
+export PSPDB_EDAT="$PWD/.work/pspdb-edat"
+export PSPDB_RAP_DIR="/private/path/to/licenses"
+```
+
+The builder archives make-npdata commit `5f44642fa24331da79f4bae6bea516f1784cf1c5`
+and patches only its temporary build copy. It requires Git, patch and a C compiler.
+The adapter selects a regular, exactly 16-byte `<NPD-content-id>.rap` file from
+`PSPDB_RAP_DIR`; license bytes never enter catalog JSON or provenance.
+Missing licenses and failed authentication fail the ingest root. Successful trees
+can be reused from the object store without decrypting again.
+
+EDAT revision 2 supports license-2 NPD v1/flags-0 and v2/flags-0-or-0x0c files,
+with 16 KiB blocks and at most 64 MiB plaintext. Keyed header, metadata-table and
+every ciphertext-block MAC must pass before publication. The original EDAT,
+including signatures and any optional 16-byte footer, stays unchanged; the helper
+does not verify filename-dependent hashes or ECDSA signatures. Its sole child is
+`payload.DAT`, displayed and downloaded using the EDAT source stem:
+`ISO.BIN.EDAT` yields `ISO.BIN.DAT`, and `MINIS.EDAT` yields `MINIS.DAT`.
+Recognized payload formats still recurse through their registered extractors.
+
+Big-endian NPUMDIMG metadata does not contain an identified filesystem.
+It remains a single DAT file for inspection or a future extractor, rather than
+being split into synthetic header fields and block records. It is not sent to
+the little-endian NPUMDIMG disc decoder. International Snooker (EU) exercises
+both payload sizes: 80-byte `MINIS.DAT` and 116,704-byte `ISO.BIN.DAT`.
+Original EDAT and decrypted DAT bytes are retained unchanged.
 
 For NPUMDIMG PBPs, the Zig [DATA.PSP parser](tools/patches/data-psp.md) verifies the
 SFO/content-ID signature using OpenSSL libcrypto. Generated verification reports
@@ -383,7 +423,8 @@ The companion must match the exercised 304-byte/eight-byte-key layout and pass
 outer signature, inner header, MAC-table and complete ciphertext-block checks,
 including padding. Unsupported or damaged present companions fail the root;
 without a companion the unrecognized wrapper remains opaque. The 320-byte
-companion variant and generic EDAT extraction are not supported.
+companion variant and other generic PSPEDAT/PGD extraction remain unsupported;
+the separate NPD EDAT extractor above does not handle those wrappers.
 
 Paired results are inline on the original DOCUMENT occurrence, never globally
 cached by its hash alone. `dependencies` records the companion's path relative to

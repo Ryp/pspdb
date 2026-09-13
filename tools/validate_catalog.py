@@ -70,7 +70,7 @@ def validate_catalog(root, versions=None):
         if role == 'tree':
             if value['extractor'].get('version') != version:
                 raise ValueError(f'Extractor revision does not match directory: {relative}')
-            if kind in ('psar', 'rco', 'prx', 'kl3e', 'kl4e') and 'sha256' not in value['extractor']:
+            if kind in ('psar', 'rco', 'prx', 'kl3e', 'kl4e', 'edat') and 'sha256' not in value['extractor']:
                 raise ValueError(f'Missing external executable hash: {relative}')
             def check_entries(tree):
                 entries = tree['entries']

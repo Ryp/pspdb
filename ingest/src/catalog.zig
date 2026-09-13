@@ -34,7 +34,7 @@ pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
             .sha256 = @as([]const u8, &result.sha256),
             .sha1 = @as([]const u8, &result.sha1),
             .size_bytes = result.size_bytes,
-            .metadata = .{ .content_id = result.content_id, .content_type = result.content_type, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware },
+            .metadata = .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware },
         };
         const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries };
         try writeRecord(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);
@@ -123,7 +123,7 @@ fn equal(a: std.json.Value, b: std.json.Value) bool {
 
 /// Publish external extractor metadata and the same inventory shape as ISO.
 pub fn publishExtraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []processor.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8) !void {
-    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "decoded_suffix" else null;
+    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp") or std.mem.eql(u8, kind, "edat")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "decoded_suffix" else null;
     const tree = .{
         .kind = "tree",
         .schema_version = @as(u32, 1),

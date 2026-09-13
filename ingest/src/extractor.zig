@@ -1,7 +1,7 @@
 const std = @import("std");
 const memory = @import("bytes.zig");
 
-pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp, document, psmf, mpegps };
+pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, edat, npumdimg, iso9660, pops, psx, vmp, document, psmf, mpegps };
 
 const document_prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
 
@@ -17,7 +17,12 @@ pub fn pairedDocumentCandidate(bytes: []const u8) bool {
 }
 
 pub fn detect(bytes: []const u8) ?Kind {
-    if (std.mem.startsWith(u8, bytes, "NPUMDIMG")) return .npumdimg;
+    if (std.mem.startsWith(u8, bytes, "NPD\x00")) return .edat;
+    if (std.mem.startsWith(u8, bytes, "NPUMDIMG")) {
+        // The big-endian version tag identifies metadata for an external payload.
+        if (bytes.len >= 12 and std.mem.eql(u8, bytes[8..11], "\x00\x00\x00") and bytes[11] != 0) return null;
+        return .npumdimg;
+    }
     // Recognize the family even when truncated or unsupported; the adapter rejects it.
     if (std.mem.startsWith(u8, bytes, "PSMF")) return .psmf;
     if (std.mem.startsWith(u8, bytes, "\x00\x00\x01\xba")) return .mpegps;
@@ -122,6 +127,12 @@ pub const Adapter = struct {
 
 test "format detection uses signatures" {
     try std.testing.expectEqual(Kind.npumdimg, detect("NPUMDIMG").?);
+    try std.testing.expectEqual(Kind.npumdimg, detect("NPUMDIMG\x02\x00\x00\x00").?);
+    try std.testing.expectEqual(null, detect("NPUMDIMG\x00\x00\x00\x02"));
+    try std.testing.expectEqual(null, detect("NPUMDIMG\x00\x00\x00\x03"));
+    try std.testing.expectEqual(Kind.npumdimg, detect("NPUMDIMG\x03\x00\x00\x00").?);
+    try std.testing.expectEqual(Kind.edat, detect("NPD\x00").?);
+    try std.testing.expectEqual(null, detect("NPD"));
     try std.testing.expectEqual(null, detect("NPUMD"));
     try std.testing.expectEqual(Kind.psar, detect("PSAR\x03").?);
     try std.testing.expectEqual(Kind.rco, detect("\x00PRF").?);
