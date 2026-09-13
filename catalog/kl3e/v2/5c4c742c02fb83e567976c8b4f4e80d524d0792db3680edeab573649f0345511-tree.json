@@ -1,0 +1,25 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "5c4c742c02fb83e567976c8b4f4e80d524d0792db3680edeab573649f0345511",
+  "size_bytes": 36602,
+  "extractor": {
+    "name": "pspdecrypt-kle",
+    "sha256": "6445751fb216fbec141571d2c7f2515b57e2973716120e75f224a72db59e2bd0",
+    "version": "2",
+    "options": [
+      "-o",
+      "<output>",
+      "<source>"
+    ]
+  },
+  "name_rule": "decoded_suffix",
+  "entries": [
+    {
+      "path": "payload.bin",
+      "type": "file",
+      "size_bytes": 77544,
+      "sha256": "26158226f497f559574bc6e2f04d91e48e38f231adaeb00f880e2b86d435f638"
+    }
+  ]
+}
