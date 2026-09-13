@@ -5,15 +5,15 @@ pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, edat, n
 
 const document_prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
 
-fn fixedDocumentSignature(bytes: []const u8) bool {
+fn fixed_document_signature(bytes: []const u8) bool {
     return bytes.len >= 24 and
         (std.mem.eql(u8, bytes[16..24], "\x67\x68\xbd\x14\xca\x5d\x47\x4a") or
             std.mem.eql(u8, bytes[16..24], "\xdf\xf3\xca\xc7\x94\x95\x48\x29"));
 }
 
 /// Only an observed same-directory DOCINFO can resolve this candidate.
-pub fn pairedDocumentCandidate(bytes: []const u8) bool {
-    return std.mem.startsWith(u8, bytes, document_prefix) and !fixedDocumentSignature(bytes);
+pub fn paired_document_candidate(bytes: []const u8) bool {
+    return std.mem.startsWith(u8, bytes, document_prefix) and !fixed_document_signature(bytes);
 }
 
 pub fn detect(bytes: []const u8) ?Kind {
@@ -32,7 +32,7 @@ pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "\x00PMV")) return .vmp;
     // Fixed-key DES ciphertext of the DOC magic/version block, not generic PGD.
     // Header/table/page integrity is checked by the bounded upstream reader.
-    if (std.mem.startsWith(u8, bytes, document_prefix) and fixedDocumentSignature(bytes)) return .document;
+    if (std.mem.startsWith(u8, bytes, document_prefix) and fixed_document_signature(bytes)) return .document;
     if (std.mem.startsWith(u8, bytes, "\x1f\x8b\x08")) return .gzip;
     if (std.mem.startsWith(u8, bytes, "KL3E")) return .kl3e;
     if (std.mem.startsWith(u8, bytes, "KL4E")) return .kl4e;

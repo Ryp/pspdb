@@ -1,5 +1,5 @@
 const std = @import("std");
-const processor = @import("processor.zig");
+const inventory = @import("inventory.zig");
 
 pub const revisions = @import("extractor_versions");
 pub const State = @import("catalog_state.zig").State;
@@ -25,7 +25,7 @@ pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: 
 
 /// One complete inventory per exact ISO. Neither the UID nor an inventory hash
 /// participates in identity. No machine-local source/store paths are published.
-pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: processor.Result) !void {
+pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: inventory.Result) !void {
     const fields = result.metadata;
     if (result.kind == .pkg) {
         const record = .{
@@ -37,8 +37,8 @@ pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
             .metadata = .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware },
         };
         const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries };
-        try writeRecord(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);
-        try writeRecord(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "ingest", record);
+        try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);
+        try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "ingest", record);
         return;
     }
     const record = .{
@@ -66,11 +66,11 @@ pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
         .extractor = .{ .name = "pspdb-ingest", .version = revisions.iso, .options = [0][]const u8{} },
         .entries = result.entries,
     };
-    try writeRecord(allocator, io, root, "iso", revisions.iso, &result.sha256, "tree", tree);
-    try writeRecord(allocator, io, root, "iso", revisions.iso, &result.sha256, "ingest", record);
+    try write_record(allocator, io, root, "iso", revisions.iso, &result.sha256, "tree", tree);
+    try write_record(allocator, io, root, "iso", revisions.iso, &result.sha256, "ingest", record);
 }
 
-fn writeRecord(allocator: std.mem.Allocator, io: std.Io, root: []const u8, directory: []const u8, version: []const u8, digest: []const u8, suffix: []const u8, record: anytype) !void {
+fn write_record(allocator: std.mem.Allocator, io: std.Io, root: []const u8, directory: []const u8, version: []const u8, digest: []const u8, suffix: []const u8, record: anytype) !void {
     const json = try std.json.Stringify.valueAlloc(allocator, record, .{ .whitespace = .indent_2, .emit_null_optional_fields = false });
     defer allocator.free(json);
     const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-{s}.json", .{ root, directory, version, digest, suffix });
@@ -122,7 +122,7 @@ fn equal(a: std.json.Value, b: std.json.Value) bool {
 }
 
 /// Publish external extractor metadata and the same inventory shape as ISO.
-pub fn publishExtraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []processor.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8) !void {
+pub fn publish_extraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []inventory.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8) !void {
     const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp") or std.mem.eql(u8, kind, "edat")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "decoded_suffix" else null;
     const tree = .{
         .kind = "tree",
@@ -133,8 +133,8 @@ pub fn publishExtraction(allocator: std.mem.Allocator, io: std.Io, root: []const
         .name_rule = name_rule,
         .entries = entries,
     };
-    try writeRecord(allocator, io, root, kind, provenance.version.?, &hash, "tree", tree);
-    try writeRecord(allocator, io, root, kind, provenance.version.?, &hash, "ingest", .{
+    try write_record(allocator, io, root, kind, provenance.version.?, &hash, "tree", tree);
+    try write_record(allocator, io, root, kind, provenance.version.?, &hash, "ingest", .{
         .kind = kind,
         .schema_version = @as(u32, 1),
         .sha256 = @as([]const u8, &hash),

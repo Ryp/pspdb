@@ -11,7 +11,7 @@ const Options = struct {
     help: bool = false,
 };
 
-fn parseArgs(allocator: std.mem.Allocator, args: []const []const u8, default_threads: usize) !Options {
+fn parse_args(allocator: std.mem.Allocator, args: []const []const u8, default_threads: usize) !Options {
     var options: Options = .{ .threads = default_threads };
     var folders: std.ArrayList([]const u8) = .empty;
     defer folders.deinit(allocator);
@@ -53,7 +53,7 @@ fn parseArgs(allocator: std.mem.Allocator, args: []const []const u8, default_thr
 
 pub fn main(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    const options = parseArgs(init.arena.allocator(), args[1..], std.Thread.getCpuCount() catch 1) catch |err| {
+    const options = parse_args(init.arena.allocator(), args[1..], std.Thread.getCpuCount() catch 1) catch |err| {
         std.debug.print("pspdb-ingest: {s}\nUsage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\n", .{@errorName(err)});
         return 2;
     };
@@ -118,13 +118,13 @@ test "CLI requires a folder and a positive thread cap" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    _ = try parseArgs(allocator, &.{"folder"}, 4);
-    try std.testing.expectError(error.MissingFolder, parseArgs(allocator, &.{}, 4));
-    try std.testing.expectError(error.MissingStorePath, parseArgs(allocator, &.{ "folder", "--store" }, 4));
-    const stored = try parseArgs(allocator, &.{ "folder", "--store", "objects" }, 4);
+    _ = try parse_args(allocator, &.{"folder"}, 4);
+    try std.testing.expectError(error.MissingFolder, parse_args(allocator, &.{}, 4));
+    try std.testing.expectError(error.MissingStorePath, parse_args(allocator, &.{ "folder", "--store" }, 4));
+    const stored = try parse_args(allocator, &.{ "folder", "--store", "objects" }, 4);
     try std.testing.expectEqualStrings("objects", stored.store.?);
-    try std.testing.expectError(error.InvalidThreadCount, parseArgs(allocator, &.{ "folder", "--threads", "0" }, 4));
-    const options = try parseArgs(allocator, &.{ "folder", "--threads", "1", "--no-progress" }, 4);
+    try std.testing.expectError(error.InvalidThreadCount, parse_args(allocator, &.{ "folder", "--threads", "0" }, 4));
+    const options = try parse_args(allocator, &.{ "folder", "--threads", "1", "--no-progress" }, 4);
     try std.testing.expectEqual(@as(usize, 1), options.threads);
     try std.testing.expect(!options.progress);
 }

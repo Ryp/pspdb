@@ -317,6 +317,11 @@ Temporary input/output directories are removed after the immediate walk.
 Paired manuals retain their exact input and companion views until contextual extraction.
 An ISO is reported complete only after all its extraction jobs succeed.
 
+The Zig inventory model lives in `ingest/src/inventory.zig`: source results,
+entries, contextual dependencies, serialization and owned-data cleanup.
+`processor.zig` performs extraction/inventory work; `catalog.zig` publishes that
+model without depending on the processor. Scheduling remains in `ingest.zig`.
+
 Install `pspdecrypt` for PSAR and the patched `rcomage` on PATH (overrides:
 `PSPDECRYPT`, `RCOMAGE`). RCOMage loads INI files from `../share/rcomage` relative to its binary
 (override: `RCOMAGE_DATA`). The Linux/LZR patch is in

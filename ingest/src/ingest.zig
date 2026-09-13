@@ -1,6 +1,7 @@
 const std = @import("std");
 const processor = @import("processor.zig");
 const zip = @import("zip.zig");
+const inventory = @import("inventory.zig");
 
 pub const Stats = struct {
     directories: usize = 0,
@@ -41,7 +42,7 @@ const Job = struct {
     member: ?Member = null,
     extraction: ?Extraction = null,
 
-    fn isIntake(self: Job) bool {
+    fn is_intake(self: Job) bool {
         return self.kind == .iso or self.kind == .member;
     }
 
@@ -63,7 +64,7 @@ const Group = struct {
     pending: usize = 1,
     counts: processor.Counts = .{},
     failure: ?anyerror = null,
-    result: ?processor.Result = null,
+    result: ?inventory.Result = null,
     progress: std.Progress.Node,
 };
 
@@ -96,11 +97,11 @@ const Pool = struct {
         try self.jobs.append(self.allocator, .{ .path = path, .kind = kind });
         self.outstanding += 1;
         if (kind == .directory) self.directories_pending += 1 else self.stats.candidates += 1;
-        if (kind == .iso) self.addIntakeCandidate();
+        if (kind == .iso) self.add_intake_candidate();
         self.changed.signal(self.io);
     }
 
-    fn addIntakeCandidate(self: *Pool) void {
+    fn add_intake_candidate(self: *Pool) void {
         self.intake_candidates += 1;
         self.iso_progress.setEstimatedTotalItems(self.intake_candidates);
     }
@@ -111,19 +112,19 @@ const Pool = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         while (self.outstanding != 0) {
-            if (self.takeReady()) |job| return job;
+            if (self.take_ready()) |job| return job;
             self.changed.waitUncancelable(self.io, &self.mutex);
         }
         return null;
     }
 
     /// Called with the pool mutex held.
-    fn takeReady(self: *Pool) ?Job {
+    fn take_ready(self: *Pool) ?Job {
         var selected: ?usize = null;
         var best: usize = 3;
         for (self.jobs.items, 0..) |job, i| {
-            if (job.isIntake() and self.intake_active >= self.intake_limit) continue;
-            const priority: usize = if (job.kind == .extraction) 0 else if (job.isIntake()) 2 else 1;
+            if (job.is_intake() and self.intake_active >= self.intake_limit) continue;
+            const priority: usize = if (job.kind == .extraction) 0 else if (job.is_intake()) 2 else 1;
             if (priority <= best) {
                 selected = i;
                 best = priority;
@@ -131,7 +132,7 @@ const Pool = struct {
         }
         if (selected) |i| {
             const job = self.jobs.swapRemove(i);
-            if (job.isIntake()) self.intake_active += 1;
+            if (job.is_intake()) self.intake_active += 1;
             return job;
         }
         return null;
@@ -172,9 +173,9 @@ const Pool = struct {
                 };
                 break :blk stat.kind;
             } else entry.kind;
-            if (kind == .directory or (kind == .file and (isIso(entry.name) or isPkg(entry.name) or isZip(entry.name)))) {
+            if (kind == .directory or (kind == .file and (is_iso(entry.name) or is_pkg(entry.name) or is_zip(entry.name)))) {
                 const child = try std.Io.Dir.path.join(self.allocator, &.{ path, entry.name });
-                self.enqueue(child, if (kind == .directory) .directory else if (isZip(entry.name)) .zip else .iso) catch |err| {
+                self.enqueue(child, if (kind == .directory) .directory else if (is_zip(entry.name)) .zip else .iso) catch |err| {
                     self.allocator.free(child);
                     return err;
                 };
@@ -190,7 +191,7 @@ const Pool = struct {
         self.mutex.unlock(self.io);
     }
 
-    fn createGroup(self: *Pool, path: []const u8) !*Group {
+    fn create_group(self: *Pool, path: []const u8) !*Group {
         const group = try self.allocator.create(Group);
         errdefer self.allocator.destroy(group);
         const name = try self.allocator.dupe(u8, path);
@@ -199,7 +200,7 @@ const Pool = struct {
             .path = name,
             .dispatch = if (self.extractor_adapter) |adapter| .{
                 .context = group,
-                .enqueue = enqueueExtraction,
+                .enqueue = enqueue_extraction,
                 .adapter = adapter,
                 .visited = .init(self.allocator),
             } else null,
@@ -208,7 +209,7 @@ const Pool = struct {
         return group;
     }
 
-    fn enqueueExtraction(context: *anyopaque, task: processor.Task) !void {
+    fn enqueue_extraction(context: *anyopaque, task: processor.Task) !void {
         const group: *Group = @ptrCast(@alignCast(context));
         const self = group.pool;
         self.mutex.lockUncancelable(self.io);
@@ -254,11 +255,11 @@ const Pool = struct {
             self.stats.processed += 1;
             self.stats.bytes += result.size_bytes;
             self.mutex.unlock(self.io);
-            self.printSummary(group.path, result.*);
+            self.print_summary(group.path, result.*);
         }
     }
 
-    fn skipCache(self: *const Pool) ?@import("catalog.zig").Cache {
+    fn skip_cache(self: *const Pool) ?@import("catalog.zig").Cache {
         if (!self.skip_existing) return null;
         return .{ .root = self.catalog.?, .state = self.state.? };
     }
@@ -266,12 +267,12 @@ const Pool = struct {
     fn process(self: *Pool, job: Job) !void {
         const progress = self.iso_progress.start(std.Io.Dir.path.basename(job.path), 0);
         defer progress.end();
-        const group = try self.createGroup(job.path);
+        const group = try self.create_group(job.path);
         const dispatch = if (group.dispatch) |*value| value else null;
         group.result = (if (job.member) |member|
-            self.processZipMember(member, dispatch)
+            self.process_zip_member(member, dispatch)
         else
-            processor.processFile(self.allocator, self.io, job.path, self.store, self.skipCache(), dispatch)) catch |err| {
+            processor.process_file(self.allocator, self.io, job.path, self.store, self.skip_cache(), dispatch)) catch |err| {
             self.complete(group, .{}, err);
             return;
         };
@@ -279,7 +280,7 @@ const Pool = struct {
         self.complete(group, .{}, null);
     }
 
-    fn processZip(self: *Pool, path: []const u8) !void {
+    fn process_zip(self: *Pool, path: []const u8) !void {
         const source = try self.allocator.create(SharedZip);
         source.* = .{ .allocator = self.allocator, .archive = zip.Archive.open(self.io, path) catch |err| {
             self.allocator.destroy(source);
@@ -290,7 +291,7 @@ const Pool = struct {
         var found: usize = 0;
         while (try iterator.next()) |entry| {
             const name = try source.archive.name(entry);
-            if (!isIso(name) and !isPkg(name)) {
+            if (!is_iso(name) and !is_pkg(name)) {
                 self.mutex.lockUncancelable(self.io);
                 self.stats.ignored_members += 1;
                 self.mutex.unlock(self.io);
@@ -308,7 +309,7 @@ const Pool = struct {
             source.retain();
             found += 1;
             self.stats.zip_members += 1;
-            self.addIntakeCandidate();
+            self.add_intake_candidate();
             self.outstanding += 1;
             self.changed.signal(self.io);
         }
@@ -318,20 +319,20 @@ const Pool = struct {
         if (found == 0) log(self.io, "Skipped ZIP {s}: no ISO/PKG members\n", .{path});
     }
 
-    fn processZipMember(self: *Pool, member: Member, dispatch: ?*processor.Dispatch) !?processor.Result {
+    fn process_zip_member(self: *Pool, member: Member, dispatch: ?*processor.Dispatch) !?inventory.Result {
         const bytes = try member.source.archive.read(member.entry, member.name, self.allocator);
         const input = processor.memory.Owner.allocated(self.allocator, bytes) catch |err| {
             self.allocator.free(bytes);
             return err;
         };
         defer input.release();
-        return if (isPkg(member.name)) processor.processPkgChecked(self.allocator, self.io, input.bytes, self.store, self.skipCache(), dispatch) else processor.processIsoChecked(self.allocator, self.io, input.bytes, self.store, self.skipCache(), dispatch);
+        return if (is_pkg(member.name)) processor.process_pkg_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch) else processor.process_iso_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch);
     }
 
     fn extract(self: *Pool, extraction: Extraction) void {
         const task = extraction.task;
         const progress = extraction.group.progress.start(task.name, 0);
-        const counts = processor.processTask(self.allocator, self.io, task, &extraction.group.dispatch.?) catch |err| {
+        const counts = processor.process_task(self.allocator, self.io, task, &extraction.group.dispatch.?) catch |err| {
             log(self.io, "Extraction {s} {s}: {s}\n", .{ @tagName(task.kind), task.name, @errorName(err) });
             progress.end();
             self.complete(extraction.group, .{}, err);
@@ -348,7 +349,7 @@ const Pool = struct {
         log(self.io, "Skipped {s}: source already in catalog\n", .{path});
     }
 
-    fn printSummary(self: *Pool, path: []const u8, result: processor.Result) void {
+    fn print_summary(self: *Pool, path: []const u8, result: inventory.Result) void {
         if (result.kind == .pkg) {
             const line = std.json.Stringify.valueAlloc(self.allocator, .{
                 .source = path,
@@ -397,7 +398,7 @@ const Pool = struct {
                 .directory => self.scan(job.path) catch |err| self.fail(job.path, err),
                 .iso, .member => self.process(job) catch |err| self.fail(job.path, err),
                 .extraction => self.extract(job.extraction.?),
-                .zip => self.processZip(job.path) catch |err| self.fail(job.path, err),
+                .zip => self.process_zip(job.path) catch |err| self.fail(job.path, err),
             }
         }
     }
@@ -457,18 +458,18 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8
     return pool.stats;
 }
 
-fn isIso(name: []const u8) bool {
+fn is_iso(name: []const u8) bool {
     return std.ascii.endsWithIgnoreCase(name, ".iso");
 }
 
-fn isZip(name: []const u8) bool {
+fn is_zip(name: []const u8) bool {
     return std.ascii.endsWithIgnoreCase(name, ".zip");
 }
 
 test "discovery uses only a case-insensitive ISO extension" {
-    try std.testing.expect(isIso("game.iSo"));
-    try std.testing.expect(!isIso("game.iso.part"));
-    try std.testing.expect(!isIso("game.zip"));
+    try std.testing.expect(is_iso("game.iSo"));
+    try std.testing.expect(!is_iso("game.iso.part"));
+    try std.testing.expect(!is_iso("game.zip"));
 }
 
 test "intake gate leaves workers free for discovery and child extraction" {
@@ -489,19 +490,19 @@ test "intake gate leaves workers free for discovery and child extraction" {
     try pool.jobs.append(pool.allocator, .{ .path = "archive.zip!two.iso", .kind = .member });
     try pool.jobs.append(pool.allocator, .{ .path = "three.pkg", .kind = .iso });
     pool.outstanding = 3;
-    const first = pool.takeReady().?;
-    try std.testing.expect(first.isIntake());
-    try std.testing.expect(pool.takeReady().?.isIntake());
-    try std.testing.expectEqual(null, pool.takeReady());
+    const first = pool.take_ready().?;
+    try std.testing.expect(first.is_intake());
+    try std.testing.expect(pool.take_ready().?.is_intake());
+    try std.testing.expectEqual(null, pool.take_ready());
     try pool.jobs.append(pool.allocator, .{ .path = "folder", .kind = .directory });
     try pool.jobs.append(pool.allocator, .{ .path = "module.psp", .kind = .extraction });
-    try std.testing.expectEqual(JobKind.extraction, pool.takeReady().?.kind);
-    try std.testing.expectEqual(JobKind.directory, pool.takeReady().?.kind);
-    try std.testing.expectEqual(null, pool.takeReady());
+    try std.testing.expectEqual(JobKind.extraction, pool.take_ready().?.kind);
+    try std.testing.expectEqual(JobKind.directory, pool.take_ready().?.kind);
+    try std.testing.expectEqual(null, pool.take_ready());
     pool.finish(first.kind);
-    try std.testing.expect(pool.takeReady().?.isIntake());
+    try std.testing.expect(pool.take_ready().?.is_intake());
 }
 
-fn isPkg(name: []const u8) bool {
+fn is_pkg(name: []const u8) bool {
     return std.ascii.endsWithIgnoreCase(name, ".pkg");
 }
