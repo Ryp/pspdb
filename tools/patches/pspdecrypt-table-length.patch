@@ -1,0 +1,14 @@
+--- a/PsarDecrypter.cpp
++++ b/PsarDecrypter.cpp
+@@ -594,6 +594,11 @@
+             for (auto &tableName : g_tableFilenames) {
+                 if (!strncmp(name, tableName.first.data(), tableName.first.size())) {
+                     int size = pspDecryptTable(data2, data1, cbExpanded, psarVersion, table_mode);
++                    if (size <= 0 || size > cbExpanded) {
++                        printf("Error decoding file table %s.\n", name);
++                        return 1;
++                    }
++                    cbExpanded = size;
+                     g_tables[tableName.second].resize(size);
+                     memcpy(g_tables[tableName.second].data(), data2, size);
+                     szDataPath = outdir + "/PSARDUMPER/";

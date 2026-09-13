@@ -240,9 +240,10 @@ Install `pspdecrypt` and the patched `rcomage` on PATH (overrides: `PSPDECRYPT`,
 `tools/patches/rcomage-lzr-linux.patch`.
 Python adapters run through uv and are embedded in the ingest binary.
 
-The main decrypter needs the standard update PRX recipe for tag `2E5E10F0`.
-Build the pinned source with the repository patch (requires Git, Make, a C/C++
-compiler, zlib and OpenSSL development headers):
+Use the pinned patched decrypter below for the standard update PRX recipe and
+exact decoded firmware-table lengths. Unpatched builds can retain binary tail
+bytes in decoded tables. Building requires Git, Make, a C/C++ compiler, zlib and
+OpenSSL development headers:
 
 ```sh
 uv run --locked python tools/build_pspdecrypt.py \
@@ -258,6 +259,10 @@ changed. Nothing is installed globally. The patch reuses the
 preserving the decoder's header and ciphertext integrity checks. It requires no
 title-specific key or sibling PBP section. PRX revision 2 records this recipe and
 format-based ELF naming; PSAR revision 2 tracks the shared decrypter change.
+PSAR revision 3 writes exactly the table decoder's returned length and rejects
+invalid lengths before allocation or publication. PRX revision 3 tracks the
+rebuilt shared executable; its plaintext output is unchanged. Decoded package
+tables describe model selection, not a complete installed firmware filesystem.
 
 PRX decryption preserves its decrypted payload; gzip payloads recurse to ELF.
 KL3E/KL4E streams similarly retain their compressed bytes and get a decoded child.

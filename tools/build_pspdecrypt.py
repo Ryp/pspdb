@@ -1,4 +1,4 @@
-"""Build pinned pspdecrypt with the published standard update PRX recipe."""
+"""Build pinned pspdecrypt with the update PRX recipe and exact decoded table extents."""
 import argparse
 import io
 import os
@@ -26,8 +26,9 @@ def main():
         archive = subprocess.check_output(['git', '-C', str(args.pspdecrypt_source.expanduser()), 'archive', REVISION])
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
             tar.extractall(work, filter='data')
-        subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i',
-                        str(ROOT / 'tools/patches/pspdecrypt-update-xor.patch')], cwd=work, check=True)
+        for patch in ('pspdecrypt-update-xor.patch', 'pspdecrypt-table-length.patch'):
+            subprocess.run(['patch', '--batch', '--fuzz=0', '-p1', '-i',
+                            str(ROOT / 'tools/patches' / patch)], cwd=work, check=True)
         subprocess.run(['make', f'-j{args.jobs}', 'CC=cc', 'CXX=c++'], cwd=work, check=True)
         output.parent.mkdir(parents=True, exist_ok=True)
         # Publish only a completed executable, without changing the source checkout.
