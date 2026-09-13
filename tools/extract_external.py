@@ -28,6 +28,11 @@ def tool_provenance(kind, tool=None, data=None):
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
     if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp'):
         return result
+    if kind == 'document':
+        tool = tool.resolve(strict=True)
+        result.update(json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30)))
+        result['sha256'] = hashlib.sha256(tool.read_bytes()).hexdigest()
+        return result
     result['name'] = 'rcomage' if kind == 'rco' else 'pspdecrypt-kle' if kind in ('kl3e', 'kl4e') else 'pspdecrypt'
     result['sha256'] = hashlib.sha256(tool.resolve(strict=True).read_bytes()).hexdigest()
     result['options'] = ['-O' if kind == 'psar' else '-o', '<output>', '<source>']
@@ -67,11 +72,13 @@ def current_provenance():
                 tool = executable('PSPDB_POPS', 'pspdb-pops')
             elif kind == 'npumdimg':
                 tool = executable('PKG2ZIP_NPUMDIMG', 'pkg2zip-npumdimg')
+            elif kind == 'document':
+                tool = executable('PSPDB_DOCUMENT', 'pspdb-document')
             elif kind == 'rco':
                 tool = executable('RCOMAGE', 'rcomage').resolve(strict=True)
                 data = Path(os.environ.get('RCOMAGE_DATA', tool.parent.parent / 'share' / 'rcomage'))
             current[kind] = tool_provenance(kind, tool, data)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
             unavailable[kind] = str(exc)
     return current, unavailable
 
@@ -246,13 +253,26 @@ def extract_psx(source, output, tool):
     return provenance
 
 
+def extract_document(source, output, tool):
+    tool = tool.resolve(strict=True)
+    provenance = tool_provenance('document', tool)
+    try:
+        result = subprocess.run([str(tool), str(source.resolve(strict=True)), '--output', str(output.resolve())],
+                                capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired as error:
+        raise ValueError('Document extraction exceeded 120 seconds') from error
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or 'Document extraction failed')
+    return provenance
+
+
 def executable(variable, name):
     return Path(os.environ.get(variable) or shutil.which(name) or name)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['psar', 'rco', 'prx', 'gzip', 'kl3e', 'kl4e', 'npumdimg', 'pops', 'psx'])
+    parser.add_argument('kind', choices=['psar', 'rco', 'prx', 'gzip', 'kl3e', 'kl4e', 'npumdimg', 'pops', 'psx', 'document'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--versions', help=argparse.SUPPRESS)
@@ -269,6 +289,8 @@ def main():
             provenance = extract_psx(args.source, args.output, executable('PSPDB_PSXTRACT2', 'psxtract.exe'))
         elif args.kind == 'pops':
             provenance = extract_pops(args.source, args.output, executable('PSPDB_POPS', 'pspdb-pops'))
+        elif args.kind == 'document':
+            provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'))
         elif args.kind == 'prx':
             provenance = extract_prx(args.source, args.output, executable('PSPDECRYPT', 'pspdecrypt'))
         elif args.kind in ('kl3e', 'kl4e'):

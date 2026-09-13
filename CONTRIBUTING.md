@@ -12,23 +12,25 @@ run from the repository root:
 ```sh
 uv sync --locked
 (cd ingest && zig build -Doptimize=ReleaseSafe)
-./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
+uv run --locked ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
   --catalog .work/contribution --store /path/to/store
 ```
 
 Use a fresh staging catalog for each contribution. Include the store option to
 produce nested extraction trees. This command writes metadata and hashes to the
 staging catalog; extracted bytes go only to your local object store.
+For supported manuals, configure the [DOCUMENT helper](README.md#legacy-document-manuals)
+before ingestion and freshness checks. Missing helpers are not successful extraction.
 
 Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v1/<source-sha256>-ingest.json
-catalog/iso/v1/<source-sha256>-tree.json
+catalog/iso/v6/<source-sha256>-ingest.json
+catalog/iso/v6/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v7/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v8/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
 Include the new nested extractor pairs too, such as `prx/v2/` and `gzip/v2/`.

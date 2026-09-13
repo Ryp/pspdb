@@ -1,7 +1,7 @@
 const std = @import("std");
 const memory = @import("bytes.zig");
 
-pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp };
+pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp, document };
 
 pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "NPUMDIMG")) return .npumdimg;
@@ -12,6 +12,12 @@ pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "~SCE")) return .sce;
     if (std.mem.startsWith(u8, bytes, "\x00PBP")) return .pbp;
     if (std.mem.startsWith(u8, bytes, "\x00PMV")) return .vmp;
+    // Fixed-key DES ciphertext of the DOC magic/version block, not generic PGD.
+    // Header/table/page integrity is checked by the bounded upstream reader.
+    if (bytes.len >= 24 and std.mem.eql(u8, bytes[0..16], "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00")) {
+        if (std.mem.eql(u8, bytes[16..24], "\x67\x68\xbd\x14\xca\x5d\x47\x4a") or
+            std.mem.eql(u8, bytes[16..24], "\xdf\xf3\xca\xc7\x94\x95\x48\x29")) return .document;
+    }
     if (std.mem.startsWith(u8, bytes, "\x1f\x8b\x08")) return .gzip;
     if (std.mem.startsWith(u8, bytes, "KL3E")) return .kl3e;
     if (std.mem.startsWith(u8, bytes, "KL4E")) return .kl4e;
@@ -99,4 +105,12 @@ test "format detection uses signatures" {
     try std.testing.expectEqual(Kind.psar, detect("PSAR\x03").?);
     try std.testing.expectEqual(Kind.rco, detect("\x00PRF").?);
     try std.testing.expectEqual(null, detect("not an archive"));
+}
+
+test "legacy DOC signatures remain distinct from generic PGD" {
+    const prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
+    try std.testing.expectEqual(Kind.document, detect(prefix ++ "\x67\x68\xbd\x14\xca\x5d\x47\x4a").?);
+    try std.testing.expectEqual(Kind.document, detect(prefix ++ "\xdf\xf3\xca\xc7\x94\x95\x48\x29").?);
+    try std.testing.expectEqual(null, detect(prefix ++ "\x00\x00\x00\x00\x00\x00\x00\x00"));
+    try std.testing.expectEqual(null, detect(prefix ++ "\x67\x68\xbd\x14\xca\x5d\x47"));
 }

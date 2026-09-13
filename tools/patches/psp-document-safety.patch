@@ -1,0 +1,237 @@
+--- a/decrypt_document_ps1.py
++++ b/decrypt_document_ps1.py
+@@ -27,6 +27,8 @@
+         self.__dict__ = self
+ 
+ def sliceBuf(buf, offset, length):
++    if offset < 0 or length < 0 or offset > len(buf) or length > len(buf) - offset:
++        raise ValueError('Document field exceeds its source buffer')
+     return buf[offset:offset + length]
+ 
+ def desDecrypt(input_data: bytes) -> bytes:
+@@ -92,7 +94,6 @@
+         install_id  = pops_get_secure_install_id(header_out + header_mac)
+ 
+         if is_enc == 1:
+-            print(f'  > SECURE INSTALL ID: {" ".join(f"{v:02X}" for v in install_id)}')
+             
+             if header_mac != bytes(0x10):
+                 if header_mac != bbox_mac_gen_enc(header_out, install_id):
+@@ -123,7 +124,9 @@
+         
+         self.data.header.code    = sliceBuf(data_buf, 0x000c, 0x0010).decode('utf-8').rstrip('\0')
+         self.data.header.page_limit  = b2i(sliceBuf(data_buf, 0x001c, 0x0004))
+-        self.data.header.page_limit  = (10 ** (2 + self.data.header.page_limit)) - 1
++        if self.data.header.page_limit != 0:
++            raise ValueError('Only the verified 99-slot document table is supported')
++        self.data.header.page_limit = 99
+         
+         self.data.header.pages_total = 0
+         self.data.header.pages_total_ps3 = 0
+@@ -157,10 +160,11 @@
+         self.data.header.pages_total = b2i(sliceBuf(data_buf, 0x0084, 0x0004))
+         info_block = info_block[0x0008:]
+         
+-        if self.data.header.pages_total > self.data.header.page_limit:
++        if not 1 <= self.data.header.pages_total <= self.data.header.page_limit:
+             print('  > BAD DOC PAGE COUNT')
+             return None
+         
++        total_frame_bytes = 0
+         for i in range(self.data.header.pages_total):
+             entry_data = sliceBuf(info_block, i * 0x80, 0x80)
+             data_buf += entry_data
+@@ -171,8 +175,12 @@
+             page_info.offset_ps3 = b2i(sliceBuf(entry_data, 0x0010, 0x0004))
+             page_info.size_ps3   = b2i(sliceBuf(entry_data, 0x001c, 0x0004))
+             
+-            if page_info.offset > 0:
+-                self.data.pages.info.append(page_info)
++            if page_info.offset < 0x3298 or page_info.size < 0x40 or page_info.offset + page_info.size > self.data.file_info.size:
++                raise ValueError('Document page frame exceeds its source')
++            total_frame_bytes += page_info.size
++            if total_frame_bytes > 256 * 1024 * 1024:
++                raise ValueError('Document page expansion budget exceeded')
++            self.data.pages.info.append(page_info)
+         
+         if len(data_buf) > self.data.pages.info[0].offset:
+             print(f'  > BAD DOC OFFSET DATA')
+@@ -194,10 +202,10 @@
+         # print('  > SHA1SUM:', self.data.sha1sum)
+         
+         for page_index, info in enumerate(self.data.pages.info):
+-            page_buf = bytearray(sliceBuf(in_buf, info.offset, info.size))
++            page_offset = info.offset - 0x10 if is_enc else info.offset
++            page_buf = bytearray(sliceBuf(in_buf, page_offset, info.size))
+             
+             if is_enc == 1:
+-                page_buf  = bytearray(sliceBuf(in_buf, info.offset-0x10, info.size))
+                 page_mac  = page_buf[-0x20:][:0x10]
+                 page_hash = page_buf[-0x20:][-0x10:]
+                 page_buf  = page_buf[:-0x20]
+@@ -205,22 +213,20 @@
+                 if page_mac != bytes(0x10):
+                     if page_mac != bbox_mac_gen_enc(page_buf, install_id):
+                         print(f'  > PAGE {page_index+1:03d} BB MAC HASH MISMATCH')
+-                        data_buf += page_buf + page_mac + page_hash
+                         is_proper_doc = 0
+                         return None
+                 
+                 if page_hash != sha1hash(page_buf):
+                     print(f'  > PAGE {page_index+1:03d} SHA1 HASH MISMATCH')
+-                    data_buf += page_buf + page_mac + page_hash
+                     is_proper_doc = 0
+                     continue
+                 
+-                page_buf += bytes(0x20)
+                 page_info_head = desDecrypt(sliceBuf(page_buf, 0x00, 0x20))
+-                page_buf[0x00:0x20] = bytes(0x20)
+                 
+                 page_size  = b2i(sliceBuf(page_info_head, 0x00, 0x04))
+                 enc_chunks = b2i(sliceBuf(page_info_head, 0x08, 0x04))
++                if enc_chunks > 4096:
++                    raise ValueError('Document encryption descriptor budget exceeded')
+                 payload_offset = 0x20 + enc_chunks * 0x08
+                 
+                 if page_size != info.size:
+@@ -238,13 +244,9 @@
+                     dec_chunk = desDecrypt(sliceBuf(page_buf, enc_chunk_offset, enc_chunk_size))
+                     page_buf[enc_chunk_offset:enc_chunk_offset + enc_chunk_size] = dec_chunk
+                 
+-                page_buf += bytes(payload_offset)
+-            
+-            if is_proper_doc == 1:
+-                data_buf += page_buf
+-            self.data.pages.data.append(page_buf)
+-            
+-            if not os.path.isfile(f'./out_png_ps1/{self.data.file_info.name}/{self.data.header.code}_DOC_{page_index+1:03d}.png'):
++            
++            
++            if not os.path.isfile(f'./out_png_ps1/{self.data.file_info.name}/page_{page_index+1:03d}.png'):
+                 needle_buf = b'IEND\xAE\x42\x60\x82'
+                 needle_idx = page_buf.rfind(needle_buf)
+                 png_min_size = 0x43
+@@ -259,15 +261,10 @@
+                     continue
+                     
+                 Path(f'./out_png_ps1/{self.data.file_info.name}').mkdir(parents=True, exist_ok=True)
+-                ofile = open(f'./out_png_ps1/{self.data.file_info.name}/{self.data.header.code}_DOC_{page_index+1:03d}.png', 'wb')
++                ofile = open(f'./out_png_ps1/{self.data.file_info.name}/page_{page_index+1:03d}.png', 'wb')
+                 ofile.write(page_buf[:png_size])
+                 ofile.close()
+         
+-        if is_proper_doc == 1 and is_enc == 1 and not os.path.isfile(f'./out_dat_ps1/{self.data.file_info.name}_DEC.DAT'):
+-            Path(f'./out_dat_ps1').mkdir(parents=True, exist_ok=True)
+-            ofile = open(f'./out_dat_ps1/{self.data.file_info.name}_DEC.DAT', 'wb')
+-            ofile.write(data_buf)
+-            ofile.close()
+         
+         return self.data
+ 
+@@ -279,4 +276,5 @@
+     for di in range(len(docs)):
+         PS1Doc(f'{docs[di]}').readDocData()
+ 
+-readDocs()
++if __name__ == '__main__':
++    readDocs()
+--- a/decrypt_document_psp.py
++++ b/decrypt_document_psp.py
+@@ -27,6 +27,8 @@
+         self.__dict__ = self
+ 
+ def sliceBuf(buf, offset, length):
++    if offset < 0 or length < 0 or offset > len(buf) or length > len(buf) - offset:
++        raise ValueError('Document field exceeds its source buffer')
+     return buf[offset:offset + length]
+ 
+ def desDecrypt(key, input_data):
+@@ -146,7 +148,9 @@
+         
+         self.data.header.code    = sliceBuf(header_out, 0x000c, 0x0010).decode('utf-8').rstrip('\0')
+         self.data.header.page_limit  = b2i(sliceBuf(header_out, 0x001c, 0x0004))
+-        self.data.header.page_limit  = (10 ** (2 + self.data.header.page_limit)) - 1
++        if self.data.header.page_limit != 0:
++            raise ValueError('Only the verified 99-slot document table is supported')
++        self.data.header.page_limit = 99
+         
+         self.data.header.pages_total = 0
+         self.data.header.pages_total_ps3 = 0
+@@ -194,7 +198,10 @@
+         
+         self.data.header.pages_total     = b2i(pages_metadata[0x04:0x08])
+         self.data.header.pages_total_ps3 = b2i(sliceBuf(pages_metadata, ps3_pages_count_offset, 0x04))
+-        
++        if not 1 <= self.data.header.pages_total <= self.data.header.page_limit:
++            raise ValueError('Invalid document page count')
++        
++        total_frame_bytes = 0
+         for i in range(self.data.header.pages_total):
+             entry_data = sliceBuf(pages_metadata, 0x08 + i * 0x80, 0x80)
+             
+@@ -208,8 +215,12 @@
+                 print(f'  > PAGE {i+1:03d} DATA MISMATCH!')
+                 return None
+             
+-            if page_info.offset > 0:
+-                self.data.pages.info.append(page_info)
++            if page_info.offset < 0x32b8 or page_info.size < 0x50 or page_info.offset + page_info.size > len(self.f_dat):
++                raise ValueError('Document page frame exceeds its source')
++            total_frame_bytes += page_info.size
++            if total_frame_bytes > 256 * 1024 * 1024:
++                raise ValueError('Document page expansion budget exceeded')
++            self.data.pages.info.append(page_info)
+         
+         print('  > HEADER:', self.data.header)
+         #print(self.data.pages.info)
+@@ -235,6 +246,8 @@
+             page_info_head = desDecrypt(dec_key, sliceBuf(page_buf, 0x00, 0x20))
+             page_size  = b2i(sliceBuf(page_info_head, 0x00, 0x04))
+             enc_chunks = b2i(sliceBuf(page_info_head, 0x08, 0x04))
++            if enc_chunks > 4096:
++                raise ValueError('Document encryption descriptor budget exceeded')
+             payload_offset = 0x20 + enc_chunks * 0x08
+             
+             if page_size != info.size:
+@@ -252,8 +265,6 @@
+                 dec_chunk = desDecrypt(dec_key, sliceBuf(page_buf, enc_chunk_offset, enc_chunk_size))
+                 page_buf[enc_chunk_offset:enc_chunk_offset + enc_chunk_size] = dec_chunk
+             
+-            self.data.pages.data.append(page_buf)
+-            enc_page_buf = bytearray(0x0)
+             
+             if is_default_key == 0 and is_proper_doc == 1:
+                 enc_page_buf = bytearray(page_buf)
+@@ -269,7 +280,7 @@
+                 
+                 data_buf += enc_page_buf
+             
+-            if not os.path.isfile(f'./out_png_psp/{self.data.file_info.name}/{self.data.header.code}_DOC_{page_index+1:03d}.png'):
++            if not os.path.isfile(f'./out_png_psp/{self.data.file_info.name}/page_{page_index+1:03d}.png'):
+                 needle_buf = b'IEND\xAE\x42\x60\x82'
+                 needle_idx = page_buf.rfind(needle_buf)
+                 png_min_size = 0x43
+@@ -284,15 +295,10 @@
+                     continue
+                 
+                 Path(f'./out_png_psp/{self.data.file_info.name}').mkdir(parents=True, exist_ok=True)
+-                ofile = open(f'./out_png_psp/{self.data.file_info.name}/{self.data.header.code}_DOC_{page_index+1:03d}.png', 'wb')
++                ofile = open(f'./out_png_psp/{self.data.file_info.name}/page_{page_index+1:03d}.png', 'wb')
+                 ofile.write(page_buf[:png_size])
+                 ofile.close()
+         
+-        if is_default_key == 0 and is_proper_doc == 1 and not os.path.isfile(f'./out_dat_psp/{self.data.file_info.name}_DEFKEY.DAT'):
+-            Path(f'./out_dat_psp').mkdir(parents=True, exist_ok=True)
+-            ofile = open(f'./out_dat_psp/{self.data.file_info.name}_DEFKEY.DAT', 'wb')
+-            ofile.write(data_buf)
+-            ofile.close()
+         
+         return self.data
+ 
+@@ -304,4 +310,5 @@
+     for di in range(len(docs)):
+         PSPDoc(f'{docs[di]}').readDocData()
+ 
+-readDocs()
++if __name__ == '__main__':
++    readDocs()

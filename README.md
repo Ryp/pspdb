@@ -60,7 +60,7 @@ ISO revision 4 and nested ISO9660 revision 2 resolve shared-extent file aliases
 by exact path, preserving distinct case-sensitive filenames. Metadata lookup
 remains case-insensitive; it must not determine which bytes an inventory path owns.
 
-PKGs write their own versioned pairs under `catalog/pkg/v7/`. Package metadata
+PKGs write their own versioned pairs under `catalog/pkg/v8/`. Package metadata
 includes content ID, title ID, content type, and available PSP title/version/firmware
 fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
 static export display packages under **psn**, alongside **umd**. Embedded PBP files
@@ -206,8 +206,9 @@ node website/tests/tree-catalog.mjs
 
 ## Extractors
 
-PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E and KL4E processing runs automatically during
-ISO/PKG/ZIP ingest when both catalog and store are set:
+PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E, KL4E, VMP and
+supported legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
+when both catalog and store are set:
 
 ```sh
 ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store
@@ -309,3 +310,45 @@ an `.mcr` child. This follows the
 extraction, not signature verification or per-save filesystem interpretation.
 VMP revision 1 preserves the original wrapper; ISO revision 5 and PKG revision 7
 force root discovery of previously opaque children during `--skip-existing`.
+
+### Legacy DOCUMENT manuals
+
+Fixed-key PS1 and PSP manual wrappers use the pinned
+[PSP-DOCUMENT.DAT reader](https://github.com/seiya-dev/PSP-DOCUMENT.DAT/tree/8c95b37949c9a9ca183b7fd69c85d2e2dad7216d).
+Build its isolated helper with Python 3.12+; dependencies stay in the uv environment:
+
+```sh
+uv sync --locked
+git clone https://github.com/seiya-dev/PSP-DOCUMENT.DAT .work/PSP-DOCUMENT.DAT
+git -C .work/PSP-DOCUMENT.DAT checkout 8c95b37949c9a9ca183b7fd69c85d2e2dad7216d
+uv run --locked python tools/build_document.py \
+  --source .work/PSP-DOCUMENT.DAT --output .work/pspdb-document
+PSPDB_DOCUMENT="$PWD/.work/pspdb-document" uv run --locked \
+  ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
+  --catalog catalog --store /path/to/store
+```
+
+The builder verifies pinned source hashes, applies bounded-reader safety changes,
+and creates a deterministic zipapp without modifying upstream sources or installing
+system packages. Keep `PSPDB_DOCUMENT` set for freshness scans too, and run through
+`uv run --locked` so the helper has its declared Pillow/PyCryptodome dependencies.
+
+Recognition uses the encrypted DOC magic/version block, not filenames or generic
+PGD magic. The upstream reader checks the supported header/table/page protection;
+these are source-consistency checks, not independent trusted-origin authentication.
+Extraction preserves the wrapper and exact PNG bytes. Neutral `psp/001.png` and
+`ps3/001.png` paths retain each platform's page ordinals, including shared frames.
+Generated `structure.json` records original source identity, page identities and
+source-frame offsets/sizes/hashes; it is a derived map, not an original file.
+
+All expected pages must pass PNG CRC, end-boundary and pixel decoding checks before
+atomic publication. Late-page failure leaves the caller's output empty and fails
+its ingest root. No whole-disc reconstruction or inferred PBP/EDAT key is used.
+Support is limited to the exercised fixed-key, 99-slot families with PS3 frames
+referencing PSP frames. Genuine generic PGD and non-default-key wrappers remain
+distinct; 999-slot tables and unique PS3-only frames are unsupported.
+Resource limits are 64 MiB input, 256 MiB total page frames, 4096 encrypted-range
+descriptors per page and 16 Mi pixels per image.
+
+DOCUMENT revision 1 and root discovery revisions ISO 6 / PKG 8 make previously
+opaque supported manuals reachable during `--skip-existing`.
