@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const containers = @import("containers.zig");
+const gzip = @import("gzip.zig");
 const prx = @import("prx.zig");
 const pops = @import("pops.zig");
 const kle = @import("kle.zig");
@@ -148,7 +149,7 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
             if (!std.mem.eql(u8, name, "USRDIR/CONTENT/EBOOT.PBP")) return;
             // Use the inventory's already-decrypted PBP rather than decrypting
             // its entire game payload a second time just to read PARAM.SFO.
-            const parsed = try containers.parsePbp(view.bytes);
+            const parsed = try containers.parse_pbp(view.bytes);
             self.result.pbp_sfo_bytes = try self.inventory.allocator.dupe(u8, parsed.get("PARAM.SFO").?);
             const inner = try sfo.parsePkg(self.inventory.allocator, self.result.pbp_sfo_bytes, &self.result.pbp_title);
             self.result.metadata = .{ .title = inner.title orelse self.result.metadata.title, .disc_id = inner.disc_id, .disc_version = inner.disc_version, .required_firmware = inner.required_firmware };
@@ -353,7 +354,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
         },
         .gzip, .prx, .kl3e, .kl4e => blk: {
             const bytes = try switch (task.kind) {
-                .gzip => containers.decodeGzip(allocator, task.input.bytes),
+                .gzip => gzip.decode(allocator, task.input.bytes),
                 .prx => prx.decode(allocator, task.input.bytes),
                 .kl3e, .kl4e => kle.decode(allocator, task.input.bytes),
                 else => unreachable,
@@ -382,19 +383,19 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             break :blk .{ .name = "pspdb-ingest", .version = revisions.iso9660 };
         },
         .sce => blk: {
-            try containers.walkSce(task.input.bytes, &inventory, Inventory.emit);
+            try containers.walk_sce(task.input.bytes, &inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.sce };
         },
         .vmp => blk: {
-            try containers.walkVmp(task.input.bytes, &inventory, Inventory.emit);
+            try containers.walk_vmp(task.input.bytes, &inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.vmp };
         },
         .elf => blk: {
-            try containers.walkElf(task.input.bytes, &inventory, Inventory.emit);
+            try containers.walk_elf(task.input.bytes, &inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.elf };
         },
         .pbp => blk: {
-            const pbp = try containers.parsePbp(task.input.bytes);
+            const pbp = try containers.parse_pbp(task.input.bytes);
             if (pbp.get("DATA.BIN")) |psar| {
                 if (extractor.detect(psar) == .npumdimg) {
                     const data = try data_psp.Header.parse(pbp.get("DATA.PSP") orelse return error.MissingDataPsp);
@@ -408,7 +409,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             const data_bin = pbp.get("DATA.BIN") orelse &.{};
             const is_pops = std.mem.startsWith(u8, data_bin, "PSISOIMG0000") or std.mem.startsWith(u8, data_bin, "PSTITLEIMG0000");
             if (is_pops) inventory.suppress_dispatch = "DATA.PSP";
-            try containers.walkPbp(task.input.bytes, &inventory, Inventory.emit);
+            try containers.walk_pbp(task.input.bytes, &inventory, Inventory.emit);
             if (is_pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
                 // Sibling/container context stays attached to its source section.
                 var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.adapter.store, .dispatch = dispatch, .paths = .init(allocator) };

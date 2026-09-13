@@ -1,4 +1,6 @@
 const std = @import("std");
+
+const containers = @import("containers.zig");
 const memory = @import("bytes.zig");
 
 pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, edat, npumdimg, iso9660, pops, psx, vmp, document };
@@ -36,7 +38,7 @@ pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "\x1f\x8b\x08")) return .gzip;
     if (std.mem.startsWith(u8, bytes, "KL3E")) return .kl3e;
     if (std.mem.startsWith(u8, bytes, "KL4E")) return .kl4e;
-    if (@import("containers.zig").embeddedPsp(bytes, 0) != null) return .elf;
+    if (containers.embedded_psp(bytes, 0) != null) return .elf;
     return null;
 }
 

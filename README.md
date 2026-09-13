@@ -321,6 +321,9 @@ The Zig inventory model lives in `ingest/src/inventory.zig`: source results,
 entries, contextual dependencies, serialization and owned-data cleanup.
 `processor.zig` performs extraction/inventory work; `catalog.zig` publishes that
 model without depending on the processor. Scheduling remains in `ingest.zig`.
+`gzip.zig` owns complete-stream and bounded single-member decompression;
+`containers.zig` only exposes borrowed container slices. PRX calls the codecs
+directly, keeping its declared-size and authentication boundaries explicit.
 
 Install `pspdecrypt` for PSAR and the patched `rcomage` on PATH (overrides:
 `PSPDECRYPT`, `RCOMAGE`). RCOMage loads INI files from `../share/rcomage` relative to its binary
