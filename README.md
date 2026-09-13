@@ -441,7 +441,7 @@ exact raw payload identity, **not codec validity or complete PSMF support**.
 
 ### Raw MPEG2 program-stream ranges
 
-The `mpegps/v1` extractor uses a separate mode of the same pinned builder.
+The `mpegps/v2` extractor uses a separate mode of the same pinned builder.
 It supports both standalone extraction and automatic recursive ingestion, without
 changing the default PSMF helper or `psmf/v1` behavior. Build using .NET SDK **8.0.425**:
 
@@ -465,7 +465,7 @@ fingerprints and the executable SHA-256, and atomically replaces the requested
 executable only after successful publication. No installed .NET runtime is
 needed to run it. `--provenance` identifies `pmftools-mpegps`, the pinned upstream
 revision and the capabilities `raw-mpeg2:1`, `opaque-private-pes:1`, `manifest:1`
-and `manifest-budget-env:1`.
+and `manifest-budget-env:1`, `compact-manifest:1`.
 Configure `PSPDB_MPEGPS` for ingestion and freshness checks, or put `pspdb-mpegps`
 on PATH. Provenance includes the SHA-256 of the complete bundled executable;
 changing it invalidates dependent ISO and PKG roots.
@@ -498,10 +498,16 @@ Private temporary output is removed on failure.
 Before publication the adapter independently verifies every source packet and
 payload range, full source consumption, output inventory, safe regular-file paths,
 sizes, hashes and exact source-span concatenations. It publishes the verified
-manifest as `structure.json` alongside the raw files under `mpegps/v1`; raw
+manifest as `structure.json` alongside the raw files under `mpegps/v2`; raw
 outputs follow normal recursive signature dispatch. Only catalog metadata and
 inventories are contributions: source bytes, raw outputs and manifest contents
 remain in the local object store.
+
+Revision 2 removes JSON indentation from the manifest; packet fields and raw
+payload bytes are unchanged. This changes `structure.json` byte identity, so
+revision-1 pairs remain historical rather than being replaced. The adapter
+requires a compact-capable helper. Source, manifest and runtime limits remain
+unchanged; compact output alone does not establish whole-video coverage.
 
 Outputs are neutral byte ranges, not decoded media: `private-bd.bin` concatenates
 the full private-stream PES payloads, including their original prefixes, and

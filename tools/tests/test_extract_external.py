@@ -344,9 +344,6 @@ class MpegpsTests(unittest.TestCase):
         run = patch.object(adapter, 'run_mpegps', side_effect=self.run_helper)
         run.start()
         self.addCleanup(run.stop)
-        revisions = patch.object(adapter, 'VERSIONS', dict(adapter.versions(), mpegps='1'))
-        revisions.start()
-        self.addCleanup(revisions.stop)
 
     def update_output_metadata(self):
         self.manifest['outputs'] = [
@@ -357,7 +354,7 @@ class MpegpsTests(unittest.TestCase):
         if command[-1] == '--provenance':
             return json.dumps(dict(name='pmftools-mpegps', options=[
                 self.adapter.MPEGPS_UPSTREAM, 'raw-mpeg2:1', 'opaque-private-pes:1',
-                'manifest:1', 'manifest-budget-env:1'])).encode()
+                'manifest:1', 'manifest-budget-env:1', 'compact-manifest:1'])).encode()
         directory = Path(command[-1])
         directory.mkdir()
         for name, data in self.outputs.items():
@@ -373,6 +370,17 @@ class MpegpsTests(unittest.TestCase):
             self.adapter.extract_mpegps(self.source, self.output, self.tool)
         self.assertEqual(list(self.output.iterdir()), [])
         self.assertEqual({path.name for path in self.root.iterdir()}, before)
+
+    def test_rejects_precompact_helper_without_publishing_revision_two(self):
+        reported = json.loads(self.run_helper(['--provenance'], 30))
+        reported['options'].remove('compact-manifest:1')
+        def legacy_helper(command, timeout):
+            if command[-1] == '--provenance':
+                return json.dumps(reported).encode()
+            return self.run_helper(command, timeout)
+
+        with patch.object(self.adapter, 'run_mpegps', side_effect=legacy_helper):
+            self.assert_rejected_cleanly()
 
     def test_preserves_interleaved_opaque_private_prefixes_and_raw_video(self):
         self.adapter.extract_mpegps(self.source, self.output, self.tool)

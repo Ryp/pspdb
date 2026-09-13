@@ -25,7 +25,7 @@ For supported manuals, PSMFs and raw MPEG2-PS streams, configure the
 [MPEG2-PS helper](README.md#raw-mpeg2-program-stream-ranges) before ingestion and
 freshness checks. Missing helpers are not successful extraction.
 
-The MPEG2-PS helper supports standalone extraction and automatic `mpegps/v1`
+The MPEG2-PS helper supports standalone extraction and automatic `mpegps/v2`
 catalog pairs. Set `PSPDB_MPEGPS`, not `PSPDB_PSMF`; the default PSMF behavior is
 unchanged. Its strict supported subset and ingestion budgets are documented in
 the link above. A malformed or unsupported recognized stream, missing helper or
@@ -44,7 +44,7 @@ catalog/iso/v9/<source-sha256>-tree.json
 PKG inputs use `catalog/pkg/v11/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
-Include new nested pairs too, such as `prx/v3/`, `gzip/v2/`, `psmf/v1/` and `mpegps/v1/`.
+Include new nested pairs too, such as `prx/v3/`, `gzip/v2/`, `psmf/v1/` and `mpegps/v2/`.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same
 revision, report the discrepancy instead of replacing it. Tool executable hashes

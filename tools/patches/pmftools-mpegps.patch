@@ -5,7 +5,7 @@
              if (args.Length == 1 && args[0] == "--provenance")
              {
 -                Console.WriteLine("{\"name\":\"pmftools\",\"options\":[\"upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4\",\"bounded-traversal:1\",\"raw-streams:1\",\"manifest:1\",\"manifest-budget-env:1\"]}");
-+                Console.WriteLine("{\"name\":\"pmftools-mpegps\",\"options\":[\"upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4\",\"raw-mpeg2:1\",\"opaque-private-pes:1\",\"manifest:1\",\"manifest-budget-env:1\"]}");
++                Console.WriteLine("{\"name\":\"pmftools-mpegps\",\"options\":[\"upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4\",\"raw-mpeg2:1\",\"opaque-private-pes:1\",\"manifest:1\",\"manifest-budget-env:1\",\"compact-manifest:1\"]}");
                  return 0;
              }
              if (args.Length != 2)
@@ -144,6 +144,9 @@
              consumed = DataStart;
              input.Position = 0;
              string sourceHash = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
+@@ -62 +51 @@
+-                json = new Utf8JsonWriter(manifest, new JsonWriterOptions { Indented = true });
++                json = new Utf8JsonWriter(manifest);
 @@ -66,8 +55,6 @@
                  json.WriteNumber("data_start", DataStart);
                  json.WriteNumber("data_end", DataEnd);

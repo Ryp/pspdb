@@ -47,7 +47,7 @@ def tool_provenance(kind, tool=None, data=None):
         name = 'pmftools' if kind == 'psmf' else 'pmftools-mpegps'
         required = ({PSMF_UPSTREAM, 'manifest-budget-env:1'} if kind == 'psmf' else
                     {MPEGPS_UPSTREAM, 'raw-mpeg2:1', 'opaque-private-pes:1',
-                     'manifest:1', 'manifest-budget-env:1'})
+                     'manifest:1', 'manifest-budget-env:1', 'compact-manifest:1'})
         if (not isinstance(reported, dict) or set(reported) != {'name', 'options'}
                 or reported['name'] != name or not isinstance(reported['options'], list)
                 or any(not isinstance(option, str) or not option for option in reported['options'])

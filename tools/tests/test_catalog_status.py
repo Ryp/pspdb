@@ -62,7 +62,7 @@ class CatalogStatusTests(unittest.TestCase):
              [extract_external.PSMF_UPSTREAM, 'manifest-budget-env:1']),
             ('mpegps', 'run_mpegps', 'pmftools-mpegps',
              [extract_external.MPEGPS_UPSTREAM, 'raw-mpeg2:1', 'opaque-private-pes:1',
-              'manifest:1', 'manifest-budget-env:1']),
+              'manifest:1', 'manifest-budget-env:1', 'compact-manifest:1']),
         ]:
             with self.subTest(kind=kind):
                 self.root = base / kind
