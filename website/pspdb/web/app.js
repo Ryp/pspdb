@@ -313,7 +313,7 @@ function packageGroup(contentType) {
     case 6: return "ps1";
     case 7:
     case 14:
-    case 15: return "psp";
+    case 15: return null;
     case 9: return "theme";
     case 16: return "neogeo";
     default: return "unknown";
@@ -386,7 +386,7 @@ function build(data) {
   if (packages.length) {
     const psn = addGroup(root, "psn");
     const labels = packageLabels(packages);
-    const groups = new Map();
+    const groups = new Map([[null, psn]]);
     for (const pkg of packages) {
       const metadata = pkg.metadata || {};
       const category = packageGroup(metadata.content_type);
