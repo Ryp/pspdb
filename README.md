@@ -60,7 +60,7 @@ ISO revision 4 and nested ISO9660 revision 2 resolve shared-extent file aliases
 by exact path, preserving distinct case-sensitive filenames. Metadata lookup
 remains case-insensitive; it must not determine which bytes an inventory path owns.
 
-PKGs write their own versioned pairs under `catalog/pkg/v8/`. Package metadata
+PKGs write their own versioned pairs under `catalog/pkg/v9/`. Package metadata
 includes content ID, title ID, content type, and available PSP title/version/firmware
 fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
 static export display packages under **psn**, alongside **umd**. Embedded PBP files
@@ -316,7 +316,7 @@ force root discovery of previously opaque children during `--skip-existing`.
 
 ### Legacy DOCUMENT manuals
 
-Fixed-key PS1 and PSP manual wrappers use the pinned
+Fixed-key PS1/PSP manuals and explicitly paired PSP manuals use the pinned
 [PSP-DOCUMENT.DAT reader](https://github.com/seiya-dev/PSP-DOCUMENT.DAT/tree/8c95b37949c9a9ca183b7fd69c85d2e2dad7216d).
 Build its isolated helper with Python 3.12+; dependencies stay in the uv environment:
 
@@ -336,8 +336,8 @@ and creates a deterministic zipapp without modifying upstream sources or install
 system packages. Keep `PSPDB_DOCUMENT` set for freshness scans too, and run through
 `uv run --locked` so the helper has its declared Pillow/PyCryptodome dependencies.
 
-Recognition uses the encrypted DOC magic/version block, not filenames or generic
-PGD magic. The upstream reader checks the supported header/table/page protection;
+Fixed-key recognition uses the encrypted DOC magic/version block, not filenames
+or generic PGD magic. The reader checks supported header/table/page protection;
 these are source-consistency checks, not independent trusted-origin authentication.
 Extraction preserves the wrapper and exact PNG bytes. Neutral `psp/001.png` and
 `ps3/001.png` paths retain each platform's page ordinals, including shared frames.
@@ -346,12 +346,27 @@ source-frame offsets/sizes/hashes; it is a derived map, not an original file.
 
 All expected pages must pass PNG CRC, end-boundary and pixel decoding checks before
 atomic publication. Late-page failure leaves the caller's output empty and fails
-its ingest root. No whole-disc reconstruction or inferred PBP/EDAT key is used.
-Support is limited to the exercised fixed-key, 99-slot families with PS3 frames
-referencing PSP frames. Genuine generic PGD and non-default-key wrappers remain
-distinct; 999-slot tables and unique PS3-only frames are unsupported.
+its ingest root. No whole-disc reconstruction or inferred PBP key is used.
+Support is limited to the exercised 99-slot families with PS3 frames referencing
+PSP frames. Generic PGD, 999-slot tables and unique PS3-only frames remain unsupported.
 Resource limits are 64 MiB input, 256 MiB total page frames, 4096 encrypted-range
 descriptors per page and 16 Mi pixels per image.
 
-DOCUMENT revision 1 and root discovery revisions ISO 6 / PKG 8 make previously
-opaque supported manuals reachable during `--skip-existing`.
+For non-default PSP manuals, PKG, ISO and nested ISO9660 inventories bind an
+unrecognized legacy-PGD `DOCUMENT.DAT` to its exact same-directory `DOCINFO.EDAT`.
+The companion must match the exercised 304-byte/eight-byte-key layout and pass
+outer signature, inner header, MAC-table and complete ciphertext-block checks,
+including padding. Unsupported or damaged present companions fail the root;
+without a companion the unrecognized wrapper remains opaque. The 320-byte
+companion variant and generic EDAT extraction are not supported.
+
+Paired results are inline on the original DOCUMENT occurrence, never globally
+cached by its hash alone. `dependencies` records the companion's path relative to
+that immediate inventory, SHA-256 and size. Reuse validates the same sibling
+binding; helper provenance changes invalidate the containing result. Generated
+page maps also retain the companion's byte identity. Titles are not key inputs.
+Direct helper use requires an explicit `--docinfo PATH`; it never discovers
+siblings from the input filename.
+
+DOCUMENT revision 2 and discovery revisions ISO 7 / PKG 9 / ISO9660 3 make paired
+manuals reachable during `--skip-existing`, without rewriting historical results.

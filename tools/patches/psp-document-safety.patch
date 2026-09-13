@@ -137,7 +137,7 @@
 +    readDocs()
 --- a/decrypt_document_psp.py
 +++ b/decrypt_document_psp.py
-@@ -27,6 +27,8 @@
+@@ -27,15 +27,13 @@
          self.__dict__ = self
  
  def sliceBuf(buf, offset, length):
@@ -146,8 +146,87 @@
      return buf[offset:offset + length]
  
  def desDecrypt(key, input_data):
-@@ -146,7 +148,9 @@
+     cipher = DES.new(key, DES.MODE_CBC, DES_IV)
+     return cipher.decrypt(input_data)
+-
+-def desEncrypt(data: bytes) -> bytes:
+-    cipher = DES.new(DES_KEY, DES.MODE_CBC, DES_IV)
+-    return cipher.encrypt(data)
+ 
+ def desChangeKey(doc_key: bytes) -> bytes:
+     doc_xor = bytes([0xF9, 0x32, 0xFF, 0x26, 0x47, 0x4A, 0x8D, 0xC0])
+@@ -48,13 +46,10 @@
+ def b2i(input_data: bytes) -> int:
+     return int.from_bytes(input_data, byteorder = 'little')
+ 
+-def i2b(value: int, size: int = 4) -> bytes:
+-    return value.to_bytes(size, byteorder='little')
+-
+ ###################
+ 
+ class PSPDoc(object):
+-    def __init__(self, file):
++    def __init__(self, file, docinfo=None):
+         self.data = attrdict()
          
+         self.data.header = attrdict()
+@@ -68,12 +63,12 @@
+         self.data.file_info.name = file[:-0x0d].split('/')[-1]
+         
+         self.f_dat = bytearray()
+-        self.f_edat = bytearray()
+-        
+-        edat = f'{file[:-0x0d]}_DOCINFO.EDAT'
++        self.f_edat = None
++        
++        edat = docinfo
+         dat = f'{file[:-0x0d]}_DOCUMENT.DAT'
+         
+-        if Path(edat).is_file():
++        if edat is not None:
+             self.f_edat = open(edat, 'rb')
+             self_b_edat = self.f_edat.read()
+             self.f_edat.close()
+@@ -90,23 +85,14 @@
+             return
+         
+         print(f'\n[:INFO:] Reading: {self.data.file_info.name}_DOCUMENT.DAT')
+-        is_default_key = 1
+         is_proper_doc = 1
+         dec_key = DES_KEY
+         
+-        if len(self.f_edat) > 0:
+-            print(f'[:INFO:] Reading: {self.data.file_info.name}_DOCINFO.EDAT')
+-            if len(self.f_edat) not in (0x130, 0x140):
+-                print('  > BAD DOCINFO.EDAT SIZE!')
+-                return None
+-            
+-            is_default_key = 0
+-            data_buf = bytearray()
+-            
++        if self.f_edat is not None:
+             doc_key = free_edata(self.data.file_info.name, self.f_edat)
+-            if doc_key is not None:
+-                print(f'  > \'{self.f_dat[0x10:0x18].hex('-').upper()}\': bytes([{', '.join(f'0x{x:02X}' for x in doc_key)}]),')
+-                dec_key = desChangeKey(doc_key)
++            if doc_key is None or len(doc_key) != 8:
++                raise ValueError('DOCINFO.EDAT did not return an authenticated eight-byte key')
++            dec_key = desChangeKey(doc_key)
+         
+         header = self.f_dat[0x00:0x10]
+         
+@@ -136,17 +122,11 @@
+             print(f'  > BAD FILE VERSION ID')
+             return None
+         
+-        if is_default_key == 0:
+-            header_enc = desEncrypt(header_out)
+-            data_buf += header # PGD Header
+-            data_buf += header_enc
+-            data_buf += bytes(0x10)
+-            data_buf += sha1hmac(HMAC_KEY_PSP, header_enc)
+-            data_buf += sha1hmac(HMAC_KEY_PS3, header_enc)
+-        
          self.data.header.code    = sliceBuf(header_out, 0x000c, 0x0010).decode('utf-8').rstrip('\0')
          self.data.header.page_limit  = b2i(sliceBuf(header_out, 0x001c, 0x0004))
 -        self.data.header.page_limit  = (10 ** (2 + self.data.header.page_limit)) - 1
@@ -157,8 +236,18 @@
          
          self.data.header.pages_total = 0
          self.data.header.pages_total_ps3 = 0
-@@ -194,7 +198,10 @@
+@@ -184,17 +164,12 @@
+         if self.data.header.page_limit > 99:
+             ps3_pages_count_offset = 0x1f388
          
+-        if is_default_key == 0:
+-            # PAGE METADATA Encrypted
+-            meta_enc = desEncrypt(pages_metadata)
+-            data_buf += meta_enc
+-            data_buf += bytes(0x10)
+-            data_buf += sha1hmac(HMAC_KEY_PSP, meta_enc)
+-            data_buf += sha1hmac(HMAC_KEY_PS3, meta_enc)
+-        
          self.data.header.pages_total     = b2i(pages_metadata[0x04:0x08])
          self.data.header.pages_total_ps3 = b2i(sliceBuf(pages_metadata, ps3_pages_count_offset, 0x04))
 -        
@@ -169,7 +258,7 @@
          for i in range(self.data.header.pages_total):
              entry_data = sliceBuf(pages_metadata, 0x08 + i * 0x80, 0x80)
              
-@@ -208,8 +215,12 @@
+@@ -208,8 +183,12 @@
                  print(f'  > PAGE {i+1:03d} DATA MISMATCH!')
                  return None
              
@@ -184,7 +273,7 @@
          
          print('  > HEADER:', self.data.header)
          #print(self.data.pages.info)
-@@ -235,6 +246,8 @@
+@@ -235,6 +214,8 @@
              page_info_head = desDecrypt(dec_key, sliceBuf(page_buf, 0x00, 0x20))
              page_size  = b2i(sliceBuf(page_info_head, 0x00, 0x04))
              enc_chunks = b2i(sliceBuf(page_info_head, 0x08, 0x04))
@@ -193,25 +282,34 @@
              payload_offset = 0x20 + enc_chunks * 0x08
              
              if page_size != info.size:
-@@ -252,8 +265,6 @@
+@@ -252,24 +233,8 @@
                  dec_chunk = desDecrypt(dec_key, sliceBuf(page_buf, enc_chunk_offset, enc_chunk_size))
                  page_buf[enc_chunk_offset:enc_chunk_offset + enc_chunk_size] = dec_chunk
              
 -            self.data.pages.data.append(page_buf)
 -            enc_page_buf = bytearray(0x0)
-             
-             if is_default_key == 0 and is_proper_doc == 1:
-                 enc_page_buf = bytearray(page_buf)
-@@ -269,7 +280,7 @@
-                 
-                 data_buf += enc_page_buf
-             
+-            
+-            if is_default_key == 0 and is_proper_doc == 1:
+-                enc_page_buf = bytearray(page_buf)
+-                enc_page_buf[:0] = desEncrypt(i2b(page_size) + bytes(0x1c))
+-                enc_page_buf += bytes(page_size - len(enc_page_buf) - 0x30)
+-                
+-                enc_page_hmac_psp = sha1hmac(HMAC_KEY_PSP, enc_page_buf)
+-                enc_page_hmac_ps3 = sha1hmac(HMAC_KEY_PS3, enc_page_buf)
+-                
+-                enc_page_buf += bytes(0x10)
+-                enc_page_buf += enc_page_hmac_psp
+-                enc_page_buf += enc_page_hmac_ps3
+-                
+-                data_buf += enc_page_buf
+-            
 -            if not os.path.isfile(f'./out_png_psp/{self.data.file_info.name}/{self.data.header.code}_DOC_{page_index+1:03d}.png'):
++            
 +            if not os.path.isfile(f'./out_png_psp/{self.data.file_info.name}/page_{page_index+1:03d}.png'):
                  needle_buf = b'IEND\xAE\x42\x60\x82'
                  needle_idx = page_buf.rfind(needle_buf)
                  png_min_size = 0x43
-@@ -284,15 +295,10 @@
+@@ -284,15 +249,10 @@
                      continue
                  
                  Path(f'./out_png_psp/{self.data.file_info.name}').mkdir(parents=True, exist_ok=True)
@@ -228,10 +326,162 @@
          
          return self.data
  
-@@ -304,4 +310,5 @@
+@@ -304,4 +264,5 @@
      for di in range(len(docs)):
          PSPDoc(f'{docs[di]}').readDocData()
  
 -readDocs()
 +if __name__ == '__main__':
 +    readDocs()
+--- a/pspdoclib/free_edata.py
++++ b/pspdoclib/free_edata.py
+@@ -1,87 +1,23 @@
+-import os
+-
+-import struct
+ import hashlib
+-from pathlib import Path
+ 
+ from .ecdsa_psp import PSPECDSA
+ from .bbox import bbox_decrypt_blob, BBoxException
+-from .hexdump import hexdump
+ 
+-###################
+ 
+ def free_edata(name: str, buf: bytes):
+-    if buf[:0x08] != b'\x00PSPEDAT':
+-        return None
+-    
+-    # DOCINFO.EDAT
+-    # Byte Offset Field        Length     Values (most likely)
+-    # 0x00-0x07   magic          8 bytes  b'\0PSPEDAT'
+-    # 0x08-0x0B   key_index      4 bytes  0x02 0x00 0x00 0x00 (MAC type 3), 0x00 0x00 0x00 0x01 (FREE)
+-    # 0x0C-0x0D   data_offset    2 bytes  0x80
+-    # 0x0E        data_type      1 byte   0x00
+-    # 0x0F        version        1 byte   0x00
+-    # 0x10-0x3F   content_id    48 bytes  EP1234-ULUS01234...
+-    # 0x40-0x4F   key           16 bytes  Key?..
+-    # 0x50-0x57   padding        8 bytes  Padding
+-    # 0x58-0x7F   ecdsa_sign    40 bytes  ECDSA sign
+-    # 0x80...     PGD File     192 bytes  PGD File
+-    
+-    # PGD File inside DOCINFO.EDAT
+-    # Byte Offset Field          Length    Values (most likely)
+-    # 0x00-0x03   magic           4 bytes  b'\0PGD'
+-    # 0x04-0x07   key_index       4 bytes  Always 1 for MAC type 1
+-    # 0x08-0x0B   drm_type        4 bytes  BB MAC / Cipher key type: 1 common (static driver key)
+-    # 0x0C-0x0F   reserved        4 bytes  Padding
+-    # 0x10-0x1F   desc_key       16 bytes  Decryption key of the PGD description structure (desc member)
+-    # 0x20-0x2F   mac_path       16 bytes  BB MAC of the installed file relative path
+-    # 0x30-0x5F   desc           48 bytes  PGD description data (encrypted)
+-    # 0x60-0x6F   mac_table      16 bytes  BB MAC of the BB MAC hashes table.
+-    # 0x70-0x7F   mac_header_70  16 bytes  BB Mac Header Hash with Secure Install ID (from 0x00 to 0x70)
+-    # 0x80-0x8F   mac_header_80  16 bytes  BB Mac Header Hash with Static Driver Key (from 0x00 to 0x80)
+-    # 0x90-0x9F   data_90        16 bytes  Encrypted Data
+-    # 0xA0-0xAF   data_A0        16 bytes  Encrypted Data (Garbage)
+-    # 0xB0-0xBF   data_B0        16 bytes  Garbage / Zero Padding
+-    
+-    # 0x40 Decrypted Data:
+-    # NULL        | data size   | chunk size  | data address
+-    # 00 00 00 00 | 08 00 00 00 | 00 04 00 00 | 90 00 00 00
+-    
+-    if buf[0x0c:0x10] != b'\x80\0\0\0':
+-        print(f"  > BAD EDAT FILE")
+-        return None
+-    
+-    # Init PSP ECDSA
++    # Admit only the observed signed 0x80-byte EDAT header and 0xb0-byte PGD.
++    # The name is deliberately not a cryptographic input or a lookup hint.
++    if len(buf) != 0x130 or buf[:0x10] != b'\x00PSPEDAT\x02\0\0\0\x80\0\0\0':
++        raise ValueError('Unsupported DOCINFO.EDAT layout')
++
+     ecdsa = PSPECDSA()
+-    edata_id = buf[0x10:].split(b'\x00', 1)[0].decode('utf-8', errors='ignore')
+-    print(f"  > EDAT ID: {edata_id}")
+-    
+-    # ECDSA keys
+-    sha1_hash = hashlib.sha1(buf[:0x58]).digest()
+-    r_bytes   = buf[0x58:0x6c]
+-    s_bytes   = buf[0x6c:0x80]
+-    
+-    # ECDSA hash
+-    ecdsa_verify = ecdsa.verify(sha1_hash, r_bytes, s_bytes)
+-    
+-    # Check ECDSA verification
+-    if not ecdsa_verify:
+-        print('  > ECDSA verify failed!')
+-        return None
+-    
+-    # PGD decrypt
+-    pgd_data = bytearray(buf[0x80:])
+-    
+-    # decrypt
++    if not ecdsa.verify(hashlib.sha1(buf[:0x58]).digest(), buf[0x58:0x6c], buf[0x6c:0x80]):
++        raise ValueError('DOCINFO.EDAT signature verification failed')
++
+     try:
+-        binkey, install_id = bbox_decrypt_blob(pgd_data)
+-    except BBoxException as err:
+-        print(f'  > [ERROR] Code: {err.code}, MSG: {err}')
+-        print(f"  > BAD EDAT FILE")
+-        return None
+-    
+-    # Display DOC_KEY
+-    print(f'  > SECURE INSTALL ID: {" ".join(f"{v:02X}" for v in install_id)}')
+-    print(f'  > EXTRACTED DOC KEY: {" ".join(f"{v:02X}" for v in binkey)}')
+-    
++        binkey, _ = bbox_decrypt_blob(buf[0x80:])
++    except BBoxException:
++        raise ValueError('DOCINFO.EDAT authentication or layout validation failed') from None
++    if len(binkey) != 8:
++        raise ValueError('DOCINFO.EDAT did not return an authenticated eight-byte key')
+     return binkey
+--- a/pspdoclib/bbox.py
++++ b/pspdoclib/bbox.py
+@@ -535,6 +535,9 @@
+ # ============================================================
+ 
+ def io_filemgr_bbox_decrypt(inbuf: bytearray, outbuf: bytearray) -> Tuple[int, bytes]:
++    # The DOCUMENT helper supports only the observed one-block DOCINFO PGD.
++    if len(inbuf) != 0xb0 or inbuf[:0x10] != b'\0PGD\1\0\0\0\1\0\0\0\0\0\0\0':
++        _raise(ERROR_INVALID_FORMAT, 'BBox: Unsupported DOCINFO PGD layout')
+     # calculated secure_install_id
+     calc_id = bytearray(0x10)
+     
+@@ -566,12 +569,14 @@
+     data_size = struct.unpack_from('<I', inbuf, 0x44)[0]
+     block_size = struct.unpack_from('<I', inbuf, 0x48)[0]
+     data_offset = struct.unpack_from('<I', inbuf, 0x4C)[0]
++    if (data_size, block_size, data_offset) != (8, 0x400, 0x90):
++        _raise(ERROR_INVALID_FORMAT, 'BBox: Unsupported DOCINFO descriptor')
+     
+     align_size = (data_size + 15) & ~15
+     table_offset = data_offset + align_size
+     block_num = ((align_size + block_size - 1) & ~(block_size - 1)) // block_size
+     
+-    if (align_size + block_num * 0x10) > len(inbuf):
++    if data_offset < 0x90 or table_offset + block_num * 0x10 != len(inbuf):
+         print('io_filemgr_bbox_decrypt: Invalid data size')
+         return -1, calc_id
+     
+@@ -587,9 +592,18 @@
+         print('io_filemgr_bbox_decrypt: Data verification failed')
+         return -1, calc_id
+     
+-    data_region = bytearray(inbuf[0x90:0x90 + align_size])
++    # Authenticate ciphertext including its aligned padding, before decryption.
++    for index in range(block_num):
++        start = data_offset + index * block_size
++        end = min(start + block_size, table_offset)
++        digest_offset = table_offset + index * 0x10
++        if not bbox_mac_check(bytes(inbuf[start:end]), bytes(calc_id),
++                              bytes(inbuf[digest_offset:digest_offset + 0x10]), type_):
++            _raise(ERROR_BROKEN_DATA, 'BBox: Ciphertext block MAC mismatch')
++
++    data_region = bytearray(inbuf[data_offset:table_offset])
+     bbox_decrypt(data_region, 0, bytes(calc_id), bytes(inbuf[0x30:0x40]), type_)
+-    inbuf[0x90:0x90 + align_size] = data_region
++    inbuf[data_offset:table_offset] = data_region
+     
+     payload = bytes(inbuf[data_offset:data_offset + data_size])
+     outbuf[:data_size] = payload

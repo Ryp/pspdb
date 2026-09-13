@@ -11,6 +11,46 @@ else:
     import extract_external
 
 HASH = re.compile(r'[0-9a-f]{64}\Z')
+DEPENDENCY_PATH = re.compile(r'^(?!/)(?!.*(?:^|/)\.{1,2}(?:/|$))[^\\:\x00-\x1f]+$')
+CONTEXTUAL_KINDS = {
+    'PSXtract-2': 'psx',
+    'pops': 'pops',
+    'pspdb-pops': 'pops',
+    'PSP-DOCUMENT.DAT': 'document',
+}
+
+
+def validate_inline_dependencies(entry, inventory):
+    """Bind contextual inputs only within the source entry's immediate inventory."""
+    contextual = entry['extraction']
+    if contextual['sha256'] != entry['sha256'] or contextual['size_bytes'] != entry['size_bytes']:
+        raise ValueError('Contextual extraction source mismatch')
+    if 'dependencies' not in contextual:
+        return ()
+    dependencies = contextual['dependencies']
+    if not isinstance(dependencies, list) or not dependencies:
+        raise ValueError('Contextual dependencies must be a nonempty array')
+    seen = set()
+    for dependency in dependencies:
+        if not isinstance(dependency, dict) or set(dependency) != {'path', 'sha256', 'size_bytes'}:
+            raise ValueError('Invalid contextual dependency identity')
+        path, digest, size = dependency['path'], dependency['sha256'], dependency['size_bytes']
+        if (not isinstance(path, str) or not DEPENDENCY_PATH.fullmatch(path)
+                or '//' in path or path.endswith('/')):
+            raise ValueError('Invalid contextual dependency path')
+        if not isinstance(digest, str) or not HASH.fullmatch(digest) or type(size) is not int or size < 0:
+            raise ValueError('Invalid contextual dependency hash/size')
+        if path in seen:
+            raise ValueError('Duplicate contextual dependency path')
+        seen.add(path)
+        if path == entry['path']:
+            raise ValueError('Contextual dependency self-reference')
+        sibling = inventory.get(path)
+        if sibling is None or sibling['type'] != 'file':
+            raise ValueError('Missing contextual dependency file')
+        if sibling['sha256'] != digest or sibling['size_bytes'] != size:
+            raise ValueError('Contextual dependency identity mismatch')
+    return dependencies
 
 
 def catalog_status(root, current=None, unavailable=None):
@@ -58,9 +98,13 @@ def catalog_status(root, current=None, unavailable=None):
                 trees.pop(digest, None)
             selected[digest] = revision
     def nested_entries(tree):
+        inventory = {entry['path']: entry for entry in tree['entries']}
+        if len(inventory) != len(tree['entries']):
+            raise ValueError('Tree paths must be unique')
         for entry in tree['entries']:
             yield entry
             if entry.get('extraction'):
+                validate_inline_dependencies(entry, inventory)
                 yield from nested_entries(entry['extraction'])
 
     for digest, tree in trees.items():
@@ -69,7 +113,8 @@ def catalog_status(root, current=None, unavailable=None):
                 child = entry['sha256']
                 if not HASH.fullmatch(child):
                     raise ValueError(f'Invalid child hash: {digest}')
-                parents[child].add(digest)
+                if not entry.get('extraction'):
+                    parents[child].add(digest)
     stale, fresh = [], {}
     for digest in sorted(records.keys() | trees.keys()):
         record, tree = records.get(digest), trees.get(digest)
@@ -83,9 +128,8 @@ def catalog_status(root, current=None, unavailable=None):
         if not reason:
             for entry in nested_entries(tree):
                 contextual = entry.get('extraction')
-                if contextual and (contextual['sha256'] != entry['sha256'] or contextual['size_bytes'] != entry['size_bytes']):
-                    raise ValueError('Contextual extraction source mismatch')
-                if contextual and contextual['extractor'] != current.get('psx' if contextual['extractor']['name'] == 'PSXtract-2' else 'pops'):
+                contextual_kind = CONTEXTUAL_KINDS.get(contextual['extractor']['name']) if contextual else None
+                if contextual and contextual['extractor'] != current.get(contextual_kind):
                     reason = 'contextual extractor changed'
                     break
         if reason:

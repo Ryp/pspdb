@@ -43,12 +43,44 @@ pub const Dispatch = struct {
 
 pub const Counts = struct { stored: usize = 0, reused: usize = 0 };
 
+const Dependency = struct {
+    path: []const u8,
+    sha256: []const u8,
+    size_bytes: u64,
+
+    fn deinit(self: Dependency, allocator: std.mem.Allocator) void {
+        allocator.free(self.path);
+        allocator.free(self.sha256);
+    }
+};
+
 pub const InlineExtraction = struct {
     sha256: []const u8,
     size_bytes: u64,
     extractor: extractor.Provenance,
     name_rule: []const u8 = "source_stem",
     entries: []Entry,
+    dependencies: []Dependency = &.{},
+    owned_provenance: ?std.json.Parsed(extractor.Provenance) = null,
+
+    pub fn jsonStringify(self: InlineExtraction, json: *std.json.Stringify) !void {
+        try json.beginObject();
+        try json.objectField("sha256");
+        try json.write(self.sha256);
+        try json.objectField("size_bytes");
+        try json.write(self.size_bytes);
+        try json.objectField("extractor");
+        try json.write(self.extractor);
+        try json.objectField("name_rule");
+        try json.write(self.name_rule);
+        try json.objectField("entries");
+        try json.write(self.entries);
+        if (self.dependencies.len != 0) {
+            try json.objectField("dependencies");
+            try json.write(self.dependencies);
+        }
+        try json.endObject();
+    }
 };
 
 pub const Entry = struct {
@@ -64,6 +96,9 @@ pub const Entry = struct {
             for (tree.entries) |entry| entry.deinit(allocator);
             allocator.free(tree.entries);
             allocator.free(tree.sha256);
+            for (tree.dependencies) |dependency| dependency.deinit(allocator);
+            allocator.free(tree.dependencies);
+            if (tree.owned_provenance) |provenance| provenance.deinit();
             allocator.destroy(tree);
         }
     }
@@ -169,9 +204,10 @@ pub fn processIsoChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []cons
     }
     var result = try readMetadata(allocator, bytes);
     errdefer result.deinit(allocator);
-    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .paths = .init(allocator) };
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .pair_documents = true, .paths = .init(allocator) };
     defer inventory.deinit();
     try iso.walk(allocator, bytes, &inventory, Inventory.emitView);
+    try inventory.extractDocuments();
     result.stored = inventory.counts.stored;
     result.reused = inventory.counts.reused;
     result.entries = try inventory.finish();
@@ -201,7 +237,7 @@ pub fn processPkgChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []cons
         // PSP theme PKGs can contain only a theme payload, with no SFO or PBP.
         return error.MissingPkgMetadata;
     }
-    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .paths = .init(allocator) };
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .pair_documents = true, .paths = .init(allocator) };
     defer inventory.deinit();
     const PackageInventory = struct {
         inventory: *Inventory,
@@ -221,6 +257,7 @@ pub fn processPkgChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []cons
     };
     var context = PackageInventory{ .inventory = &inventory, .result = &result };
     try package.walk(allocator, &context, PackageInventory.emit);
+    try inventory.extractDocuments();
     result.entries = try inventory.finish();
     result.stored = inventory.counts.stored;
     result.reused = inventory.counts.reused;
@@ -237,11 +274,14 @@ const Inventory = struct {
     counts: Counts = .{},
     owner: ?*memory.Owner = null,
     suppress_dispatch: ?[]const u8 = null,
+    pair_documents: bool = false,
+    documents: std.ArrayList(usize) = .empty,
     entries: std.ArrayList(Entry) = .empty,
     paths: std.StringHashMap(usize),
 
     fn deinit(self: *Inventory) void {
         self.paths.deinit();
+        self.documents.deinit(self.allocator);
         for (self.entries.items) |entry| entry.deinit(self.allocator);
         self.entries.deinit(self.allocator);
     }
@@ -271,13 +311,73 @@ const Inventory = struct {
                 } else self.counts.reused += 1;
             }
         }
+        const paired_document = self.pair_documents and self.dispatch != null and
+            if (contents) |view|
+                std.mem.eql(u8, std.Io.Dir.path.basename(name), "DOCUMENT.DAT") and extractor.pairedDocumentCandidate(view.bytes)
+            else
+                false;
+        if (paired_document) try self.documents.append(self.allocator, self.entries.items.len);
         if (contents) |view| {
-            if (self.suppress_dispatch == null or !std.mem.eql(u8, name, self.suppress_dispatch.?)) {
+            if (!paired_document and (self.suppress_dispatch == null or !std.mem.eql(u8, name, self.suppress_dispatch.?))) {
                 if (self.dispatch) |dispatch| try dispatch.inspect(self.allocator, self.io, name, view, entry.sha256.?);
             }
         }
         try self.paths.put(entry.path, self.entries.items.len);
         try self.entries.append(self.allocator, entry);
+    }
+
+    // A manual's sibling context belongs to this inventory occurrence, never to
+    // the hash-only extraction queue. Wait until both paths have been observed.
+    fn extractDocuments(self: *Inventory) !void {
+        const dispatch = self.dispatch orelse return;
+        for (self.documents.items) |index| {
+            const entry = &self.entries.items[index];
+            const prefix = entry.path[0 .. entry.path.len - "DOCUMENT.DAT".len];
+            const companion_path = try std.fmt.allocPrint(self.allocator, "{s}DOCINFO.EDAT", .{prefix});
+            var attached = false;
+            defer if (!attached) self.allocator.free(companion_path);
+            const companion_index = self.paths.get(companion_path) orelse continue;
+            const companion = self.entries.items[companion_index];
+            if (companion.type != .file or companion.size_bytes.? != 304) return error.InvalidDocinfo;
+            if (entry.size_bytes.? > 64 * 1024 * 1024) return error.InvalidDocument;
+            if (!try verifyStoredInput(self.allocator, self.io, dispatch.adapter.store, &entry.sha256.?, entry.size_bytes.?, &.{}) or
+                !try verifyStoredInput(self.allocator, self.io, dispatch.adapter.store, &companion.sha256.?, companion.size_bytes.?, &.{}))
+                return error.ObjectDisappeared;
+
+            const output = try dispatch.adapter.extract(self.allocator, self.io, entry.sha256.?, .document, companion.sha256.?);
+            // The inline tree takes the parsed provenance; temporary output
+            // files still disappear after their immediate inventory walk.
+            defer {
+                std.Io.Dir.cwd().deleteTree(self.io, output.path) catch {};
+                self.allocator.free(output.path);
+                if (!attached) output.provenance.deinit();
+            }
+            var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = dispatch.adapter.store, .dispatch = dispatch, .paths = .init(self.allocator) };
+            defer child.deinit();
+            try output.walk(self.allocator, self.io, &child, Inventory.emitView);
+            const tree = try self.allocator.create(InlineExtraction);
+            errdefer self.allocator.destroy(tree);
+            const hash = try self.allocator.dupe(u8, &entry.sha256.?);
+            errdefer self.allocator.free(hash);
+            const dependencies = try self.allocator.alloc(Dependency, 1);
+            errdefer self.allocator.free(dependencies);
+            const companion_hash = try self.allocator.dupe(u8, &companion.sha256.?);
+            errdefer self.allocator.free(companion_hash);
+            dependencies[0] = .{ .path = companion_path, .sha256 = companion_hash, .size_bytes = companion.size_bytes.? };
+            tree.* = .{
+                .sha256 = hash,
+                .size_bytes = entry.size_bytes.?,
+                .extractor = output.provenance.value,
+                .name_rule = "identity",
+                .entries = try child.finish(),
+                .dependencies = dependencies,
+                .owned_provenance = output.provenance,
+            };
+            entry.extraction = tree;
+            attached = true;
+            self.counts.stored += child.counts.stored;
+            self.counts.reused += child.counts.reused;
+        }
     }
 
     fn finish(self: *Inventory) ![]Entry {
@@ -310,6 +410,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
         .store = dispatch.adapter.store,
         .dispatch = dispatch,
         .owner = task.input.owner,
+        .pair_documents = task.kind == .iso9660,
         .paths = .init(allocator),
     };
     defer inventory.deinit();
@@ -322,6 +423,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
     const provenance: extractor.Provenance = switch (task.kind) {
         .iso9660 => blk: {
             try iso.walk(allocator, task.input.bytes, &inventory, Inventory.emitView);
+            try inventory.extractDocuments();
             break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").iso9660 };
         },
         .sce => blk: {
@@ -354,7 +456,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
             try @import("containers.zig").walkPbp(task.input.bytes, &inventory, Inventory.emit);
             if (pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
                 // Whole-PBP context; attach to the corresponding source section.
-                const section_output = try dispatch.adapter.extract(allocator, io, task.hash, section[0]);
+                const section_output = try dispatch.adapter.extract(allocator, io, task.hash, section[0], null);
                 contextual_outputs[if (section[0] == .pops) 0 else 1] = section_output;
                 var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.adapter.store, .dispatch = dispatch, .paths = .init(allocator) };
                 defer child.deinit();
@@ -373,7 +475,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
             break :blk .{ .name = "Zig-PSP zPBPTool", .version = @import("extractor_versions").pbp, .options = &.{"in-memory"} };
         },
         else => blk: {
-            output = try dispatch.adapter.extract(allocator, io, task.hash, task.kind);
+            output = try dispatch.adapter.extract(allocator, io, task.hash, task.kind, null);
             try output.?.walk(allocator, io, &inventory, Inventory.emitView);
             break :blk output.?.provenance.value;
         },
@@ -403,48 +505,131 @@ fn reuseTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Di
     const parsed = try std.json.parseFromSlice(Saved, allocator, bytes, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
     if (!std.mem.eql(u8, parsed.value.sha256, &task.hash) or parsed.value.size_bytes != task.input.bytes.len) return error.CatalogConflict;
-    return reuseEntries(allocator, io, parsed.value.entries, dispatch);
+    return reuseEntries(allocator, io, parsed.value.entries, dispatch, task.kind == .iso9660);
 }
 
 const SavedEntry = struct { path: []const u8, type: []const u8, sha256: ?[]const u8 = null, size_bytes: ?u64 = null, extraction: ?SavedTree = null };
-const SavedTree = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry };
+const SavedTree = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry, dependencies: []Dependency = &.{} };
 
-fn reuseEntries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry, dispatch: *Dispatch) anyerror!?Counts {
+fn reuseEntries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry, dispatch: *Dispatch, pair_documents: bool) anyerror!?Counts {
     var counts: Counts = .{};
     for (entries) |entry| {
         try validatePath(entry.path);
         if (std.mem.eql(u8, entry.type, "directory")) continue;
         const hash = entry.sha256 orelse return error.CatalogConflict;
-        if (hash.len != 64) return error.CatalogConflict;
-        for (hash) |c| if (!std.ascii.isDigit(c) and (c < 'a' or c > 'f')) return error.CatalogConflict;
-        const object_path = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ dispatch.adapter.store, hash[0..2], hash[2..4], hash });
-        defer allocator.free(object_path);
-        const object = std.Io.Dir.cwd().openFile(io, object_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
-            error.FileNotFound => return null,
-            else => return err,
-        };
-        defer object.close(io);
-        const info = try object.stat(io);
-        if (info.kind != .file or entry.size_bytes == null or info.size != entry.size_bytes.?) return error.CorruptObject;
-        const payload = try allocator.alloc(u8, std.math.cast(usize, info.size) orelse return error.CorruptObject);
-        const view = memory.Owner.allocated(allocator, payload) catch |err| {
-            allocator.free(payload);
-            return err;
-        };
-        defer view.release();
-        if (try object.readPositionalAll(io, payload, 0) != payload.len) return error.CorruptObject;
-        var digest: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
-        const actual = std.fmt.bytesToHex(digest, .lower);
-        if (entry.size_bytes == null or payload.len != entry.size_bytes.? or !std.mem.eql(u8, &actual, hash)) return error.CorruptObject;
+        try validateHash(hash);
         if (entry.extraction) |tree| {
-            if (!std.mem.eql(u8, tree.sha256, hash) or tree.size_bytes != payload.len) return error.CatalogConflict;
-            const nested = (try reuseEntries(allocator, io, tree.entries, dispatch)) orelse return null;
+            const size = entry.size_bytes orelse return error.CatalogConflict;
+            if (!std.mem.eql(u8, tree.sha256, hash) or tree.size_bytes != size) return error.CatalogConflict;
+            const document = std.mem.eql(u8, std.Io.Dir.path.basename(entry.path), "DOCUMENT.DAT");
+            if (document and size > 64 * 1024 * 1024) return error.CatalogConflict;
+            var prefix: [24]u8 = undefined;
+            if (!try verifyStoredInput(allocator, io, dispatch.adapter.store, hash, size, &prefix)) return null;
+            if (document and extractor.pairedDocumentCandidate(prefix[0..@intCast(@min(size, prefix.len))])) {
+                if (tree.dependencies.len != 1 or tree.dependencies[0].size_bytes != 304 or
+                    !std.mem.eql(u8, std.Io.Dir.path.basename(tree.dependencies[0].path), "DOCINFO.EDAT"))
+                    return error.CatalogConflict;
+                const parent = std.Io.Dir.path.dirname(entry.path) orelse "";
+                const dependency_parent = std.Io.Dir.path.dirname(tree.dependencies[0].path) orelse "";
+                if (!std.mem.eql(u8, parent, dependency_parent)) return error.CatalogConflict;
+            }
+            for (tree.dependencies, 0..) |dependency, dependency_index| {
+                try validatePath(dependency.path);
+                if (std.mem.eql(u8, dependency.path, entry.path)) return error.CatalogConflict;
+                for (tree.dependencies[0..dependency_index]) |previous| {
+                    if (std.mem.eql(u8, previous.path, dependency.path)) return error.CatalogConflict;
+                }
+                var sibling: ?SavedEntry = null;
+                for (entries) |candidate| {
+                    if (std.mem.eql(u8, candidate.path, dependency.path)) {
+                        if (sibling != null) return error.CatalogConflict;
+                        sibling = candidate;
+                    }
+                }
+                const bound = sibling orelse return error.CatalogConflict;
+                if (!std.mem.eql(u8, bound.type, "file") or bound.sha256 == null or bound.size_bytes == null or
+                    !std.mem.eql(u8, bound.sha256.?, dependency.sha256) or bound.size_bytes.? != dependency.size_bytes)
+                    return error.CatalogConflict;
+                if (!try verifyStoredInput(allocator, io, dispatch.adapter.store, dependency.sha256, dependency.size_bytes, &.{})) return null;
+            }
+            // Contextual parents must not be redispatched without their sibling
+            // inputs. Their verified children still visit the normal queue.
+            const nested = (try reuseEntries(allocator, io, tree.entries, dispatch, false)) orelse return null;
             counts.reused += nested.reused;
-        } else try dispatch.inspect(allocator, io, entry.path, view, actual);
+        } else {
+            const object_path = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ dispatch.adapter.store, hash[0..2], hash[2..4], hash });
+            defer allocator.free(object_path);
+            const object = std.Io.Dir.cwd().openFile(io, object_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+                error.FileNotFound => return null,
+                else => return err,
+            };
+            defer object.close(io);
+            const info = try object.stat(io);
+            if (info.kind != .file or entry.size_bytes == null or info.size != entry.size_bytes.?) return error.CorruptObject;
+            const payload = try allocator.alloc(u8, std.math.cast(usize, info.size) orelse return error.CorruptObject);
+            const view = memory.Owner.allocated(allocator, payload) catch |err| {
+                allocator.free(payload);
+                return err;
+            };
+            defer view.release();
+            if (try object.readPositionalAll(io, payload, 0) != payload.len) return error.CorruptObject;
+            var digest: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
+            const actual = std.fmt.bytesToHex(digest, .lower);
+            if (payload.len != entry.size_bytes.? or !std.mem.eql(u8, &actual, hash)) return error.CorruptObject;
+            if (pair_documents and std.mem.eql(u8, std.Io.Dir.path.basename(entry.path), "DOCUMENT.DAT") and extractor.pairedDocumentCandidate(payload)) {
+                const parent = std.Io.Dir.path.dirname(entry.path) orelse "";
+                for (entries) |sibling| {
+                    if (std.mem.eql(u8, std.Io.Dir.path.basename(sibling.path), "DOCINFO.EDAT") and
+                        std.mem.eql(u8, std.Io.Dir.path.dirname(sibling.path) orelse "", parent))
+                        return null;
+                }
+                // An absent companion remains opaque, just like the initial walk.
+            } else try dispatch.inspect(allocator, io, entry.path, view, actual);
+        }
         counts.reused += 1;
     }
     return counts;
+}
+
+fn validateHash(hash: []const u8) !void {
+    if (hash.len != 64) return error.CatalogConflict;
+    for (hash) |c| if (!std.ascii.isDigit(c) and (c < 'a' or c > 'f')) return error.CatalogConflict;
+}
+
+/// Recheck the exact CAS inputs before a contextual helper reads their paths.
+/// Stream validation and an optional bounded prefix, without another payload copy.
+fn verifyStoredInput(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: []const u8, size: u64, prefix: []u8) !bool {
+    try validateHash(hash);
+    const path = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ root, hash[0..2], hash[2..4], hash });
+    defer allocator.free(path);
+    const file = std.Io.Dir.cwd().openFile(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    defer file.close(io);
+    const info = try file.stat(io);
+    if (info.kind != .file or info.size != size) return error.CorruptObject;
+    var digest = std.crypto.hash.sha2.Sha256.init(.{});
+    var buffer: [64 * 1024]u8 = undefined;
+    var total: u64 = 0;
+    while (true) {
+        const n = file.readStreaming(io, &.{&buffer}) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        if (n == 0) break;
+        if (n > size - total) return error.CorruptObject;
+        if (total < prefix.len) {
+            const start: usize = @intCast(total);
+            const copied = @min(n, prefix.len - start);
+            @memcpy(prefix[start..][0..copied], buffer[0..copied]);
+        }
+        total += n;
+        digest.update(buffer[0..n]);
+    }
+    if (total != size or !std.mem.eql(u8, hash, &std.fmt.bytesToHex(digest.finalResult(), .lower))) return error.CorruptObject;
+    return true;
 }
 
 fn validatePath(name: []const u8) !void {

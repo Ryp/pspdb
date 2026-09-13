@@ -8,6 +8,11 @@ import subprocess
 
 from jsonschema import Draft202012Validator
 
+if __package__:
+    from .catalog_status import validate_inline_dependencies
+else:
+    from catalog_status import validate_inline_dependencies
+
 REPO = Path(__file__).resolve().parents[1]
 RESULT = re.compile(r'([a-z][a-z0-9_-]*)/v([1-9][0-9]*)/([0-9a-f]{64})-(ingest|tree)\.json\Z')
 EMPTY_HASH = hashlib.sha256(b'').hexdigest()
@@ -73,6 +78,7 @@ def validate_catalog(root, versions=None):
                 if names != sorted(set(names)):
                     raise ValueError(f'Tree paths must be unique and sorted: {relative}')
                 directories = {entry['path'] for entry in entries if entry['type'] == 'directory'}
+                inventory = {entry['path']: entry for entry in entries}
                 for entry in entries:
                     parent = str(PurePosixPath(entry['path']).parent)
                     if parent != '.' and parent not in directories:
@@ -81,8 +87,8 @@ def validate_catalog(root, versions=None):
                         check_size(entry['sha256'], entry['size_bytes'])
                         if entry.get('extraction'):
                             child = entry['extraction']
-                            if child['sha256'] != entry['sha256'] or child['size_bytes'] != entry['size_bytes']:
-                                raise ValueError('Contextual extraction source mismatch')
+                            for dependency in validate_inline_dependencies(entry, inventory):
+                                check_size(dependency['sha256'], dependency['size_bytes'])
                             check_entries(child)
             check_entries(value)
         pairs.setdefault((kind, version, digest), {})[role] = value

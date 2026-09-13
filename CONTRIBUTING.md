@@ -26,11 +26,11 @@ Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v6/<source-sha256>-ingest.json
-catalog/iso/v6/<source-sha256>-tree.json
+catalog/iso/v7/<source-sha256>-ingest.json
+catalog/iso/v7/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v8/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v9/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
 Include the new nested extractor pairs too, such as `prx/v2/` and `gzip/v2/`.
@@ -39,6 +39,9 @@ If your generated inventory differs from an existing inventory at the same
 revision, report the discrepancy instead of replacing it. Tool executable hashes
 can differ between builds; retain the provenance emitted by your own ingestion
 for newly contributed records.
+Paired manual outputs stay inline in their containing inventory, with exact
+same-inventory companion dependencies. Do not publish them as standalone
+DOCUMENT records keyed only by the manual hash.
 
 ## Validate and submit
 

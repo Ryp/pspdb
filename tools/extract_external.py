@@ -253,12 +253,14 @@ def extract_psx(source, output, tool):
     return provenance
 
 
-def extract_document(source, output, tool):
+def extract_document(source, output, tool, docinfo=None):
     tool = tool.resolve(strict=True)
     provenance = tool_provenance('document', tool)
+    command = [str(tool), str(source.resolve(strict=True)), '--output', str(output.resolve())]
+    if docinfo is not None:
+        command.extend(('--docinfo', str(docinfo.resolve(strict=True))))
     try:
-        result = subprocess.run([str(tool), str(source.resolve(strict=True)), '--output', str(output.resolve())],
-                                capture_output=True, text=True, timeout=120)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired as error:
         raise ValueError('Document extraction exceeded 120 seconds') from error
     if result.returncode:
@@ -275,8 +277,11 @@ def main():
     parser.add_argument('kind', choices=['psar', 'rco', 'prx', 'gzip', 'kl3e', 'kl4e', 'npumdimg', 'pops', 'psx', 'document'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--docinfo', type=Path)
     parser.add_argument('--versions', help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.docinfo is not None and args.kind != 'document':
+        parser.error('--docinfo is only supported for document extraction')
     if args.versions:
         global VERSIONS
         VERSIONS = json.loads(args.versions)
@@ -290,7 +295,7 @@ def main():
         elif args.kind == 'pops':
             provenance = extract_pops(args.source, args.output, executable('PSPDB_POPS', 'pspdb-pops'))
         elif args.kind == 'document':
-            provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'))
+            provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
         elif args.kind == 'prx':
             provenance = extract_prx(args.source, args.output, executable('PSPDECRYPT', 'pspdecrypt'))
         elif args.kind in ('kl3e', 'kl4e'):

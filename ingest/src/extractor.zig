@@ -3,6 +3,19 @@ const memory = @import("bytes.zig");
 
 pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp, document };
 
+const document_prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
+
+fn fixedDocumentSignature(bytes: []const u8) bool {
+    return bytes.len >= 24 and
+        (std.mem.eql(u8, bytes[16..24], "\x67\x68\xbd\x14\xca\x5d\x47\x4a") or
+            std.mem.eql(u8, bytes[16..24], "\xdf\xf3\xca\xc7\x94\x95\x48\x29"));
+}
+
+/// Only an observed same-directory DOCINFO can resolve this candidate.
+pub fn pairedDocumentCandidate(bytes: []const u8) bool {
+    return std.mem.startsWith(u8, bytes, document_prefix) and !fixedDocumentSignature(bytes);
+}
+
 pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "NPUMDIMG")) return .npumdimg;
     if (bytes.len >= 32775 and bytes[32768] == 1 and std.mem.eql(u8, bytes[32769..32774], "CD001") and bytes[32774] == 1) return .iso9660;
@@ -14,10 +27,7 @@ pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "\x00PMV")) return .vmp;
     // Fixed-key DES ciphertext of the DOC magic/version block, not generic PGD.
     // Header/table/page integrity is checked by the bounded upstream reader.
-    if (bytes.len >= 24 and std.mem.eql(u8, bytes[0..16], "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00")) {
-        if (std.mem.eql(u8, bytes[16..24], "\x67\x68\xbd\x14\xca\x5d\x47\x4a") or
-            std.mem.eql(u8, bytes[16..24], "\xdf\xf3\xca\xc7\x94\x95\x48\x29")) return .document;
-    }
+    if (std.mem.startsWith(u8, bytes, document_prefix) and fixedDocumentSignature(bytes)) return .document;
     if (std.mem.startsWith(u8, bytes, "\x1f\x8b\x08")) return .gzip;
     if (std.mem.startsWith(u8, bytes, "KL3E")) return .kl3e;
     if (std.mem.startsWith(u8, bytes, "KL4E")) return .kl4e;
@@ -70,7 +80,8 @@ pub const Adapter = struct {
     catalog: []const u8,
     state: ?*const @import("catalog_state.zig").State = null,
 
-    pub fn extract(self: Adapter, allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, kind: Kind) !Output {
+    pub fn extract(self: Adapter, allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, kind: Kind, docinfo: ?[64]u8) !Output {
+        if (docinfo != null and kind != .document) return error.InvalidExtractionContext;
         var random: [16]u8 = undefined;
         try io.randomSecure(&random);
         const output = try std.fmt.allocPrint(allocator, "/tmp/pspdb-extract-{s}", .{std.fmt.bytesToHex(random, .lower)});
@@ -79,10 +90,17 @@ pub const Adapter = struct {
         errdefer std.Io.Dir.cwd().deleteTree(io, output) catch {};
         const source = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ self.store, hash[0..2], hash[2..4], hash });
         defer allocator.free(source);
-        const result = try std.process.run(allocator, io, .{ .argv = &.{
-            "uv",           "run",  "--no-project", "--offline", "python",     "-c",                                  @embedFile("extractor_adapter"),
-            @tagName(kind), source, "--output",     output,      "--versions", @embedFile("extractor_versions_json"),
-        } });
+        const companion = if (docinfo) |digest|
+            try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ self.store, digest[0..2], digest[2..4], digest })
+        else
+            null;
+        defer if (companion) |path| allocator.free(path);
+        const argv = [_][]const u8{
+            "uv",                "run",  "--no-project", "--offline", "python",     "-c",                                  @embedFile("extractor_adapter"),
+            @tagName(kind),      source, "--output",     output,      "--versions", @embedFile("extractor_versions_json"), "--docinfo",
+            companion orelse "",
+        };
+        const result = try std.process.run(allocator, io, .{ .argv = argv[0..if (companion != null) argv.len else argv.len - 2] });
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
         var buffer: [2048]u8 = undefined;

@@ -214,6 +214,29 @@ class PkgCliTests(unittest.TestCase):
                 self.assertNotEqual(run.returncode, 0)
                 self.assertFalse(list((failed/'pkg').rglob('*-ingest.json')))
 
+    def test_paired_manual_cannot_silently_accept_an_invalid_companion(self):
+        document = bytes.fromhex('00504744010000000100000000000000') + bytes(144)
+        for companion in (None, bytes(304)):
+            with self.subTest(paired=companion is not None), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp); inputs = base/'inputs'; inputs.mkdir(); catalog = base/'catalog'
+                files = [('PARAM.SFO', sfo({'TITLE': 'Manual boundary'}), False),
+                         ('MANUAL', None, False), ('MANUAL/DOCUMENT.DAT', document, True)]
+                if companion is not None:
+                    files.append(('MANUAL/DOCINFO.EDAT', companion, True))
+                source, _ = pkg_bytes(files_override=files)
+                (inputs/'manual.pkg').write_bytes(source)
+                run = self.run_ingest(inputs, '--catalog', catalog, '--store', base/'store')
+                digest = hashlib.sha256(source).hexdigest()
+                if companion is None:
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    tree = json.loads(tree_path(catalog, digest).read_text())
+                    entry = next(e for e in tree['entries'] if e['path'].endswith('/DOCUMENT.DAT'))
+                    self.assertNotIn('extraction', entry)
+                else:
+                    self.assertNotEqual(run.returncode, 0, run.stderr)
+                    self.assertFalse(result_path(catalog, 'pkg', digest).exists())
+                self.assertFalse(list((catalog/'document').rglob('*-ingest.json')))
+
     def test_invalid_packages_do_not_publish_roots(self):
         for mode in ('truncated', 'unsupported', 'traversal', 'duplicate', 'missing_parent', 'nested_failure', 'offset'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:

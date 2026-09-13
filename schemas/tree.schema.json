@@ -133,6 +133,28 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
+    "dependencies": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Exact file dependencies in the same immediate parent inventory as the attached source entry. Paths must be unique and cannot reference the source itself; bindings are checked against that inventory.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "size_bytes"],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "sha256": {
+            "$ref": "#/$defs/hash"
+          },
+          "size_bytes": {
+            "$ref": "#/$defs/size"
+          }
+        }
+      }
+    },
     "inlineExtraction": {
       "type": "object",
       "additionalProperties": false,
@@ -144,6 +166,9 @@
         "name_rule"
       ],
       "properties": {
+        "dependencies": {
+          "$ref": "#/$defs/dependencies"
+        },
         "sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"

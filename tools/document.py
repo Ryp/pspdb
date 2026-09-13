@@ -2,7 +2,6 @@
 import argparse
 import contextlib
 import hashlib
-import io
 import json
 import os
 from pathlib import Path
@@ -23,7 +22,8 @@ MAX_PIXELS = 16 * 1024 * 1024
 
 def provenance():
     return {'name': 'PSP-DOCUMENT.DAT', 'options': [
-        'upstream:' + UPSTREAM, 'fixed-key-99-slot-pages', 'platform-ordinals',
+        'upstream:' + UPSTREAM, 'fixed-key-99-slot-pages',
+        'explicit-docinfo-304-byte-authenticated-8-byte-key', 'platform-ordinals',
         'pycryptodome:' + Crypto.__version__, 'Pillow:' + PIL.__version__]}
 
 
@@ -51,7 +51,7 @@ def verify_png(path):
     return page_identity
 
 
-def extract(source, output):
+def extract(source, output, docinfo=None):
     if output.is_symlink() or not output.is_dir() or any(output.iterdir()):
         raise ValueError('Output must be an existing empty directory')
     output = output.resolve()
@@ -60,24 +60,35 @@ def extract(source, output):
     if len(original) > MAX_SOURCE:
         raise ValueError('Document exceeds the source byte budget')
     variant = SIGNATURES.get(original[16:24])
-    if original[:16] != PREFIX or variant is None:
-        raise ValueError('Not a supported fixed-key legacy DOCUMENT wrapper')
+    if original[:16] != PREFIX or (variant is None and docinfo is None):
+        raise ValueError('Not a supported legacy DOCUMENT wrapper')
+    companion = None
+    if docinfo is not None:
+        with docinfo.open('rb') as stream:
+            companion = stream.read(0x131)
+        if len(companion) != 0x130:
+            raise ValueError('Only the observed 304-byte DOCINFO.EDAT layout is supported')
+        variant = 'psp'
 
     with tempfile.TemporaryDirectory(prefix='.pspdb-document-', dir=output.parent) as directory:
         work = Path(directory)
-        # Freeze one input snapshot and deliberately provide no inferred companion.
+        # Freeze explicit input snapshots under neutral names; never discover siblings.
         staged_source = work / 'source_DOCUMENT.DAT'
         staged_source.write_bytes(original)
-        log = io.StringIO()
-        with contextlib.chdir(work), contextlib.redirect_stdout(log):
+        staged_docinfo = None
+        if companion is not None:
+            staged_docinfo = work / 'source_DOCINFO.EDAT'
+            staged_docinfo.write_bytes(companion)
+        with open(os.devnull, 'w') as log, contextlib.chdir(work), \
+                contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
             if variant == 'ps1':
                 from decrypt_document_ps1 import PS1Doc
                 result = PS1Doc(str(staged_source)).readDocData()
             else:
                 from decrypt_document_psp import PSPDoc
-                result = PSPDoc(str(staged_source)).readDocData()
+                result = PSPDoc(str(staged_source), staged_docinfo).readDocData()
         if result is None:
-            raise ValueError('Upstream document validation failed: ' + log.getvalue()[-4096:])
+            raise ValueError('Upstream document validation failed')
         count = result.header.pages_total
         ps3_count = result.header.pages_total_ps3
         if not 1 <= count <= 99 or len(result.pages.info) != count or not 0 <= ps3_count <= count:
@@ -85,7 +96,7 @@ def extract(source, output):
         page_directory = work / ('out_png_' + variant) / result.file_info.name
         expected = {f'page_{index:03d}.png' for index in range(1, count + 1)}
         if not page_directory.is_dir() or {p.name for p in page_directory.iterdir()} != expected:
-            raise ValueError('Incomplete document page extraction: ' + log.getvalue()[-4096:])
+            raise ValueError('Incomplete document page extraction')
 
         publish = work / 'publish'
         publish.mkdir()
@@ -123,6 +134,8 @@ def extract(source, output):
         manifest = {'format': 'pspdb.document-pages', 'schema_version': 1,
                     'variant': variant, 'source': identity(original),
                     'document_code': result.header.code, 'pages': pages}
+        if companion is not None:
+            manifest['docinfo'] = identity(companion)
         (publish / 'structure.json').write_text(json.dumps(manifest, indent=2) + '\n')
         # Same-filesystem rename replaces only the caller's still-empty directory.
         os.replace(publish, output)
@@ -132,17 +145,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path, nargs='?')
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--docinfo', type=Path)
     parser.add_argument('--provenance', action='store_true')
     args = parser.parse_args()
     if args.provenance:
-        if args.source is not None or args.output is not None:
+        if args.source is not None or args.output is not None or args.docinfo is not None:
             parser.error('--provenance does not accept extraction arguments')
         print(json.dumps(provenance()))
         return
     if args.source is None or args.output is None:
         parser.error('source and --output are required')
     try:
-        extract(args.source, args.output)
+        extract(args.source, args.output, args.docinfo)
     except (OSError, ValueError, EOFError, SyntaxError, Image.DecompressionBombError) as error:
         parser.exit(1, str(error) + '\n')
 

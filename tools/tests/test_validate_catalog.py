@@ -45,6 +45,73 @@ class CatalogValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'empty-file'):
             validate_catalog(self.root)
 
+    def paired_entries(self, companion='c'*64):
+        document = dict(path='DOCUMENT.DAT', type='file', sha256='b'*64, size_bytes=14)
+        dependency = dict(path='DOCINFO.EDAT', sha256=companion, size_bytes=304)
+        document['extraction'] = dict(sha256='b'*64, size_bytes=14, name_rule='identity',
+            extractor=dict(name='PSP-DOCUMENT.DAT', version='2', options=[]),
+            dependencies=[dependency],
+            entries=[dict(path='001.png', type='file', sha256='d'*64, size_bytes=7)])
+        return [dict(dependency, type='file'), document]
+
+    def test_dependencies_bind_same_document_separately_in_nested_occurrences(self):
+        first, second = self.paired_entries(), self.paired_entries('e'*64)
+        self.tree['entries'] = [dict(path='DOCINFO.EDAT', type='file', sha256='f'*64, size_bytes=304)]
+        for path, digest, entries in [('first.pbp', '1'*64, first), ('second.pbp', '2'*64, second)]:
+            self.tree['entries'].append(dict(path=path, type='file', sha256=digest, size_bytes=100,
+                extraction=dict(sha256=digest, size_bytes=100, name_rule='identity',
+                    extractor=dict(name='pops', version='1', options=[]), entries=entries)))
+        self.save()
+        self.assertEqual(validate_catalog(self.root)['pairs'], 1)
+        second[1]['extraction']['dependencies'][0]['sha256'] = first[0]['sha256']
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'dependency identity mismatch'):
+            validate_catalog(self.root)
+        second[1]['extraction']['dependencies'][0]['sha256'] = 'f'*64
+        second.pop(0)
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'Missing contextual dependency'):
+            validate_catalog(self.root)
+
+    def test_dependencies_reject_false_or_ambiguous_bindings(self):
+        mutations = {
+            'self': lambda entries, deps: deps[0].update(path='DOCUMENT.DAT', sha256='b'*64, size_bytes=14),
+            'missing': lambda entries, deps: deps[0].update(path='MISSING.EDAT'),
+            'directory': lambda entries, deps: entries.__setitem__(0, dict(path='DOCINFO.EDAT', type='directory')),
+            'hash': lambda entries, deps: deps[0].update(sha256='e'*64),
+            'size': lambda entries, deps: deps[0].update(size_bytes=303),
+            'duplicate': lambda entries, deps: deps.append(dict(deps[0], sha256='e'*64)),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                self.tree['entries'] = entries = self.paired_entries()
+                mutate(entries, entries[1]['extraction']['dependencies'])
+                self.save()
+                with self.assertRaises(ValueError):
+                    validate_catalog(self.root)
+
+    def test_dependency_schema_rejects_empty_unsafe_and_incomplete_identities(self):
+        dependency = dict(path='DOCINFO.EDAT', sha256='c'*64, size_bytes=304)
+        invalid = [[], [dependency, dependency], [dict(dependency, sha256='INVALID')],
+                   [dict(dependency, size_bytes=-1)], [dict(dependency, extra='not identity')],
+                   [dict(path='DOCINFO.EDAT', sha256='c'*64)]]
+        invalid.extend([dict(dependency, path=path)] for path in
+                       ('../DOCINFO.EDAT', '/DOCINFO.EDAT', 'a//b', 'a/./b', 'a\\b', 'a:', 'a/', 'a\nb'))
+        for dependencies in invalid:
+            with self.subTest(dependencies=dependencies):
+                self.tree['entries'] = self.paired_entries()
+                self.tree['entries'][1]['extraction']['dependencies'] = dependencies
+                self.save()
+                with self.assertRaises(ValueError):
+                    validate_catalog(self.root)
+
+    def test_dependency_bytes_participate_in_global_size_consistency(self):
+        self.tree['entries'] = self.paired_entries()
+        self.tree['entries'].append(dict(path='other', type='file', sha256='c'*64, size_bytes=305))
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'Conflicting byte sizes'):
+            validate_catalog(self.root)
+
     def test_missing_partner_and_wrong_identity_are_rejected(self):
         self.tree_path.unlink()
         with self.assertRaisesRegex(ValueError, 'partner'):
