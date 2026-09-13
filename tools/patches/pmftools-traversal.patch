@@ -109,7 +109,7 @@
              using (FileStream fs = File.OpenRead(this.FilePath))
              {
 -                long fileSize = fs.Length;
-+                var traversal = new PsmfTraversal(fs);
++                using var traversal = new PsmfTraversal(fs, demuxOptions.videoPath);
 +                long fileSize = traversal.DataEnd;
                  long currentOffset = 0;
  
@@ -254,13 +254,13 @@
 -                // close all open writers
 -                //////////////////////////
                  this.closeAllWriters(streamOutputWriters);
-+                traversal.Finish(fs, demuxOptions.videoPath);
++                traversal.Finish(demuxOptions.videoPath);
  
              } // using (FileStream fs = File.OpenRead(path))
          }
 --- /dev/null
 +++ b/psmfdump/format/PsmfTraversal.cs
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,164 @@
 +using System;
 +using System.Buffers.Binary;
 +using System.Collections.Generic;
@@ -272,22 +272,28 @@
 +namespace VGMToolbox.format
 +{
 +    // Research instrumentation for the pinned upstream traversal, not a decoder.
-+    public sealed class PsmfTraversal
++    public sealed class PsmfTraversal : IDisposable
 +    {
++        private const long MaxManifestBytes = 256L * 1024 * 1024;
 +        public long DataStart { get; }
 +        public long DataEnd { get; }
 +        private long consumed;
 +        private readonly HashSet<string> declared = new HashSet<string>();
 +        private readonly HashSet<string> observed = new HashSet<string>();
-+        private readonly List<object> packets = new List<object>();
++        private readonly FileStream manifest;
++        private readonly Utf8JsonWriter json;
 +        private string stream;
 +        private long? payloadStart, payloadEnd;
 +
-+        public PsmfTraversal(FileStream input)
++        public PsmfTraversal(FileStream input, string directory)
 +        {
 +            Span<byte> header = stackalloc byte[130];
 +            input.ReadExactly(header);
 +            if (!header.Slice(0, 4).SequenceEqual("PSMF"u8)) throw new FormatException("Not PSMF");
++            ReadOnlySpan<byte> version = header.Slice(4, 4);
++            if (!(version.SequenceEqual("0012"u8) || version.SequenceEqual("0013"u8) ||
++                  version.SequenceEqual("0014"u8) || version.SequenceEqual("0015"u8)))
++                throw new NotSupportedException("Unsupported PSMF version");
 +            DataStart = BinaryPrimitives.ReadUInt32BigEndian(header.Slice(8, 4));
 +            DataEnd = DataStart + BinaryPrimitives.ReadUInt32BigEndian(header.Slice(12, 4));
 +            int count = BinaryPrimitives.ReadUInt16BigEndian(header.Slice(128, 2));
@@ -303,6 +309,27 @@
 +                if (!declared.Add(Key(sid, channel))) throw new FormatException("Duplicate declared stream");
 +            }
 +            consumed = DataStart;
++            input.Position = 0;
++            string sourceHash = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
++            manifest = new FileStream(Path.Combine(directory, "manifest.json"), FileMode.CreateNew, FileAccess.Write);
++            try
++            {
++                json = new Utf8JsonWriter(manifest, new JsonWriterOptions { Indented = true });
++                json.WriteStartObject();
++                json.WriteString("source_sha256", sourceHash);
++                json.WriteNumber("source_size_bytes", input.Length);
++                json.WriteNumber("data_start", DataStart);
++                json.WriteNumber("data_end", DataEnd);
++                json.WriteNumber("consumed_end", DataEnd);
++                json.WritePropertyName("declared_streams");
++                JsonSerializer.Serialize(json, declared.OrderBy(s => s).ToArray());
++                json.WriteStartArray("packets");
++            }
++            catch
++            {
++                Dispose();
++                throw;
++            }
 +        }
 +
 +        private static string Key(byte sid, byte channel) => $"{sid:x2}:{channel:x2}";
@@ -355,23 +382,46 @@
 +            Bounds(start, end - start);
 +            if (start != consumed || end <= start || (payloadStart.HasValue && (payloadStart < start || payloadEnd > end)))
 +                throw new FormatException("Invalid packet accounting");
-+            packets.Add(new { start, end, packet_id = sid, stream, payload_start = payloadStart, payload_end = payloadEnd });
++            json.WriteStartObject();
++            json.WriteNumber("start", start);
++            json.WriteNumber("end", end);
++            json.WriteNumber("packet_id", sid);
++            json.WriteString("stream", stream);
++            if (payloadStart.HasValue) json.WriteNumber("payload_start", payloadStart.Value);
++            else json.WriteNull("payload_start");
++            if (payloadEnd.HasValue) json.WriteNumber("payload_end", payloadEnd.Value);
++            else json.WriteNull("payload_end");
++            json.WriteEndObject();
++            CheckManifestBudget();
++            if (json.BytesPending >= 32768) json.Flush();
 +            consumed = end;
 +        }
-+        public void Finish(FileStream input, string directory)
++        public void Finish(string directory)
 +        {
 +            if (consumed != DataEnd || !observed.SetEquals(declared))
 +                throw new FormatException("Incomplete declared data or stream inventory");
-+            input.Position = 0;
-+            string sourceHash = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
-+            var outputs = Directory.GetFiles(directory).OrderBy(p => p).Select(p => {
++            json.WriteEndArray();
++            var outputs = Directory.GetFiles(directory).Where(p => Path.GetFileName(p) != "manifest.json").OrderBy(p => p).Select(p => {
 +                using var f = File.OpenRead(p);
 +                return new { path = Path.GetFileName(p), size_bytes = f.Length, sha256 = Convert.ToHexString(SHA256.HashData(f)).ToLowerInvariant() };
 +            }).ToArray();
-+            File.WriteAllText(Path.Combine(directory, "manifest.json"), JsonSerializer.Serialize(new {
-+                source_sha256 = sourceHash, source_size_bytes = input.Length, data_start = DataStart,
-+                data_end = DataEnd, consumed_end = consumed, declared_streams = declared.OrderBy(s => s).ToArray(), packets, outputs
-+            }, new JsonSerializerOptions { WriteIndented = true }));
++            json.WritePropertyName("outputs");
++            JsonSerializer.Serialize(json, outputs);
++            json.WriteEndObject();
++            CheckManifestBudget();
++            json.Flush();
++        }
++
++        private void CheckManifestBudget()
++        {
++            if (json.BytesCommitted + json.BytesPending > MaxManifestBytes)
++                throw new InvalidDataException("Manifest exceeds 256 MiB budget");
++        }
++
++        public void Dispose()
++        {
++            try { json?.Dispose(); }
++            finally { manifest?.Dispose(); }
 +        }
 +    }
 +}

@@ -409,16 +409,24 @@ transport packet's half-open source range, associates payload ranges with stream
 IDs, and reports the final consumed offset. System, padding and private2 packets
 remain explicit opaque ranges; their contents are not decoded.
 
-The trial uses the declared data offset rather than searching for a pack header,
-accounts for pack stuffing, requires the declared data range to end at source EOF,
-and rejects premature program ends, out-of-bounds packets, unsupported or
-undeclared streams, and missing declared streams. Failures remove only the
-trial's temporary directory. Existing destinations are never overwritten.
+The trial accepts PSMF0012–0015 headers only, uses the declared data offset rather
+than searching for a pack header, accounts for pack stuffing, and requires the
+declared data range to end at source EOF. It rejects premature program ends,
+out-of-bounds packets, unsupported or undeclared streams, and missing declared
+streams. Failures remove only the trial's temporary directory. Existing
+destinations are never overwritten.
+
+Packet records stream directly to the temporary manifest, flushing at 32 KiB
+pending output rather than retaining the packet list or serializing one giant
+string. Published manifests are capped at 256 MiB; exceeding that budget fails
+atomically. On a source-derived million-padding-packet fixture, peak process RSS
+fell from 902812 to 84560 KiB with identical manifest and payload bytes.
 
 Seven retained real inputs (PSMF0012–0015, up to six audio streams) matched
 independently retained raw payload references. Shifted-offset, stuffing and
-multiple-video fixtures also passed; eleven malformed/unsupported fixtures
-rejected without published output. These checks establish bounded traversal and
-exact raw payload identity, **not codec validity or complete PSMF format support**.
-Production integration still needs resource bounds for packet-manifest growth,
-supported-variant policy, and native recursive extraction/provenance integration.
+multiple-video fixtures also passed. A clean patch replay exercised 25 cases:
+ten accepted and fifteen malformed/unsupported/budget cases rejected without
+published output. These checks establish bounded traversal and exact raw payload
+identity, **not codec validity or complete PSMF format support**. Production
+integration still needs native recursive extraction/provenance integration and
+adapter-level execution/storage limits.
