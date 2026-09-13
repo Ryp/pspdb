@@ -29,8 +29,9 @@ def main():
             tar.extractall(work, filter='data')
         patches = ('pspdecrypt-update-xor.patch', 'pspdecrypt-prx-native.patch',
                    'pspdecrypt-prx-coverage.patch', 'pspdecrypt-table-length.patch')
-        subprocess.run([sys.executable, str(ROOT / 'tools/prepare_pspdecrypt.py'),
-                        str(work), str(work),
+        subprocess.run([sys.executable, str(ROOT / 'tools/prepare_native.py'),
+                        '--in-place', '--normalize', 'libkirk/kirk_engine.c',
+                        '--normalize', 'pspdecrypt_lib.cpp', str(work), str(work),
                         *(str(ROOT / 'tools/patches' / patch) for patch in patches)], check=True)
         subprocess.run(['make', f'-j{args.jobs}', 'CC=cc', 'CXX=c++',
                         'CFLAGS=-O3 -std=gnu11 -fno-strict-aliasing',

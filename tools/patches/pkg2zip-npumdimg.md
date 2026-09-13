@@ -13,7 +13,7 @@ reopens no source file, and writes no temporary output. The standalone
 (cd ingest && zig build -Doptimize=ReleaseSafe)
 ```
 
-`prepare_npumdimg.py` copies the pinned dependency before applying
+`prepare_native.py` copies the pinned dependency before applying
 `pkg2zip-lzrc-safety.patch` and `pkg2zip-npumdimg-memory.patch`. Upstream source
 and licensing remain intact in the fetched dependency. The linked route excludes
 CLI, filesystem, outer-PKG and CSO operations. AES feature detection is

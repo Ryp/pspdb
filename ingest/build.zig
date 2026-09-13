@@ -34,7 +34,8 @@ pub fn build(b: *std.Build) void {
 
     const decrypt = b.dependency("pspdecrypt", .{});
     const prepare = b.addSystemCommand(&.{"python3"});
-    prepare.addFileArg(b.path("../tools/prepare_pspdecrypt.py"));
+    prepare.addFileArg(b.path("../tools/prepare_native.py"));
+    prepare.addArgs(&.{ "--normalize", "libkirk/kirk_engine.c", "--normalize", "pspdecrypt_lib.cpp" });
     prepare.addDirectoryArg(decrypt.path(""));
     const native_source = prepare.addOutputDirectoryArg("pspdecrypt");
     prepare.addFileArg(b.path("../tools/patches/pspdecrypt-update-xor.patch"));
@@ -60,7 +61,8 @@ pub fn build(b: *std.Build) void {
 
     const npdata = b.dependency("make_npdata", .{});
     const prepare_edat = b.addSystemCommand(&.{"python3"});
-    prepare_edat.addFileArg(b.path("../tools/prepare_edat.py"));
+    prepare_edat.addFileArg(b.path("../tools/prepare_native.py"));
+    prepare_edat.addArgs(&.{ "--normalize", "Linux/make_npdata.c", "--normalize", "Linux/utils.c" });
     prepare_edat.addDirectoryArg(npdata.path(""));
     const edat_source = prepare_edat.addOutputDirectoryArg("make-npdata");
     prepare_edat.addFileArg(b.path("../tools/patches/make-npdata-safety.patch"));
@@ -86,7 +88,7 @@ pub fn build(b: *std.Build) void {
 
     const pkg2zip = b.dependency("pkg2zip", .{});
     const prepare_npumdimg = b.addSystemCommand(&.{"python3"});
-    prepare_npumdimg.addFileArg(b.path("../tools/prepare_npumdimg.py"));
+    prepare_npumdimg.addFileArg(b.path("../tools/prepare_native.py"));
     prepare_npumdimg.addDirectoryArg(pkg2zip.path(""));
     const npumdimg_source = prepare_npumdimg.addOutputDirectoryArg("pkg2zip");
     prepare_npumdimg.addFileArg(b.path("../tools/patches/pkg2zip-lzrc-safety.patch"));

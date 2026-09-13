@@ -324,6 +324,10 @@ model without depending on the processor. Scheduling remains in `ingest.zig`.
 `gzip.zig` owns complete-stream and bounded single-member decompression;
 `containers.zig` only exposes borrowed container slices. PRX calls the codecs
 directly, keeping its declared-size and authentication boundaries explicit.
+Native source normalization and patch lists live in `ingest/build.zig`;
+`tools/prepare_native.py` applies the shared preparation steps without mutating
+the fetched dependencies. Standalone builders explicitly opt into patching
+their already isolated temporary source directory.
 
 Install `pspdecrypt` for PSAR and the patched `rcomage` on PATH (overrides:
 `PSPDECRYPT`, `RCOMAGE`). RCOMage loads INI files from `../share/rcomage` relative to its binary
