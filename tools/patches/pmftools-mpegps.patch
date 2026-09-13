@@ -1,0 +1,287 @@
+--- a/psmfdump/Program.cs
++++ b/psmfdump/Program.cs
+@@ -10,12 +10,12 @@
+         {
+             if (args.Length == 1 && args[0] == "--provenance")
+             {
+-                Console.WriteLine("{\"name\":\"pmftools\",\"options\":[\"upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4\",\"bounded-traversal:1\",\"raw-streams:1\",\"manifest:1\",\"manifest-budget-env:1\"]}");
++                Console.WriteLine("{\"name\":\"pmftools-mpegps\",\"options\":[\"upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4\",\"raw-mpeg2:1\",\"opaque-private-pes:1\",\"manifest:1\",\"manifest-budget-env:1\"]}");
+                 return 0;
+             }
+             if (args.Length != 2)
+             {
+-                Console.Error.WriteLine("Usage: pspdb-psmf SOURCE NEW_OUTPUT_DIRECTORY | --provenance");
++                Console.Error.WriteLine("Usage: pspdb-mpegps SOURCE NEW_OUTPUT_DIRECTORY | --provenance");
+                 return 2;
+             }
+             string destination = Path.GetFullPath(args[1]);
+@@ -32,7 +32,7 @@
+                     ExtractAudio = true, ExtractVideo = true, AddHeader = false,
+                     videoPath = temporary, audioPath = temporary
+                 };
+-                new SonyPmfStream(args[0]).DemultiplexStreams(options);
++                new Mpeg2Stream(args[0]).DemultiplexStreams(options);
+                 Directory.Move(temporary, destination);
+                 return 0;
+             }
+--- a/psmfdump/format/MpegStream.cs
++++ b/psmfdump/format/MpegStream.cs
+@@ -348,7 +348,7 @@
+                                                 if (this.IsThisAnAudioBlock(currentBlockId))
+                                                 {
+                                                     audioFileExtension = this.GetAudioFileExtension(fs, currentOffset);
+-                                                    outputFileName = Path.Combine(demuxOptions.audioPath, $"audio-bd-{streamId:x2}.framed-at3");
++                                                    outputFileName = Path.Combine(demuxOptions.audioPath, "private-bd.bin");
+ 
+                                                     if (!this.StreamIdFileType.ContainsKey(streamId))
+                                                     {
+@@ -357,7 +357,7 @@
+                                                 }
+                                                 else
+                                                 {
+-                                                    outputFileName = Path.Combine(demuxOptions.videoPath, $"video-{currentBlockId[3]:x2}.h264");
++                                                    outputFileName = Path.Combine(demuxOptions.videoPath, $"pes-{currentBlockId[3]:x2}.bin");
+                                                 }
+ 
+                                                 // add output directory
+@@ -379,7 +379,7 @@
+                                                 audioBlockSkipSize = this.GetAudioPacketHeaderSize(fs, currentOffset) + GetAudioPacketSubHeaderSize(fs, currentOffset, streamId);
+                                                 audioBlockFooterSize = this.GetAudioPacketFooterSize(fs, currentOffset);
+                                                 cutSize = (int)(blockSize - audioBlockSkipSize - audioBlockFooterSize);
+-                                                traversal.Payload(currentOffset + 6 + audioBlockSkipSize, cutSize, currentBlockId[3], streamId);
++                                                traversal.Payload(currentOffset + 6 + audioBlockSkipSize, cutSize, currentBlockId[3]);
+                                                 if (cutSize > 0)
+                                                 {
+                                                     var data = ParseFile.ParseSimpleOffset(fs, currentOffset + currentBlockId.Length + blockSizeArray.Length + audioBlockSkipSize, (int)(blockSize - audioBlockSkipSize));
+@@ -399,7 +399,7 @@
+                                                 videoBlockSkipSize = this.GetVideoPacketHeaderSize(fs, currentOffset);
+                                                 videoBlockFooterSize = this.GetVideoPacketFooterSize(fs, currentOffset);
+                                                 cutSize = (int)(blockSize - videoBlockSkipSize - videoBlockFooterSize);
+-                                                traversal.Payload(currentOffset + 6 + videoBlockSkipSize, cutSize, currentBlockId[3], 0);
++                                                traversal.Payload(currentOffset + 6 + videoBlockSkipSize, cutSize, currentBlockId[3]);
+                                                 if (cutSize > 0)
+                                                 {
+                                                     var data = ParseFile.ParseSimpleOffset(fs, currentOffset + currentBlockId.Length + blockSizeArray.Length + videoBlockSkipSize, (int)(blockSize - videoBlockSkipSize));
+--- a/psmfdump/format/Mpeg2Stream.cs
++++ b/psmfdump/format/Mpeg2Stream.cs
+@@ -20,6 +20,9 @@
+ 
+             base.BlockIdDictionary[BitConverter.ToUInt32(MpegStream.PacketStartBytes, 0)] = new BlockSizeStruct(PacketSizeType.Static, 0xE); // Pack Header
+         }
++
++        // Preserve the entire private PES payload, including every substream prefix.
++        protected override bool IsThisAnAudioBlock(byte[] block) => block[3] == 0xbd;
+ 
+         protected int GetStandardPesHeaderSize(Stream readStream, long currentOffset)
+         {
+--- a/psmfdump/format/PsmfTraversal.cs
++++ b/psmfdump/format/PsmfTraversal.cs
+@@ -8,16 +8,15 @@
+ 
+ namespace VGMToolbox.format
+ {
+-    // Bounded source-range accounting for the pinned upstream traversal, not a decoder.
++    // Raw MPEG2 source-range accounting for the pinned traversal, not a decoder.
+     public sealed class PsmfTraversal : IDisposable
+     {
+         private const long MaxManifestBytes = 256L * 1024 * 1024;
+-        private readonly long manifestLimit = MaxManifestBytes;
++        private readonly long manifestLimit = 16L * 1024 * 1024;
+         public long DataStart { get; }
+         public long DataEnd { get; }
+         private long consumed;
+-        private readonly HashSet<string> declared = new HashSet<string>();
+-        private readonly HashSet<string> observed = new HashSet<string>();
++        private readonly Dictionary<byte, string> observed = new Dictionary<byte, string>();
+         private readonly FileStream manifest;
+         private readonly Utf8JsonWriter json;
+         private string stream;
+@@ -25,34 +24,24 @@
+ 
+         public PsmfTraversal(FileStream input, string directory)
+         {
+-            string configuredLimit = Environment.GetEnvironmentVariable("PSPDB_PSMF_MANIFEST_LIMIT");
++            string configuredLimit = Environment.GetEnvironmentVariable("PSPDB_MPEGPS_MANIFEST_LIMIT");
+             if (configuredLimit != null)
+             {
+-                if (!long.TryParse(configuredLimit, out long limit) || limit <= 0 || limit > MaxManifestBytes)
+-                    throw new ArgumentException("Invalid PSMF manifest budget");
++                if (!long.TryParse(configuredLimit, System.Globalization.NumberStyles.None,
++                    System.Globalization.CultureInfo.InvariantCulture, out long limit) ||
++                    limit <= 0 || limit > MaxManifestBytes)
++                    throw new ArgumentException("Invalid MPEGPS manifest budget");
+                 manifestLimit = limit;
+             }
+-            Span<byte> header = stackalloc byte[130];
++            DataStart = 0;
++            DataEnd = input.Length;
++            if (DataEnd > 64L * 1024 * 1024)
++                throw new InvalidDataException("MPEGPS source exceeds 64 MiB");
++            Bounds(0, 14);
++            Span<byte> header = stackalloc byte[4];
+             input.ReadExactly(header);
+-            if (!header.Slice(0, 4).SequenceEqual("PSMF"u8)) throw new FormatException("Not PSMF");
+-            ReadOnlySpan<byte> version = header.Slice(4, 4);
+-            if (!(version.SequenceEqual("0012"u8) || version.SequenceEqual("0013"u8) ||
+-                  version.SequenceEqual("0014"u8) || version.SequenceEqual("0015"u8)))
+-                throw new NotSupportedException("Unsupported PSMF version");
+-            DataStart = BinaryPrimitives.ReadUInt32BigEndian(header.Slice(8, 4));
+-            DataEnd = DataStart + BinaryPrimitives.ReadUInt32BigEndian(header.Slice(12, 4));
+-            int count = BinaryPrimitives.ReadUInt16BigEndian(header.Slice(128, 2));
+-            if (count == 0 || DataStart < 130L + count * 16L || DataEnd <= DataStart || DataEnd != input.Length)
+-                throw new FormatException("Invalid declared PSMF bounds or stream count");
+-            Span<byte> entry = stackalloc byte[16];
+-            for (int i = 0; i < count; i++)
+-            {
+-                input.ReadExactly(entry);
+-                byte sid = entry[0], channel = entry[1];
+-                if (!((sid >= 0xe0 && sid <= 0xef && channel == 0) || (sid == 0xbd && channel < 0x20)))
+-                    throw new NotSupportedException($"Unsupported declared stream {sid:x2}:{channel:x2}");
+-                if (!declared.Add(Key(sid, channel))) throw new FormatException("Duplicate declared stream");
+-            }
++            if (BinaryPrimitives.ReadUInt32BigEndian(header) != 0x000001ba)
++                throw new FormatException("Not a raw MPEG2 program stream");
+             consumed = DataStart;
+             input.Position = 0;
+             string sourceHash = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
+@@ -66,8 +55,6 @@
+                 json.WriteNumber("data_start", DataStart);
+                 json.WriteNumber("data_end", DataEnd);
+                 json.WriteNumber("consumed_end", DataEnd);
+-                json.WritePropertyName("declared_streams");
+-                JsonSerializer.Serialize(json, declared.OrderBy(s => s).ToArray());
+                 json.WriteStartArray("packets");
+             }
+             catch
+@@ -77,11 +64,10 @@
+             }
+         }
+ 
+-        private static string Key(byte sid, byte channel) => $"{sid:x2}:{channel:x2}";
+         public void Bounds(long start, long length)
+         {
+             if (start < DataStart || length < 0 || start > DataEnd || length > DataEnd - start)
+-                throw new FormatException("Packet exceeds declared data range");
++                throw new FormatException("Packet exceeds source data range");
+         }
+         public void Begin(long start)
+         {
+@@ -92,8 +78,16 @@
+         public long PackEnd(FileStream input, long start)
+         {
+             Bounds(start, 14);
+-            input.Position = start + 13;
+-            int stuffing = input.ReadByte() & 7;
++            Span<byte> header = stackalloc byte[14];
++            input.Position = start;
++            input.ReadExactly(header);
++            if ((header[4] & 0xc0) != 0x40)
++                throw new NotSupportedException("Unsupported pack header variant; MPEG2 required");
++            if ((header[4] & 0xc4) != 0x44 || (header[6] & 4) != 4 ||
++                (header[8] & 4) != 4 || (header[9] & 1) != 1 ||
++                (header[12] & 3) != 3 || (header[13] & 0xf8) != 0xf8)
++                throw new FormatException("Invalid MPEG2 pack markers or reserved bits");
++            int stuffing = header[13] & 7;
+             Bounds(start, 14 + stuffing);
+             for (int i = 0; i < stuffing; i++)
+                 if (input.ReadByte() != 255) throw new FormatException("Invalid pack stuffing");
+@@ -102,25 +96,75 @@
+         public void Pes(FileStream input, long start, long length, byte sid)
+         {
+             Bounds(start, length);
+-            // Length-delimited structural packets remain explicit opaque ranges.
++            if (length <= 6)
++                throw new NotSupportedException("Zero-length packets are unsupported");
++            // Only their nonzero length and source bounds are checked: no system-header claim.
+             if (sid == 0xbb || sid == 0xbe || sid == 0xbf) return;
+             if (!(sid == 0xbd || (sid >= 0xe0 && sid <= 0xef)))
+                 throw new NotSupportedException($"Unsupported packet {sid:x2}");
+             if (length < 9) throw new FormatException("Short PES header");
+             input.Position = start + 6;
+-            if ((input.ReadByte() & 0xc0) != 0x80) throw new FormatException("Not MPEG2 PES");
+-            input.ReadByte();
+-            int headerLength = input.ReadByte();
+-            if (9L + headerLength + (sid == 0xbd ? 4 : 0) > length)
++            Span<byte> fixedHeader = stackalloc byte[3];
++            input.ReadExactly(fixedHeader);
++            if ((fixedHeader[0] & 0xc0) != 0x80)
++                throw new NotSupportedException("Unsupported PES header variant; MPEG2 required");
++            if ((fixedHeader[0] & 0x30) != 0)
++                throw new NotSupportedException("Scrambled PES is unsupported");
++            int flags = fixedHeader[1], headerLength = fixedHeader[2];
++            if (9L + headerLength > length)
+                 throw new FormatException("PES header exceeds packet");
+-        }
+-        public void Payload(long start, long length, byte sid, byte channel)
++            int timestampFlags = flags >> 6;
++            if (timestampFlags == 1) throw new FormatException("Reserved PES timestamp flags");
++            // ESCR, ES rate, trick mode, additional copy info and CRC are not interpreted.
++            if ((flags & 0x3e) != 0)
++                throw new NotSupportedException("Unsupported optional PES feature flags");
++            int timestampLength = timestampFlags == 3 ? 10 : timestampFlags == 2 ? 5 : 0;
++            if (headerLength < timestampLength)
++                throw new FormatException("PES timestamp exceeds optional header");
++            Span<byte> optional = stackalloc byte[255];
++            optional = optional.Slice(0, headerLength);
++            input.ReadExactly(optional);
++            if (timestampLength != 0)
++                Timestamp(optional.Slice(0, 5), timestampFlags == 3 ? 3 : 2);
++            if (timestampFlags == 3) Timestamp(optional.Slice(5, 5), 1);
++            int cursor = timestampLength;
++            if ((flags & 1) != 0)
++            {
++                if (cursor == headerLength) throw new FormatException("Missing PES extension flags");
++                int extension = optional[cursor++];
++                if ((extension & 0x0e) != 0x0e)
++                    throw new FormatException("Invalid PES extension reserved bits");
++                // Accept only the P-STD buffer field; never guess private/pack/sequence/extension2 sizes.
++                if ((extension & 0xe1) != 0)
++                    throw new NotSupportedException("Unsupported PES extension feature flags");
++                if ((extension & 0x10) != 0)
++                {
++                    if (headerLength - cursor < 2)
++                        throw new FormatException("P-STD buffer field exceeds PES optional header");
++                    if ((optional[cursor] & 0xc0) != 0x40)
++                        throw new FormatException("Invalid P-STD buffer field prefix");
++                    cursor += 2;
++                }
++            }
++            for (; cursor < headerLength; cursor++)
++                if (optional[cursor] != 255) throw new FormatException("Invalid PES header stuffing");
++        }
++        private static void Timestamp(ReadOnlySpan<byte> timestamp, int prefix)
++        {
++            if ((timestamp[0] >> 4) != prefix || (timestamp[0] & 1) != 1 ||
++                (timestamp[2] & 1) != 1 || (timestamp[4] & 1) != 1)
++                throw new FormatException("Invalid PES timestamp prefix or marker bits");
++        }
++        public void Payload(long start, long length, byte sid)
+         {
+             Bounds(start, length);
+-            stream = Key(sid, channel);
+-            if (!declared.Contains(stream)) throw new FormatException($"Undeclared stream {stream}");
+             if (length <= 0) throw new FormatException("Empty stream payload");
+-            observed.Add(stream); payloadStart = start; payloadEnd = start + length;
++            if (!observed.TryGetValue(sid, out stream))
++            {
++                stream = sid.ToString("x2");
++                observed.Add(sid, stream);
++            }
++            payloadStart = start; payloadEnd = start + length;
+         }
+         public void Record(long start, long end, byte sid)
+         {
+@@ -143,9 +187,11 @@
+         }
+         public void Finish(string directory)
+         {
+-            if (consumed != DataEnd || !observed.SetEquals(declared))
+-                throw new FormatException("Incomplete declared data or stream inventory");
++            if (consumed != DataEnd || observed.Count == 0)
++                throw new FormatException("Incomplete data range or empty stream inventory");
+             json.WriteEndArray();
++            json.WritePropertyName("observed_streams");
++            JsonSerializer.Serialize(json, observed.Values.OrderBy(s => s).ToArray());
+             var outputs = Directory.GetFiles(directory).Where(p => Path.GetFileName(p) != "manifest.json").OrderBy(p => p).Select(p => {
+                 using var f = File.OpenRead(p);
+                 return new { path = Path.GetFileName(p), size_bytes = f.Length, sha256 = Convert.ToHexString(SHA256.HashData(f)).ToLowerInvariant() };

@@ -23,6 +23,12 @@ For supported manuals and PSMFs, configure the [DOCUMENT helper](README.md#legac
 and [PSMF helper](README.md#psmf-raw-stream-traversal) before ingestion and freshness
 checks. Missing helpers are not successful extraction.
 
+The [raw MPEG2-PS range helper](README.md#standalone-raw-mpeg2-program-stream-ranges)
+is standalone-only: it is not auto-ingested and produces no catalog contribution
+pairs. Its opaque private/PES bytes and packet spans are not codec or
+multichannel validation. Keep its source files, manifests and extracted bytes
+local; do not configure it as the PSMF helper.
+
 Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 

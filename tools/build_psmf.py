@@ -1,4 +1,4 @@
-"""Build the pinned PSMF reader as one self-contained Linux x64 executable."""
+"""Build the pinned PSMF or raw MPEG2-PS reader as one Linux x64 executable."""
 import argparse
 import hashlib
 import io
@@ -17,6 +17,7 @@ RUNTIME_VERSION = '8.0.31'
 BUILD_TIMEOUT = 900
 ROOT = Path(__file__).resolve().parents[1]
 PATCH = ROOT / 'tools/patches/pmftools-traversal.patch'
+MPEGPS_PATCH = ROOT / 'tools/patches/pmftools-mpegps.patch'
 
 
 def run(command, *, cwd, env=None, timeout=60, capture=False):
@@ -40,7 +41,9 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--dotnet', default='dotnet')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--format', choices=('psmf', 'mpegps'), default='psmf')
     args = parser.parse_args()
+    assembly = 'pspdb-' + args.format
     source = args.source.expanduser().resolve()
     output = args.output.expanduser().absolute()
     dotnet_name = shutil.which(os.path.expanduser(args.dotnet))
@@ -50,10 +53,11 @@ def main():
     resolved_output = output.resolve()
     if (resolved_output.is_relative_to(source)
             or resolved_output.is_relative_to(dotnet.parent)
-            or resolved_output in (Path(__file__).resolve(), PATCH.resolve())):
+            or resolved_output in (Path(__file__).resolve(), PATCH.resolve(),
+                                   MPEGPS_PATCH.resolve())):
         parser.error('Output would overwrite a build input')
     try:
-        with tempfile.TemporaryDirectory(prefix='pspdb-psmf-build-') as tmp:
+        with tempfile.TemporaryDirectory(prefix=assembly + '-build-') as tmp:
             work = Path(tmp)
             # Archive the named commit, never the checkout's mutable working tree.
             revision = run(['git', '--no-replace-objects', '-C', str(source),
@@ -73,6 +77,12 @@ def main():
             patch = work / 'traversal.patch'
             patch.write_bytes(patch_bytes)
             run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(patch)], cwd=checkout)
+            if args.format == 'mpegps':
+                raw_patch_bytes = MPEGPS_PATCH.read_bytes()
+                raw_patch_hash = hashlib.sha256(raw_patch_bytes).hexdigest()
+                raw_patch = work / 'mpegps.patch'
+                raw_patch.write_bytes(raw_patch_bytes)
+                run(['patch', '--batch', '--fuzz=0', '-p1', '-i', str(raw_patch)], cwd=checkout)
             (checkout / 'global.json').write_text(json.dumps({
                 'sdk': {'version': SDK_VERSION, 'rollForward': 'disable',
                         'allowPrerelease': False},
@@ -101,7 +111,7 @@ def main():
                 '--disable-build-servers',
                 '-p:RuntimeFrameworkVersion=' + RUNTIME_VERSION,
                 '-p:TargetLatestRuntimePatch=false',
-                '-p:AssemblyName=pspdb-psmf',
+                '-p:AssemblyName=' + assembly,
                 '-p:PublishSingleFile=true',
                 '-p:IncludeNativeLibrariesForSelfExtract=true',
                 '-p:IncludeAllContentForSelfExtract=true',
@@ -113,14 +123,14 @@ def main():
                 '-p:UseSharedCompilation=false', '-nodeReuse:false',
                 '-p:RestoreSources=https://api.nuget.org/v3/index.json',
             ], cwd=checkout, env=env, timeout=BUILD_TIMEOUT)
-            executable = publish / 'pspdb-psmf'
+            executable = publish / assembly
             if (set(publish.iterdir()) != {executable}
                     or not executable.is_file() or executable.is_symlink()):
                 raise ValueError('Publication must contain exactly one executable, without sidecars')
             output.parent.mkdir(parents=True, exist_ok=True)
             # A sibling staging directory keeps replacement atomic on this filesystem.
-            with tempfile.TemporaryDirectory(prefix='.pspdb-psmf-', dir=output.parent) as stage:
-                staged = Path(stage) / 'pspdb-psmf'
+            with tempfile.TemporaryDirectory(prefix='.' + assembly + '-', dir=output.parent) as stage:
+                staged = Path(stage) / assembly
                 shutil.copyfile(executable, staged)
                 staged.chmod(0o755)
                 with staged.open('rb') as stream:
@@ -133,6 +143,8 @@ def main():
     print(output)
     print(f'upstream {REVISION}')
     print(f'patch SHA256 {patch_hash}')
+    if args.format == 'mpegps':
+        print(f'mpegps patch SHA256 {raw_patch_hash}')
     print(f'SHA256 {digest}')
 
 

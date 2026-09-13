@@ -401,6 +401,7 @@ export PSPDB_PSMF="$PWD/.work/pspdb-psmf"
 
 The builder archives the pinned commit, applies the patch in isolation and
 publishes a Linux x64 self-contained executable with runtime **8.0.31**.
+The default format is `psmf`; passing `--format psmf` is equivalent to omitting it.
 No installed .NET runtime is needed for ingestion. Configure `PSPDB_PSMF` for
 both ingestion and freshness checks, or put `pspdb-psmf` on PATH. Provenance
 includes the upstream revision, capabilities and SHA-256 of the entire bundled
@@ -437,3 +438,64 @@ Seven real inputs spanning all four accepted versions and up to six audio
 streams matched independent raw references. A complete original Daxter package
 accepted with 65 unique PSMFs and then fresh-skipped. These checks establish
 exact raw payload identity, **not codec validity or complete PSMF support**.
+
+### Standalone raw MPEG2 program-stream ranges
+
+The raw MPEG2-PS helper is a separate, **standalone-only** mode of the same pinned
+builder. It is **not automatically detected, ingested or cataloged**, and does
+not change the PSMF helper or `psmf/v1` behavior. Using .NET SDK **8.0.425**:
+
+```sh
+# Clone once if .work/pmftools does not already exist.
+git clone https://github.com/TeamPBCN/pmftools .work/pmftools
+uv run --locked python tools/build_psmf.py --format mpegps \
+  --source .work/pmftools --dotnet /path/to/dotnet \
+  --output .work/pspdb-mpegps
+.work/pspdb-mpegps --provenance
+.work/pspdb-mpegps /path/to/source.mpg .work/mpegps-output
+```
+
+The builder archives upstream commit
+`1bc01f9ffbfb97adc9bb384c44e081398b9a93e4`, applies
+`tools/patches/pmftools-traversal.patch` followed by
+`tools/patches/pmftools-mpegps.patch` in isolation, and publishes a self-contained
+Linux x64 executable pinned to runtime **8.0.31**. It prints both patch SHA-256
+fingerprints and the executable SHA-256, and atomically replaces the requested
+executable only after successful publication. No installed .NET runtime is
+needed to run it. `--provenance` identifies `pmftools-mpegps`, the pinned upstream
+revision and the capabilities `raw-mpeg2:1`, `opaque-private-pes:1`, `manifest:1`
+and `manifest-budget-env:1`.
+
+Invocation is `pspdb-mpegps SOURCE NEW_OUTPUT_DIRECTORY`. The output directory
+must not already exist: successful extraction publishes it atomically, including
+`manifest.json`; failures do not publish partial results. Sources are limited
+to **64 MiB**. The manifest budget defaults to **16 MiB** and can be overridden
+with `PSPDB_MPEGPS_MANIFEST_LIMIT`, a positive decimal byte count no larger than
+**256 MiB**. For example, a 32 MiB manifest budget:
+
+```sh
+PSPDB_MPEGPS_MANIFEST_LIMIT=33554432 \
+  .work/pspdb-mpegps /path/to/source.mpg .work/mpegps-output-large
+```
+
+Outputs are neutral byte ranges, not decoded media: `private-bd.bin` concatenates
+the full private-stream PES payloads, including their original prefixes, and
+`pes-e0.bin` through `pes-ef.bin` concatenate observed video-stream PES payloads.
+Stream keys are `bd` and `e0`–`ef`; there are no inferred channel suffixes or
+declared-stream catalog. The manifest records `source_sha256`,
+`source_size_bytes`, `data_start`, `data_end`, `consumed_end`, `observed_streams`,
+`packets` and `outputs`, including packet/payload source spans and output byte
+identity. Opaque private bytes are not split into channels. These ranges and
+identities make extraction inspectable; they do **not establish codec validity,
+multichannel correctness or complete MPEG2-PS support**. Do not configure this
+executable as `PSPDB_PSMF`.
+
+The accepted subset is contiguous MPEG2 packs with validated marker/reserved bits
+and stuffing; nonempty, unscrambled `bd`/`e0`–`ef` PES payloads with bounded
+optional headers; valid PTS/DTS markers; and the optional P-STD buffer field.
+`bb`, `be` and `bf` packets remain opaque length-bounded structural ranges.
+MPEG1, zero-length PES packets, other stream IDs, scrambling, ESCR/rate/trick-mode/
+copy-info/CRC fields and other PES extension features are rejected explicitly.
+EOF is accepted at a complete packet boundary without a program-end marker;
+an explicit program-end marker must be last. Timestamp ordering, buffer semantic
+values and structural packet contents are not validated.
