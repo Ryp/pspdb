@@ -78,8 +78,9 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
 /* Images whose contents are expanded into the tree. */
 .container .name, .container .toggle { color: #ffd293; }
 .container .toggle:hover { color: #ffffff; background: #584631; }
-.stale-extraction { display: inline-flex; align-items: center; margin-left: auto; flex-shrink: 0; color: #c7a469; }
-.stale-extraction svg { width: 12px; height: 12px; flex-shrink: 0; }
+.extraction-tags { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; flex-shrink: 0; }
+.extraction-tag { padding: 1px 5px; border: 1px solid #2b323b; border-radius: 4px; background: #1b2129; color: #83909f; font-size: 10px; line-height: 14px; }
+.extraction-tag.outdated { border-color: #44382d; background: #27221d; color: #ac9174; }
 
 .redump-link, .umdatabase-link { flex-shrink: 0; color: #b6d9fa; font-size: 0.8em; margin-left: 0.7em; white-space: nowrap; text-decoration: none; }
 .redump-link:hover, .umdatabase-link:hover { text-decoration: underline; }

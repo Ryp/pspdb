@@ -171,9 +171,9 @@ pair does not hide an older complete result. Legacy `catalog/<extractor>/<hash>.
 and `catalog/trees/<hash>.json` remain readable, but the status command reports
 them as unversioned; regeneration writes versioned pairs and leaves them intact.
 
-Extracted containers with an older per-extractor revision show a muted warning
-icon at the right edge of the name column. Its tooltip reads, for example,
-`Outdated PBP subtree v11 (latest is v12)`. Existing contents remain browsable.
+Extracted containers show subdued, right-aligned kind and version tags, such as
+`PBP` and `v12`. Outdated version tags use a muted amber tint and a tooltip such
+as `Outdated PBP subtree v11 (latest is v12)`. Existing contents remain browsable.
 Warnings describe that container's own extraction, not the freshness of its
 descendants. Current, newer, and unknown revisions are not marked.
 The local viewer reads `tools/extractor_versions.json` from its source checkout

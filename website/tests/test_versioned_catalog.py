@@ -56,7 +56,7 @@ class VersionedCatalogTests(unittest.TestCase):
             export_site(root, Path(tmp)/'export')
             data = json.loads((Path(tmp)/'export/catalog.json').read_text())
             self.assertEqual(data['records']['pkg'], [record])
-            self.assertEqual(data['trees']['pkg'][digest], tree)
+            self.assertEqual(data['trees']['pkg'][digest], {**tree, 'extraction_kind': 'pkg'})
             self.assertFalse(data['downloads_enabled'])
 
     def test_rejects_tree_version_and_identity_mismatch(self):

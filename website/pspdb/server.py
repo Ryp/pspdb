@@ -26,6 +26,9 @@ def annotate_stale_extractions(trees):
 
     def annotate(tree, kind):
         tree.pop('stale_extraction', None)
+        tree.pop('extraction_kind', None)
+        if kind not in (None, 'tree'):
+            tree['extraction_kind'] = kind
         extractor = tree.get('extractor') or {}
         version, latest = extractor.get('version'), versions.get(kind)
         if (isinstance(version, str) and re.fullmatch(r'[1-9][0-9]*', version)
