@@ -1,0 +1,377 @@
+--- a/psmfdump/psmfdump.csproj
++++ b/psmfdump/psmfdump.csproj
+@@ -2,7 +2,7 @@
+ 
+   <PropertyGroup>
+     <OutputType>Exe</OutputType>
+-    <TargetFramework>net7.0</TargetFramework>
++    <TargetFramework>net8.0</TargetFramework>
+     <PublishTrimmed>true</PublishTrimmed>
+     <PublishSingleFile>true</PublishSingleFile>
+   </PropertyGroup>
+--- a/psmfdump/Program.cs
++++ b/psmfdump/Program.cs
+@@ -1,4 +1,4 @@
+-﻿using System;
++using System;
+ using System.IO;
+ using VGMToolbox.format;
+ 
+@@ -6,58 +6,40 @@
+ {
+     class Program
+     {
+-        static void Main(string[] args)
++        static int Main(string[] args)
+         {
+-            if (args.Length == 0)
++            if (args.Length != 2)
+             {
+-                Console.WriteLine("PSP Movie Format (PMF) dumper\nCreated by LITTOMA from Team PB.");
+-                Console.WriteLine("Usage: psmfdump <PSMF File> [-a|--audio Audio path] [-v|--video Video path]");
+-                Console.WriteLine("\n\nNOTE: This tool can only works with pmf video containing 1 video and 1 audio stream. Otherwise the output file will crush.");
+-                return;
++                Console.Error.WriteLine("Usage: psmfdump SOURCE NEW_OUTPUT_DIRECTORY");
++                return 2;
+             }
+-
+-            string vp = string.Empty;
+-            string ap = string.Empty;
+-            for (int i = 1; i < args.Length; i++)
++            string destination = Path.GetFullPath(args[1]);
++            if (Directory.Exists(destination) || File.Exists(destination))
+             {
+-                var arg = args[i];
+-                if (arg == "-v" || arg == "--video")
+-                {
+-                    vp = args[++i];
+-                    continue;
+-                }
+-                else if (arg == "-a" || arg == "--audio")
+-                {
+-                    ap = args[++i];
+-                    continue;
+-                }
++                Console.Error.WriteLine("Output destination already exists");
++                return 2;
+             }
+-
+-            DumpPsmf(args[0], vp, ap);
+-        }
+-
+-        static void DumpPsmf(string path, string videoPath, string audioPath)
+-        {
+-            if (!File.Exists(path))
++            string temporary = destination + ".tmp-" + Guid.NewGuid().ToString("N");
++            try
+             {
+-                return;
++                Directory.CreateDirectory(temporary);
++                var options = new MpegStream.DemuxOptionsStruct {
++                    ExtractAudio = true, ExtractVideo = true, AddHeader = false,
++                    videoPath = temporary, audioPath = temporary
++                };
++                new SonyPmfStream(args[0]).DemultiplexStreams(options);
++                Directory.Move(temporary, destination);
++                return 0;
+             }
+-
+-            MpegStream.DemuxOptionsStruct demuxOptions = new MpegStream.DemuxOptionsStruct
++            catch (Exception error)
+             {
+-                ExtractAudio = true,
+-                ExtractVideo = true,
+-
+-                AddHeader = true,
+-                SplitAudioStreams = false,
+-                AddPlaybackHacks = false,
+-
+-                videoPath = videoPath,
+-                audioPath = audioPath
+-            };
+-
+-            SonyPmfStream pmfStream = new SonyPmfStream(path);
+-            pmfStream.DemultiplexStreams(demuxOptions);
++                Console.Error.WriteLine(error.Message);
++                return 1;
++            }
++            finally
++            {
++                if (Directory.Exists(temporary)) Directory.Delete(temporary, true);
++            }
+         }
+     }
+ }
+--- a/psmfdump/format/MpegStream.cs
++++ b/psmfdump/format/MpegStream.cs
+@@ -208,12 +208,12 @@
+         {
+             using (FileStream fs = File.OpenRead(this.FilePath))
+             {
+-                long fileSize = fs.Length;
++                var traversal = new PsmfTraversal(fs);
++                long fileSize = traversal.DataEnd;
+                 long currentOffset = 0;
+ 
+                 byte[] currentBlockId;
+                 uint currentBlockIdVal;
+-                byte[] currentBlockIdNaming;
+ 
+                 BlockSizeStruct blockStruct = new BlockSizeStruct();
+                 byte[] blockSizeArray;
+@@ -236,11 +236,8 @@
+                 uint currentStreamKey;  // hash key for each file
+                 bool isAudioBlock;
+                 string audioFileExtension;
+-                uint currentAudioIndex = 0;
+-
+-                // look for first packet
+-                currentOffset = this.GetStartOffset(fs, currentOffset);
+-                currentOffset = ParseFile.GetNextOffset(fs, currentOffset, this.GetPacketStartBytes());
++
++                currentOffset = traversal.DataStart;
+ 
+                 if (currentOffset != -1)
+                 {
+@@ -261,6 +258,8 @@
+ 
+                         try
+                         {
++                            long packetStart = currentOffset;
++                            traversal.Begin(packetStart);
+                             // get the current block
+                             currentBlockId = ParseFile.ParseSimpleOffset(fs, currentOffset, 4);
+ 
+@@ -278,13 +277,16 @@
+                                     // Static Block Size
+                                     /////////////////////
+                                     case PacketSizeType.Static:
+-                                        currentOffset += blockStruct.Size; // skip this block
++                                        if (currentBlockId[3] != 0xba) throw new FormatException("Unexpected static packet");
++                                        currentOffset = traversal.PackEnd(fs, currentOffset);
+                                         break;
+ 
+                                     //////////////////
+                                     // End of Stream
+                                     //////////////////
+                                     case PacketSizeType.Eof:
++                                        currentOffset += 4;
++                                        if (currentOffset != fileSize) throw new FormatException("Premature program end");
+                                         eofFlagFound = true; // set EOF block found so we can exit the loop
+                                         break;
+ 
+@@ -293,6 +295,7 @@
+                                     //////////////////////
+                                     case PacketSizeType.SizeBytes:
+ 
++                                        traversal.Bounds(currentOffset, 6);
+                                         // Get the block size
+                                         blockSizeArray = ParseFile.ParseSimpleOffset(fs, currentOffset + currentBlockId.Length, blockStruct.Size);
+ 
+@@ -317,6 +320,7 @@
+                                         }
+ 
+ 
++                                        traversal.Pes(fs, currentOffset, 6L + blockSize, currentBlockId[3]);
+                                         // if block type is audio or video, extract it
+                                         isAudioBlock = this.IsThisAnAudioBlock(currentBlockId);
+ 
+@@ -340,20 +344,11 @@
+                                             // check if we've already started parsing this stream
+                                             if (!streamOutputWriters.ContainsKey(currentStreamKey))
+                                             {
+-                                                // convert block id to little endian for naming
+-                                                currentBlockIdNaming = BitConverter.GetBytes(currentStreamKey);
+-                                                Array.Reverse(currentBlockIdNaming);
+-
+-                                                // build output file name
+-                                                outputFileName = Path.GetFileNameWithoutExtension(this.FilePath);
+-                                                outputFileName = outputFileName + "_" + BitConverter.ToUInt32(currentBlockIdNaming, 0).ToString("X8");
+-
+                                                 // add proper extension
+                                                 if (this.IsThisAnAudioBlock(currentBlockId))
+                                                 {
+                                                     audioFileExtension = this.GetAudioFileExtension(fs, currentOffset);
+-                                                    outputFileName = demuxOptions.audioPath.Replace(".oma", $".{currentAudioIndex}.at3");
+-                                                    currentAudioIndex++;
++                                                    outputFileName = Path.Combine(demuxOptions.audioPath, $"audio-bd-{streamId:x2}.framed-at3");
+ 
+                                                     if (!this.StreamIdFileType.ContainsKey(streamId))
+                                                     {
+@@ -362,8 +357,7 @@
+                                                 }
+                                                 else
+                                                 {
+-                                                    this.FileExtensionVideo = this.GetVideoFileExtension(fs, currentOffset);
+-                                                    outputFileName = demuxOptions.videoPath;
++                                                    outputFileName = Path.Combine(demuxOptions.videoPath, $"video-{currentBlockId[3]:x2}.h264");
+                                                 }
+ 
+                                                 // add output directory
+@@ -385,6 +379,7 @@
+                                                 audioBlockSkipSize = this.GetAudioPacketHeaderSize(fs, currentOffset) + GetAudioPacketSubHeaderSize(fs, currentOffset, streamId);
+                                                 audioBlockFooterSize = this.GetAudioPacketFooterSize(fs, currentOffset);
+                                                 cutSize = (int)(blockSize - audioBlockSkipSize - audioBlockFooterSize);
++                                                traversal.Payload(currentOffset + 6 + audioBlockSkipSize, cutSize, currentBlockId[3], streamId);
+                                                 if (cutSize > 0)
+                                                 {
+                                                     var data = ParseFile.ParseSimpleOffset(fs, currentOffset + currentBlockId.Length + blockSizeArray.Length + audioBlockSkipSize, (int)(blockSize - audioBlockSkipSize));
+@@ -404,6 +399,7 @@
+                                                 videoBlockSkipSize = this.GetVideoPacketHeaderSize(fs, currentOffset);
+                                                 videoBlockFooterSize = this.GetVideoPacketFooterSize(fs, currentOffset);
+                                                 cutSize = (int)(blockSize - videoBlockSkipSize - videoBlockFooterSize);
++                                                traversal.Payload(currentOffset + 6 + videoBlockSkipSize, cutSize, currentBlockId[3], 0);
+                                                 if (cutSize > 0)
+                                                 {
+                                                     var data = ParseFile.ParseSimpleOffset(fs, currentOffset + currentBlockId.Length + blockSizeArray.Length + videoBlockSkipSize, (int)(blockSize - videoBlockSkipSize));
+@@ -433,6 +429,7 @@
+                                 Array.Reverse(currentBlockId);
+                                 throw new FormatException(String.Format("Block ID at 0x{0} not found in table: 0x{1}", currentOffset.ToString("X8"), BitConverter.ToUInt32(currentBlockId, 0).ToString("X8")));
+                             }
++                            traversal.Record(packetStart, currentOffset, currentBlockId[3]);
+ 
+                             // exit loop if EOF block found
+                             if (eofFlagFound)
+@@ -443,7 +440,7 @@
+                         catch (Exception _ex)
+                         {
+                             this.closeAllWriters(streamOutputWriters);
+-                            throw new Exception(String.Format("Error parsing file at offset {0), '{1}'", currentOffset.ToString("X8"), _ex.Message), _ex);
++                            throw new Exception($"Error parsing file at offset {currentOffset:X8}: {_ex.Message}", _ex);
+                         }
+                     } // while (currentOffset < fileSize)
+                 }
+@@ -453,15 +450,8 @@
+                     throw new FormatException(String.Format("Cannot find Pack Header for file: {0}{1}", Path.GetFileName(this.FilePath), Environment.NewLine));
+                 }
+ 
+-                ///////////////////////////////////
+-                // Perform any final tasks needed
+-                ///////////////////////////////////
+-                this.DoFinalTasks(fs, streamOutputWriters, demuxOptions.AddHeader);
+-
+-                //////////////////////////
+-                // close all open writers
+-                //////////////////////////
+                 this.closeAllWriters(streamOutputWriters);
++                traversal.Finish(fs, demuxOptions.videoPath);
+ 
+             } // using (FileStream fs = File.OpenRead(path))
+         }
+--- /dev/null
++++ b/psmfdump/format/PsmfTraversal.cs
+@@ -0,0 +1,114 @@
++using System;
++using System.Buffers.Binary;
++using System.Collections.Generic;
++using System.IO;
++using System.Linq;
++using System.Security.Cryptography;
++using System.Text.Json;
++
++namespace VGMToolbox.format
++{
++    // Research instrumentation for the pinned upstream traversal, not a decoder.
++    public sealed class PsmfTraversal
++    {
++        public long DataStart { get; }
++        public long DataEnd { get; }
++        private long consumed;
++        private readonly HashSet<string> declared = new HashSet<string>();
++        private readonly HashSet<string> observed = new HashSet<string>();
++        private readonly List<object> packets = new List<object>();
++        private string stream;
++        private long? payloadStart, payloadEnd;
++
++        public PsmfTraversal(FileStream input)
++        {
++            Span<byte> header = stackalloc byte[130];
++            input.ReadExactly(header);
++            if (!header.Slice(0, 4).SequenceEqual("PSMF"u8)) throw new FormatException("Not PSMF");
++            DataStart = BinaryPrimitives.ReadUInt32BigEndian(header.Slice(8, 4));
++            DataEnd = DataStart + BinaryPrimitives.ReadUInt32BigEndian(header.Slice(12, 4));
++            int count = BinaryPrimitives.ReadUInt16BigEndian(header.Slice(128, 2));
++            if (count == 0 || DataStart < 130L + count * 16L || DataEnd <= DataStart || DataEnd != input.Length)
++                throw new FormatException("Invalid declared PSMF bounds or stream count");
++            Span<byte> entry = stackalloc byte[16];
++            for (int i = 0; i < count; i++)
++            {
++                input.ReadExactly(entry);
++                byte sid = entry[0], channel = entry[1];
++                if (!((sid >= 0xe0 && sid <= 0xef && channel == 0) || (sid == 0xbd && channel < 0x20)))
++                    throw new NotSupportedException($"Unsupported declared stream {sid:x2}:{channel:x2}");
++                if (!declared.Add(Key(sid, channel))) throw new FormatException("Duplicate declared stream");
++            }
++            consumed = DataStart;
++        }
++
++        private static string Key(byte sid, byte channel) => $"{sid:x2}:{channel:x2}";
++        public void Bounds(long start, long length)
++        {
++            if (start < DataStart || length < 0 || start > DataEnd || length > DataEnd - start)
++                throw new FormatException("Packet exceeds declared data range");
++        }
++        public void Begin(long start)
++        {
++            if (start != consumed) throw new FormatException("Unaccounted traversal gap");
++            Bounds(start, 4);
++            stream = null; payloadStart = null; payloadEnd = null;
++        }
++        public long PackEnd(FileStream input, long start)
++        {
++            Bounds(start, 14);
++            input.Position = start + 13;
++            int stuffing = input.ReadByte() & 7;
++            Bounds(start, 14 + stuffing);
++            for (int i = 0; i < stuffing; i++)
++                if (input.ReadByte() != 255) throw new FormatException("Invalid pack stuffing");
++            return start + 14 + stuffing;
++        }
++        public void Pes(FileStream input, long start, long length, byte sid)
++        {
++            Bounds(start, length);
++            // Length-delimited structural packets remain explicit opaque ranges.
++            if (sid == 0xbb || sid == 0xbe || sid == 0xbf) return;
++            if (!(sid == 0xbd || (sid >= 0xe0 && sid <= 0xef)))
++                throw new NotSupportedException($"Unsupported packet {sid:x2}");
++            if (length < 9) throw new FormatException("Short PES header");
++            input.Position = start + 6;
++            if ((input.ReadByte() & 0xc0) != 0x80) throw new FormatException("Not MPEG2 PES");
++            input.ReadByte();
++            int headerLength = input.ReadByte();
++            if (9L + headerLength + (sid == 0xbd ? 4 : 0) > length)
++                throw new FormatException("PES header exceeds packet");
++        }
++        public void Payload(long start, long length, byte sid, byte channel)
++        {
++            Bounds(start, length);
++            stream = Key(sid, channel);
++            if (!declared.Contains(stream)) throw new FormatException($"Undeclared stream {stream}");
++            if (length <= 0) throw new FormatException("Empty stream payload");
++            observed.Add(stream); payloadStart = start; payloadEnd = start + length;
++        }
++        public void Record(long start, long end, byte sid)
++        {
++            Bounds(start, end - start);
++            if (start != consumed || end <= start || (payloadStart.HasValue && (payloadStart < start || payloadEnd > end)))
++                throw new FormatException("Invalid packet accounting");
++            packets.Add(new { start, end, packet_id = sid, stream, payload_start = payloadStart, payload_end = payloadEnd });
++            consumed = end;
++        }
++        public void Finish(FileStream input, string directory)
++        {
++            if (consumed != DataEnd || !observed.SetEquals(declared))
++                throw new FormatException("Incomplete declared data or stream inventory");
++            input.Position = 0;
++            string sourceHash = Convert.ToHexString(SHA256.HashData(input)).ToLowerInvariant();
++            var outputs = Directory.GetFiles(directory).OrderBy(p => p).Select(p => {
++                using var f = File.OpenRead(p);
++                return new { path = Path.GetFileName(p), size_bytes = f.Length, sha256 = Convert.ToHexString(SHA256.HashData(f)).ToLowerInvariant() };
++            }).ToArray();
++            File.WriteAllText(Path.Combine(directory, "manifest.json"), JsonSerializer.Serialize(new {
++                source_sha256 = sourceHash, source_size_bytes = input.Length, data_start = DataStart,
++                data_end = DataEnd, consumed_end = consumed, declared_streams = declared.OrderBy(s => s).ToArray(), packets, outputs
++            }, new JsonSerializerOptions { WriteIndented = true }));
++        }
++    }
++}

@@ -384,3 +384,41 @@ siblings from the input filename.
 
 DOCUMENT revision 2 and discovery revisions ISO 7 / PKG 9 / ISO9660 3 make paired
 manuals reachable during `--skip-existing`, without rewriting historical results.
+
+### Experimental PSMF raw-stream traversal
+
+`tools/patches/pmftools-traversal.patch` instruments the pinned
+[pmftools reader](https://github.com/TeamPBCN/pmftools/tree/1bc01f9ffbfb97adc9bb384c44e081398b9a93e4)
+for standalone provenance experiments. It is **not registered with ingestion**.
+Build with a .NET 8 SDK; no system installation is performed by these commands:
+
+```sh
+git clone https://github.com/TeamPBCN/pmftools .work/pmftools
+git -C .work/pmftools checkout 1bc01f9ffbfb97adc9bb384c44e081398b9a93e4
+git -C .work/pmftools apply "$PWD/tools/patches/pmftools-traversal.patch"
+dotnet build .work/pmftools/psmfdump/psmfdump.csproj \
+  -c Release -p:PublishTrimmed=false -p:PublishSingleFile=false \
+  --disable-build-servers -o .work/psmfdump
+dotnet .work/psmfdump/psmfdump.dll /path/to/source.pmf .work/pmf-output
+```
+
+The destination must not exist. Success publishes raw video PES concatenations,
+private ATRAC payloads with their original frame headers, and `manifest.json`.
+The manifest identifies source/output bytes by SHA-256 and size, records every
+transport packet's half-open source range, associates payload ranges with stream
+IDs, and reports the final consumed offset. System, padding and private2 packets
+remain explicit opaque ranges; their contents are not decoded.
+
+The trial uses the declared data offset rather than searching for a pack header,
+accounts for pack stuffing, requires the declared data range to end at source EOF,
+and rejects premature program ends, out-of-bounds packets, unsupported or
+undeclared streams, and missing declared streams. Failures remove only the
+trial's temporary directory. Existing destinations are never overwritten.
+
+Seven retained real inputs (PSMF0012–0015, up to six audio streams) matched
+independently retained raw payload references. Shifted-offset, stuffing and
+multiple-video fixtures also passed; eleven malformed/unsupported fixtures
+rejected without published output. These checks establish bounded traversal and
+exact raw payload identity, **not codec validity or complete PSMF format support**.
+Production integration still needs resource bounds for packet-manifest growth,
+supported-variant policy, and native recursive extraction/provenance integration.
