@@ -271,7 +271,7 @@ class PkgCliTests(unittest.TestCase):
                 self.assertNotEqual(run.returncode,0,run.stderr)
                 self.assertFalse(list((catalog/'pkg').rglob('*-ingest.json')))
 
-    def test_npumdimg_to_iso_traversal_and_failure_blocks_root(self):
+    def test_legacy_npumdimg_helper_cannot_accept_an_invalid_container(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); inputs = base/'inputs'; inputs.mkdir()
             iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
@@ -285,17 +285,7 @@ class PkgCliTests(unittest.TestCase):
             tool.write_text('#!' + sys.executable + '\nimport shutil, sys\nshutil.copyfile(' + repr(str(base/'fixture.iso')) + ',sys.argv[2])\n')
             tool.chmod(0o755)
             env = dict(os.environ, PKG2ZIP_NPUMDIMG=str(tool))
-            args = [str(BINARY),str(inputs),'--no-progress','--threads','2','--store',str(base/'store'),'--catalog',str(base/'catalog')]
+            args = [str(BINARY),str(inputs),'--no-progress','--threads','2','--catalog',str(base/'catalog')]
             run = subprocess.run(args,env=env,capture_output=True,text=True,timeout=30)
-            self.assertEqual(run.returncode,0,run.stderr)
-            digest = hashlib.sha256(image.getvalue()).hexdigest()
-            self.assertTrue(result_path(base/'catalog','iso9660',digest).exists())
-            tree = json.loads(tree_path(base/'catalog',digest).read_text())
-            self.assertEqual(tree['entries'],[dict(path='HELLO.TXT',type='file',size_bytes=len(payload),sha256=hashlib.sha256(payload).hexdigest())])
-            self.assertFalse((base/'catalog'/'iso').exists())
-            # A failing decoder cannot publish a fresh package root, even if it wrote output.
-            tool.write_text(tool.read_text()+'sys.exit(1)\n')
-            args[-1] = str(base/'failed-catalog')
-            run = subprocess.run(args,env=env,capture_output=True,text=True,timeout=30)
-            self.assertNotEqual(run.returncode,0)
-            self.assertFalse(list((base/'failed-catalog'/'pkg').rglob('*-ingest.json')))
+            self.assertNotEqual(run.returncode, 0, run.stderr)
+            self.assertFalse(result_path(base/'catalog', 'pkg', hashlib.sha256(source).hexdigest()).exists())

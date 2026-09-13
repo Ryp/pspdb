@@ -415,15 +415,16 @@ KL decoding bounds both input and output, rejects malformed or truncated streams
 and caps decoded output at 64 MiB. Only output-capacity exhaustion retries with
 a larger buffer. `pspdecrypt-kle` and `PSPDECRYPT_KLE` are no longer used by ingest.
 
-NPUMDIMG (`DATA.BIN`, PBP section 7) uses the existing pkg2zip decoder,
-with a [standalone entry-point patch and build instructions](tools/patches/pkg2zip-npumdimg.md).
-Install `pkg2zip-npumdimg` on PATH (`PKG2ZIP_NPUMDIMG` override). Ingest retains
-`DATA.BIN`, attaches `disc.iso` beneath it, and inventories that ISO through
-libarchive under the `iso9660` extractor. Its executable files recurse normally.
-Derived ISOs stay beneath their PSN package rather than becoming UMD roots.
+NPUMDIMG (`DATA.BIN`, PBP section 7) decodes in memory through the pinned
+[pkg2zip AES/LZRC backend](tools/patches/pkg2zip-npumdimg.md). No separate
+`pkg2zip-npumdimg` installation or `PKG2ZIP_NPUMDIMG` override is needed.
+Ingest retains `DATA.BIN`, attaches the exact owned `disc.iso` beneath it, and
+inventories that ISO under `iso9660`. Executable files recurse normally.
+Derived ISOs stay beneath their PSN package rather than becoming UMD roots;
+successful decoding and the ISO sanity check do not establish authenticity.
 This disc decoder handles NPUMDIMG, not PS1 disc payloads or EDAT. PS1 executable
-decryption and disc reconstruction use the whole-PBP helpers described below.
-The PBP, ISO and PKG revisions were bumped to discover previously opaque children.
+decryption uses the native contextual decoder; PS1 disc reconstruction still
+uses the whole-PBP external path described below.
 
 NPD EDAT files are authenticated and decrypted in memory by the native ingester.
 The Zig build links pinned make-npdata commit

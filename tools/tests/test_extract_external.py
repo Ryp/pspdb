@@ -69,32 +69,3 @@ class ProvenanceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 adapter.tool_provenance('document', Path(sys.executable))
 
-class NpumdimgTests(unittest.TestCase):
-    def test_signature_failure_and_iso_validation(self):
-        from tools.extract_external import extract_npumdimg
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); source = root/'source'; output = root/'output'; output.mkdir()
-            source.write_bytes(b'PSAR')
-            with patch('tools.extract_external.subprocess.run') as run:
-                with self.assertRaisesRegex(ValueError, 'not NPUMDIMG'):
-                    extract_npumdimg(source, output, Path(sys.executable))
-                run.assert_not_called()
-            source.write_bytes(b'NPUMDIMG' + bytes(248))
-            for code, data in [(1, bytes(34816)), (0, b'bad iso')]:
-                def run(args, **kwargs):
-                    Path(args[2]).write_bytes(data)
-                    return subprocess.CompletedProcess(args, code, '', '')
-                with patch('tools.extract_external.subprocess.run', side_effect=run):
-                    with self.assertRaises(ValueError):
-                        extract_npumdimg(source, output, Path(sys.executable))
-            iso = bytearray(34816); iso[32768:32775] = b'\x01CD001\x01'
-            def run(args, **kwargs):
-                Path(args[2]).write_bytes(iso)
-                return subprocess.CompletedProcess(args, 0, '', '')
-            with patch('tools.extract_external.subprocess.run', side_effect=run):
-                provenance = extract_npumdimg(source, output, Path(sys.executable))
-            self.assertEqual(provenance['name'], 'pkg2zip-npumdimg')
-            self.assertEqual(provenance['sha256'], hashlib.sha256(Path(sys.executable).resolve().read_bytes()).hexdigest())
-            self.assertEqual((output/'disc.iso').read_bytes(), iso)
-
-

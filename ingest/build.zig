@@ -84,6 +84,43 @@ pub fn build(b: *std.Build) void {
     });
     module.addCSourceFile(.{ .file = b.path("src/edat_native.c"), .flags = edat_flags });
 
+    const pkg2zip = b.dependency("pkg2zip", .{});
+    const prepare_npumdimg = b.addSystemCommand(&.{"python3"});
+    prepare_npumdimg.addFileArg(b.path("../tools/prepare_npumdimg.py"));
+    prepare_npumdimg.addDirectoryArg(pkg2zip.path(""));
+    const npumdimg_source = prepare_npumdimg.addOutputDirectoryArg("pkg2zip");
+    prepare_npumdimg.addFileArg(b.path("../tools/patches/pkg2zip-lzrc-safety.patch"));
+    prepare_npumdimg.addFileArg(b.path("../tools/patches/pkg2zip-npumdimg-memory.patch"));
+    module.addIncludePath(npumdimg_source);
+    // Keep pkg2zip's AES symbols private to this codec's namespace, alongside
+    // the independent KIRK and make-npdata implementations.
+    const npumdimg_flags = &[_][]const u8{
+        "-std=c11",
+        "-fno-strict-aliasing",
+        "-Daes128_init=pspdb_npumdimg_aes128_init",
+        "-Daes128_init_dec=pspdb_npumdimg_aes128_init_dec",
+        "-Daes128_ecb_encrypt=pspdb_npumdimg_aes128_ecb_encrypt",
+        "-Daes128_ecb_decrypt=pspdb_npumdimg_aes128_ecb_decrypt",
+        "-Daes128_ctr_xor=pspdb_npumdimg_aes128_ctr_xor",
+        "-Daes128_cmac=pspdb_npumdimg_aes128_cmac",
+        "-Daes128_psp_decrypt=pspdb_npumdimg_aes128_psp_decrypt",
+        "-Daes128_init_x86=pspdb_npumdimg_aes128_init_x86",
+        "-Daes128_init_dec_x86=pspdb_npumdimg_aes128_init_dec_x86",
+        "-Daes128_ecb_encrypt_x86=pspdb_npumdimg_aes128_ecb_encrypt_x86",
+        "-Daes128_ecb_decrypt_x86=pspdb_npumdimg_aes128_ecb_decrypt_x86",
+        "-Daes128_ctr_xor_x86=pspdb_npumdimg_aes128_ctr_xor_x86",
+        "-Daes128_cmac_process_x86=pspdb_npumdimg_aes128_cmac_process_x86",
+        "-Daes128_psp_decrypt_x86=pspdb_npumdimg_aes128_psp_decrypt_x86",
+    };
+    module.addCSourceFile(.{ .file = npumdimg_source.path(b, "pkg2zip_aes.c"), .flags = npumdimg_flags });
+    if (target.result.cpu.arch == .x86 or target.result.cpu.arch == .x86_64) {
+        module.addCSourceFile(.{
+            .file = npumdimg_source.path(b, "pkg2zip_aes_x86.c"),
+            .flags = npumdimg_flags ++ &[_][]const u8{ "-maes", "-mssse3" },
+        });
+    }
+    module.addCSourceFile(.{ .file = b.path("src/npumdimg_native.c"), .flags = npumdimg_flags });
+
     module.addAnonymousImport("extractor_adapter", .{ .root_source_file = b.path("../tools/extract_external.py") });
 
     module.addAnonymousImport("catalog_status", .{ .root_source_file = b.path("../tools/catalog_status.py") });

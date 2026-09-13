@@ -29,7 +29,7 @@ def tool_provenance(kind, tool=None, data=None):
     result = {'name': 'pspdb-ingest', 'version': versions()[kind], 'options': []}
     if kind == 'pbp':
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
-    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat'):
+    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat', 'npumdimg'):
         return result
     if kind == 'pops':
         return dict(result, name='pspdb-pops', options=['in-memory'])
@@ -51,9 +51,6 @@ def tool_provenance(kind, tool=None, data=None):
     if kind == 'psx':
         result['name'] = 'PSXtract-2'
         result['options'] = ['<parent.pbp>', 'reconstructed-disc', 'wine-sha256:' + hashlib.sha256(executable('PSPDB_WINE', 'wine').resolve(strict=True).read_bytes()).hexdigest()]
-    if kind == 'npumdimg':
-        result['name'] = 'pkg2zip-npumdimg'
-        result['options'] = ['<source>', '<output.iso>']
     if kind == 'rco':
         paths = sorted(data.resolve(strict=True).glob('*.ini'))
         if not paths:
@@ -75,8 +72,6 @@ def current_provenance():
                 tool = executable('PSPDECRYPT', 'pspdecrypt')
             elif kind == 'psx':
                 tool = executable('PSPDB_PSXTRACT2', 'psxtract.exe')
-            elif kind == 'npumdimg':
-                tool = executable('PKG2ZIP_NPUMDIMG', 'pkg2zip-npumdimg')
             elif kind == 'document':
                 tool = executable('PSPDB_DOCUMENT', 'pspdb-document')
             elif kind == 'rco':
@@ -103,24 +98,6 @@ def extract_psar(source, output, tool):
         raise ValueError(f'Extractor did not complete cleanly:\n{log}')
     return tool_provenance('psar', tool)
 
-
-def extract_npumdimg(source, output, tool):
-    with source.open('rb') as stream:
-        if stream.read(8) != b'NPUMDIMG':
-            raise ValueError('Source is not NPUMDIMG')
-    tool = tool.resolve(strict=True)
-    target = output / 'disc.iso'
-    result = subprocess.run([str(tool), str(source.resolve()), str(target.resolve())],
-                            capture_output=True, text=True, errors='replace')
-    log = result.stdout + result.stderr
-    if result.returncode or re.search(r'error|fail', log, re.I) or not target.is_file():
-        raise ValueError(f'NPUMDIMG extraction failed:\n{log}')
-    with target.open('rb') as stream:
-        stream.seek(32768)
-        descriptor = stream.read(7)
-    if target.stat().st_size % 2048 or descriptor != b'\x01CD001\x01':
-        raise ValueError('NPUMDIMG extractor did not produce an ISO filesystem')
-    return tool_provenance('npumdimg', tool)
 
 
 def extract_rco(source, output, tool, data):
@@ -214,7 +191,7 @@ def executable(variable, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['psar', 'rco', 'npumdimg', 'psx', 'document'])
+    parser.add_argument('kind', choices=['psar', 'rco', 'psx', 'document'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--docinfo', type=Path)
@@ -228,8 +205,6 @@ def main():
     try:
         if args.kind == 'psar':
             provenance = extract_psar(args.source, args.output, executable('PSPDECRYPT', 'pspdecrypt'))
-        elif args.kind == 'npumdimg':
-            provenance = extract_npumdimg(args.source, args.output, executable('PKG2ZIP_NPUMDIMG', 'pkg2zip-npumdimg'))
         elif args.kind == 'psx':
             provenance = extract_psx(args.source, args.output, executable('PSPDB_PSXTRACT2', 'psxtract.exe'))
         elif args.kind == 'document':

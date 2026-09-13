@@ -5,6 +5,7 @@ const gzip = @import("gzip.zig");
 const prx = @import("prx.zig");
 const pops = @import("pops.zig");
 const kle = @import("kle.zig");
+const npumdimg = @import("npumdimg.zig");
 const catalog_io = @import("catalog.zig");
 const pkg = @import("pkg.zig");
 const data_psp = @import("data_psp.zig");
@@ -352,11 +353,12 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             try inventory.emit_view("payload.DAT", view);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.edat };
         },
-        .gzip, .prx, .kl3e, .kl4e => blk: {
+        .gzip, .prx, .kl3e, .kl4e, .npumdimg => blk: {
             const bytes = try switch (task.kind) {
                 .gzip => gzip.decode(allocator, task.input.bytes),
                 .prx => prx.decode(allocator, task.input.bytes),
                 .kl3e, .kl4e => kle.decode(allocator, task.input.bytes),
+                .npumdimg => npumdimg.decode(allocator, task.input.bytes),
                 else => unreachable,
             };
             const view = memory.Owner.allocated(allocator, bytes) catch |err| {
@@ -364,7 +366,9 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                 return err;
             };
             defer view.release();
-            const name: []const u8 = if (std.mem.startsWith(u8, bytes, "\x7fELF"))
+            const name: []const u8 = if (task.kind == .npumdimg)
+                "disc.iso"
+            else if (std.mem.startsWith(u8, bytes, "\x7fELF"))
                 "module.elf"
             else if (task.kind != .prx and std.mem.startsWith(u8, bytes, "\x1f\x8b\x08"))
                 "payload.gz"
@@ -372,7 +376,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                 "payload.bin";
             try inventory.emit_view(name, view);
             const revision = switch (task.kind) {
-                inline .gzip, .prx, .kl3e, .kl4e => |kind| @field(revisions, @tagName(kind)),
+                inline .gzip, .prx, .kl3e, .kl4e, .npumdimg => |kind| @field(revisions, @tagName(kind)),
                 else => unreachable,
             };
             break :blk .{ .name = "pspdb-ingest", .version = revision };

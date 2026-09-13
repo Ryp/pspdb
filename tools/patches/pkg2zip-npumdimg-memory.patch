@@ -1,0 +1,223 @@
+--- a/pkg2zip_psp.c
++++ b/pkg2zip_psp.c
+@@ -1,8 +1,14 @@
++#ifdef PSPDB_NPUMDIMG_MEMORY
++#include "pkg2zip_aes.h"
++#else
+ #include "pkg2zip_psp.h"
+ #include "pkg2zip_out.h"
+ #include "pkg2zip_crc32.h"
+ #include "pkg2zip_utils.h"
+ #include "miniz_tdef.h"
++#endif
++
++#include <setjmp.h>
+ 
+ #include <assert.h>
+ #include <string.h>
+@@ -23,6 +29,8 @@
+ 
+ // lzrc decompression code from libkirk by tpu
+ typedef struct {
++    jmp_buf* failure;
++
+     // input stream
+     const uint8_t* input;
+     uint32_t in_ptr;
+@@ -46,11 +54,12 @@
+     uint8_t bm_len[8][31];
+ } lzrc_decode;
+ 
+-static void rc_init(lzrc_decode* rc, void* out, int out_len, const void* in, int in_len)
+-{
++static void rc_init(lzrc_decode* rc, void* out, int out_len, const void* in, int in_len, jmp_buf* failure)
++{
++    rc->failure = failure;
+     if (in_len < 5)
+     {
+-        sys_error("ERROR: internal error - lzrc input underflow! pkg may be corrupted?\n");
++        longjmp(*rc->failure, 1);
+     }
+ 
+     rc->input = in;
+@@ -77,7 +86,7 @@
+ {
+     if (rc->range < 0x01000000)
+     {
+-        if (rc->in_ptr >= rc->in_len) sys_error("ERROR: LZRC input underflow\n");
++        if (rc->in_ptr >= rc->in_len) longjmp(*rc->failure, 1);
+         rc->range <<= 8;
+         rc->code = (rc->code << 8) + rc->input[rc->in_ptr];
+         rc->in_ptr++;
+@@ -113,7 +122,7 @@
+ 
+     do
+     {
+-        if (number >= capacity) sys_error("ERROR: LZRC probability index out of bounds\n");
++        if (number >= capacity) longjmp(*rc->failure, 1);
+         number = (number << 1) + rc_bit(rc, probs + number);
+     }
+     while (number < limit);
+@@ -171,18 +180,22 @@
+ 
+ static int lzrc_decompress(void* out, int out_len, const void* in, int in_len)
+ {
++    /* The jump stays entirely within this C call, below the allocator callback.
++     * No process/thread-global error state and no Zig/C++ frames are unwound. */
++    jmp_buf failure;
++    if (setjmp(failure)) return -1;
+     lzrc_decode rc;
+-    rc_init(&rc, out, out_len, in, in_len);
++    rc_init(&rc, out, out_len, in, in_len, &failure);
+ 
+     if (rc.lc & 0x80)
+     {
+         // plain text
+-        if (rc.code > rc.in_len - 5 || rc.code > rc.out_len) sys_error("ERROR: invalid LZRC literal length\n");
++        if (rc.code > rc.in_len - 5 || rc.code > rc.out_len) longjmp(*rc.failure, 1);
+         memcpy(rc.output, rc.input + 5, rc.code);
+         return rc.code;
+     }
+ 
+-    if (rc.lc > 7) sys_error("ERROR: invalid LZRC shift\n");
++    if (rc.lc > 7) longjmp(*rc.failure, 1);
+     int rc_state = 0;
+     uint8_t last_byte = 0;
+ 
+@@ -203,7 +216,7 @@
+ 
+             if (rc.out_ptr == rc.out_len)
+             {
+-                sys_error("ERROR: internal error - lzrc output overflow! pkg may be corrupted?\n");
++                longjmp(*rc.failure, 1);
+             }
+             rc.output[rc.out_ptr++] = (uint8_t)byte;
+             last_byte = (uint8_t)byte;
+@@ -251,7 +264,7 @@
+             int dist_bits = rc_bittree(&rc, &rc.bm_dist_bits[len_bits][dist_state], limit, 39 - dist_state);
+             dist_bits -= limit;
+ 
+-            if (dist_bits < 0 || dist_bits >= 18) sys_error("ERROR: invalid LZRC distance bits\n");
++            if (dist_bits < 0 || dist_bits >= 18) longjmp(*rc.failure, 1);
+ 
+             // find match distance
+             uint32_t match_dist;
+@@ -267,12 +280,12 @@
+             // copy match bytes
+             if (match_dist > rc.out_ptr)
+             {
+-                sys_error("ERROR: internal error - lzrc match_dist out of range! pkg may be corrupted?\n");
++                longjmp(*rc.failure, 1);
+             }
+ 
+             if (rc.out_ptr + match_len + 1 > rc.out_len)
+             {
+-                sys_error("ERROR: internal error - lzrc output overflow! pkg may be corrupted?\n");
++                longjmp(*rc.failure, 1);
+             }
+ 
+             const uint8_t* match_src = rc.output + rc.out_ptr - match_dist;
+@@ -317,6 +330,7 @@
+     }
+ }
+ 
++#ifndef PSPDB_NPUMDIMG_MEMORY
+ void unpack_psp_eboot(const char* path, const aes128_key* pkg_key, const uint8_t* pkg_iv, sys_file* pkg, uint64_t enc_offset, uint64_t item_offset, uint64_t item_size, int cso)
+ {
+     if (item_size < 0x28)
+@@ -584,3 +598,5 @@
+     out_write(key_header + 0x90, 0x10);
+     out_end_file();
+ }
++
++#endif /* !PSPDB_NPUMDIMG_MEMORY */
+--- a/pkg2zip_aes.c
++++ b/pkg2zip_aes.c
+@@ -29,8 +29,8 @@
+ #if PLATFORM_SUPPORTS_AESNI
+ static int aes128_supported_x86()
+ {
+-    static int init = 0;
+-    static int supported;
++    static _Thread_local int init = 0;
++    static _Thread_local int supported;
+     if (!init)
+     {
+         init = 1;
+@@ -79,7 +79,7 @@
+     0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16,
+ };
+ 
+-static uint8_t Td[] = {
++static const uint8_t Td[] = {
+     0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb,
+     0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb,
+     0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e,
+@@ -180,7 +180,7 @@
+ 
+ static uint32_t setup_mix(uint32_t x)
+ {
+-    return (Te[byte32(x, 2)] << 24) ^ (Te[byte32(x, 1)] << 16) ^ (Te[byte32(x, 0)] << 8) ^ Te[byte32(x, 3)];
++    return ((uint32_t)Te[byte32(x, 2)] << 24) ^ (Te[byte32(x, 1)] << 16) ^ (Te[byte32(x, 0)] << 8) ^ Te[byte32(x, 3)];
+ }
+ 
+ static uint32_t setup_mix2(uint32_t x)
+@@ -208,7 +208,7 @@
+     for (size_t i=0; i<10; i++)
+     {
+         uint32_t temp = ekey[3];
+-        ekey[4] = ekey[0] ^ setup_mix(temp) ^ (rcon[i] << 24);
++        ekey[4] = ekey[0] ^ setup_mix(temp) ^ ((uint32_t)rcon[i] << 24);
+         ekey[5] = ekey[1] ^ ekey[4];
+         ekey[6] = ekey[2] ^ ekey[5];
+         ekey[7] = ekey[3] ^ ekey[6];
+@@ -281,10 +281,10 @@
+     t2 = TE[byte32(s2, 3)] ^ ror32(TE[byte32(s3, 2)], 8) ^ ror32(TE[byte32(s0, 1)], 16) ^ ror32(TE[byte32(s1, 0)], 24) ^ *key++;
+     t3 = TE[byte32(s3, 3)] ^ ror32(TE[byte32(s0, 2)], 8) ^ ror32(TE[byte32(s1, 1)], 16) ^ ror32(TE[byte32(s2, 0)], 24) ^ *key++;
+ 
+-    s0 = (Te[byte32(t0, 3)] << 24) ^ (Te[byte32(t1, 2)] << 16) ^ (Te[byte32(t2, 1)] << 8) ^ Te[byte32(t3, 0)] ^ *key++;
+-    s1 = (Te[byte32(t1, 3)] << 24) ^ (Te[byte32(t2, 2)] << 16) ^ (Te[byte32(t3, 1)] << 8) ^ Te[byte32(t0, 0)] ^ *key++;
+-    s2 = (Te[byte32(t2, 3)] << 24) ^ (Te[byte32(t3, 2)] << 16) ^ (Te[byte32(t0, 1)] << 8) ^ Te[byte32(t1, 0)] ^ *key++;
+-    s3 = (Te[byte32(t3, 3)] << 24) ^ (Te[byte32(t0, 2)] << 16) ^ (Te[byte32(t1, 1)] << 8) ^ Te[byte32(t2, 0)] ^ *key++;
++    s0 = ((uint32_t)Te[byte32(t0, 3)] << 24) ^ (Te[byte32(t1, 2)] << 16) ^ (Te[byte32(t2, 1)] << 8) ^ Te[byte32(t3, 0)] ^ *key++;
++    s1 = ((uint32_t)Te[byte32(t1, 3)] << 24) ^ (Te[byte32(t2, 2)] << 16) ^ (Te[byte32(t3, 1)] << 8) ^ Te[byte32(t0, 0)] ^ *key++;
++    s2 = ((uint32_t)Te[byte32(t2, 3)] << 24) ^ (Te[byte32(t3, 2)] << 16) ^ (Te[byte32(t0, 1)] << 8) ^ Te[byte32(t1, 0)] ^ *key++;
++    s3 = ((uint32_t)Te[byte32(t3, 3)] << 24) ^ (Te[byte32(t0, 2)] << 16) ^ (Te[byte32(t1, 1)] << 8) ^ Te[byte32(t2, 0)] ^ *key++;
+ 
+     set32be(output + 0, s0);
+     set32be(output + 4, s1);
+@@ -319,10 +319,10 @@
+         t3 = TD[byte32(s3, 3)] ^ ror32(TD[byte32(s2, 2)], 8) ^ ror32(TD[byte32(s1, 1)], 16) ^ ror32(TD[byte32(s0, 0)], 24) ^ *key++;
+     }
+ 
+-    s0 = (Td[byte32(t0, 3)] << 24) ^ (Td[byte32(t3, 2)] << 16) ^ (Td[byte32(t2, 1)] << 8) ^ Td[byte32(t1, 0)] ^ *key++;
+-    s1 = (Td[byte32(t1, 3)] << 24) ^ (Td[byte32(t0, 2)] << 16) ^ (Td[byte32(t3, 1)] << 8) ^ Td[byte32(t2, 0)] ^ *key++;
+-    s2 = (Td[byte32(t2, 3)] << 24) ^ (Td[byte32(t1, 2)] << 16) ^ (Td[byte32(t0, 1)] << 8) ^ Td[byte32(t3, 0)] ^ *key++;
+-    s3 = (Td[byte32(t3, 3)] << 24) ^ (Td[byte32(t2, 2)] << 16) ^ (Td[byte32(t1, 1)] << 8) ^ Td[byte32(t0, 0)] ^ *key++;
++    s0 = ((uint32_t)Td[byte32(t0, 3)] << 24) ^ (Td[byte32(t3, 2)] << 16) ^ (Td[byte32(t2, 1)] << 8) ^ Td[byte32(t1, 0)] ^ *key++;
++    s1 = ((uint32_t)Td[byte32(t1, 3)] << 24) ^ (Td[byte32(t0, 2)] << 16) ^ (Td[byte32(t3, 1)] << 8) ^ Td[byte32(t2, 0)] ^ *key++;
++    s2 = ((uint32_t)Td[byte32(t2, 3)] << 24) ^ (Td[byte32(t1, 2)] << 16) ^ (Td[byte32(t0, 1)] << 8) ^ Td[byte32(t3, 0)] ^ *key++;
++    s3 = ((uint32_t)Td[byte32(t3, 3)] << 24) ^ (Td[byte32(t2, 2)] << 16) ^ (Td[byte32(t1, 1)] << 8) ^ Td[byte32(t0, 0)] ^ *key++;
+ 
+     set32be(output + 0, s0);
+     set32be(output + 4, s1);
+--- a/pkg2zip_utils.h
++++ b/pkg2zip_utils.h
+@@ -28,7 +28,7 @@
+ 
+ static inline uint32_t get32le(const uint8_t* bytes)
+ {
+-    return (bytes[0]) | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24);
++    return (bytes[0]) | (bytes[1] << 8) | (bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+ }
+ 
+ static inline uint64_t get64le(const uint8_t* bytes)
+@@ -50,7 +50,7 @@
+ 
+ static inline uint32_t get32be(const uint8_t* bytes)
+ {
+-    return (bytes[3]) | (bytes[2] << 8) | (bytes[1] << 16) | (bytes[0] << 24);
++    return (bytes[3]) | (bytes[2] << 8) | (bytes[1] << 16) | ((uint32_t)bytes[0] << 24);
+ }
+ 
+ static inline uint64_t get64be(const uint8_t* bytes)

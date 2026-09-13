@@ -1,0 +1,59 @@
+--- a/pkg2zip_psp.c
++++ b/pkg2zip_psp.c
+@@ -77,6 +77,7 @@
+ {
+     if (rc->range < 0x01000000)
+     {
++        if (rc->in_ptr >= rc->in_len) sys_error("ERROR: LZRC input underflow\n");
+         rc->range <<= 8;
+         rc->code = (rc->code << 8) + rc->input[rc->in_ptr];
+         rc->in_ptr++;
+@@ -106,12 +107,13 @@
+     }
+ }
+ 
+-static int rc_bittree(lzrc_decode* rc, uint8_t *probs, int limit)
++static int rc_bittree(lzrc_decode* rc, uint8_t *probs, int limit, int capacity)
+ {
+     int number = 1;
+ 
+     do
+     {
++        if (number >= capacity) sys_error("ERROR: LZRC probability index out of bounds\n");
+         number = (number << 1) + rc_bit(rc, probs + number);
+     }
+     while (number < limit);
+@@ -175,10 +177,12 @@
+     if (rc.lc & 0x80)
+     {
+         // plain text
++        if (rc.code > rc.in_len - 5 || rc.code > rc.out_len) sys_error("ERROR: invalid LZRC literal length\n");
+         memcpy(rc.output, rc.input + 5, rc.code);
+         return rc.code;
+     }
+ 
++    if (rc.lc > 7) sys_error("ERROR: invalid LZRC shift\n");
+     int rc_state = 0;
+     uint8_t last_byte = 0;
+ 
+@@ -194,7 +198,7 @@
+                 rc_state -= 1;
+             }
+ 
+-            int byte = rc_bittree(&rc, &rc.bm_literal[((last_byte >> rc.lc) & 0x07)][0], 0x100);
++            int byte = rc_bittree(&rc, &rc.bm_literal[((last_byte >> rc.lc) & 0x07)][0], 0x100, 256);
+             byte -= 0x100;
+ 
+             if (rc.out_ptr == rc.out_len)
+@@ -244,8 +248,10 @@
+                 dist_state += 7;
+                 limit = 44;
+             }
+-            int dist_bits = rc_bittree(&rc, &rc.bm_dist_bits[len_bits][dist_state], limit);
++            int dist_bits = rc_bittree(&rc, &rc.bm_dist_bits[len_bits][dist_state], limit, 39 - dist_state);
+             dist_bits -= limit;
++
++            if (dist_bits < 0 || dist_bits >= 18) sys_error("ERROR: invalid LZRC distance bits\n");
+ 
+             // find match distance
+             uint32_t match_dist;

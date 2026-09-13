@@ -904,7 +904,7 @@ echo Done!
                 for name in ('build.zig', 'build.zig.zon'):
                     shutil.copyfile(REPO / 'ingest' / name, checkout / 'ingest' / name)
                 (checkout / 'tools').mkdir()
-                for name in ('extract_external.py', 'extractor_versions.json', 'catalog_status.py', 'prepare_pspdecrypt.py', 'prepare_edat.py'):
+                for name in ('extract_external.py', 'extractor_versions.json', 'catalog_status.py', 'prepare_pspdecrypt.py', 'prepare_edat.py', 'prepare_npumdimg.py'):
                     shutil.copyfile(REPO / 'tools' / name, checkout / 'tools' / name)
                 shutil.copytree(REPO / 'tools/patches', checkout / 'tools/patches')
                 data = checkout / 'website/pspdb/data'
