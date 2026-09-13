@@ -172,7 +172,7 @@ class DocumentIntegrationTests(unittest.TestCase):
                 root = Path(directory)
                 result, source, output = self._extract(root, _document(variant, self.pages))
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertNotIn('docinfo', json.loads((output / 'structure.json').read_text()))
+                self.assertNotIn('docinfo', json.loads(result.stdout))
                 expected = {
                     'psp/001.png': self.pages[0],
                     'psp/002.png': self.pages[1],
@@ -181,7 +181,7 @@ class DocumentIntegrationTests(unittest.TestCase):
                 }
                 self.assertEqual(
                     {path.relative_to(output).as_posix() for path in output.rglob('*')},
-                    {'psp', 'ps3', 'structure.json', *expected},
+                    {'psp', 'ps3', *expected},
                 )
                 for name, png in expected.items():
                     self.assertEqual((output / name).read_bytes(), png, name)
@@ -191,7 +191,7 @@ class DocumentIntegrationTests(unittest.TestCase):
                 # including inside the helper's temporary working area.
                 self.assertEqual(
                     {path.relative_to(root) for path in root.rglob('*') if path.is_file()},
-                    {source.relative_to(root), (output / 'structure.json').relative_to(root)}
+                    {source.relative_to(root)}
                     | {(output / name).relative_to(root) for name in expected},
                 )
 
@@ -224,7 +224,7 @@ class DocumentIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result, _, output = self._extract(Path(directory), document, companion)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            manifest = json.loads((output / 'structure.json').read_text())
+            manifest = json.loads(result.stdout)
             self.assertEqual({page['path'] for page in manifest['pages']}, {
                 'psp/001.png', 'psp/002.png', 'ps3/001.png', 'ps3/002.png'})
             self.assertEqual(manifest['docinfo'], {
@@ -235,7 +235,6 @@ class DocumentIntegrationTests(unittest.TestCase):
                 frame = page['source_frame']
                 original = document[frame['offset']:frame['offset'] + frame['size_bytes']]
                 self.assertEqual(hashlib.sha256(original).hexdigest(), frame['sha256'])
-            self.assertEqual((result.stdout, result.stderr), ('', ''))
 
     def test_companion_corruption_fails_atomically_without_default_fallback(self):
         # A companion recovering the fixed DES key makes a fallback bug observable:

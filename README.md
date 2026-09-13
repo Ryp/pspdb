@@ -63,7 +63,7 @@ ISO revision 4 and nested ISO9660 revision 2 resolve shared-extent file aliases
 by exact path, preserving distinct case-sensitive filenames. Metadata lookup
 remains case-insensitive; it must not determine which bytes an inventory path owns.
 
-PKGs write their own versioned pairs under `catalog/pkg/v9/`. Package metadata
+PKGs write their own versioned pairs under `catalog/pkg/v12/`. Package metadata
 includes content ID, title ID, content type, and available PSP title/version/firmware
 fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
 static export display packages under **psn**, alongside **umd**. Embedded PBP files
@@ -355,8 +355,9 @@ or generic PGD magic. The reader checks supported header/table/page protection;
 these are source-consistency checks, not independent trusted-origin authentication.
 Extraction preserves the wrapper and exact PNG bytes. Neutral `psp/001.png` and
 `ps3/001.png` paths retain each platform's page ordinals, including shared frames.
-Generated `structure.json` records original source identity, page identities and
-source-frame offsets/sizes/hashes; it is a derived map, not an original file.
+The helper emits a JSON source/page map on stdout, including original source
+identity and frame offsets/sizes/hashes. This generated metadata is not an
+extracted file; the output directory and DOCUMENT inventory contain only page PNGs.
 
 All expected pages must pass PNG CRC, end-boundary and pixel decoding checks before
 atomic publication. Late-page failure leaves the caller's output empty and fails
@@ -384,6 +385,11 @@ siblings from the input filename.
 
 DOCUMENT revision 2 and discovery revisions ISO 7 / PKG 9 / ISO9660 3 make paired
 manuals reachable during `--skip-existing`, without rewriting historical results.
+
+DOCUMENT revision 3 publishes only page images, with the generated source/page
+map on helper stdout instead of a `structure.json` child. ISO 10 / PKG 12 /
+ISO9660 6 record the corresponding change to inline manual inventories.
+Historical revisions remain immutable; rebuild the DOCUMENT helper before use.
 
 ### PSMF raw-stream traversal
 

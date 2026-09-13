@@ -24,6 +24,7 @@ def provenance():
     return {'name': 'PSP-DOCUMENT.DAT', 'options': [
         'upstream:' + UPSTREAM, 'fixed-key-99-slot-pages',
         'explicit-docinfo-304-byte-authenticated-8-byte-key', 'platform-ordinals',
+        'page-files-only:1',
         'pycryptodome:' + Crypto.__version__, 'Pillow:' + PIL.__version__]}
 
 
@@ -136,9 +137,9 @@ def extract(source, output, docinfo=None):
                     'document_code': result.header.code, 'pages': pages}
         if companion is not None:
             manifest['docinfo'] = identity(companion)
-        (publish / 'structure.json').write_text(json.dumps(manifest, indent=2) + '\n')
         # Same-filesystem rename replaces only the caller's still-empty directory.
         os.replace(publish, output)
+        return manifest
 
 
 def main():
@@ -156,9 +157,10 @@ def main():
     if args.source is None or args.output is None:
         parser.error('source and --output are required')
     try:
-        extract(args.source, args.output, args.docinfo)
+        manifest = extract(args.source, args.output, args.docinfo)
     except (OSError, ValueError, EOFError, SyntaxError, Image.DecompressionBombError) as error:
         parser.exit(1, str(error) + '\n')
+    print(json.dumps(manifest))
 
 
 if __name__ == '__main__':

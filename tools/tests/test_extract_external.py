@@ -115,6 +115,13 @@ class ProvenanceTests(unittest.TestCase):
             with patch.object(adapter, 'VERSIONS', dict(adapter.versions(), rco='2')):
                 self.assertEqual(adapter.tool_provenance('rco', tool, data)['version'], '2')
 
+    def test_document_rejects_helpers_that_publish_bookkeeping_files(self):
+        from tools import extract_external as adapter
+        legacy = json.dumps({'name': 'PSP-DOCUMENT.DAT', 'options': ['platform-ordinals']})
+        with patch.object(adapter.subprocess, 'check_output', return_value=legacy):
+            with self.assertRaises(ValueError):
+                adapter.tool_provenance('document', Path(sys.executable))
+
 class NpumdimgTests(unittest.TestCase):
     def test_signature_failure_and_iso_validation(self):
         from tools.extract_external import extract_npumdimg

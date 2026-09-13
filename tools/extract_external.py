@@ -61,7 +61,14 @@ def tool_provenance(kind, tool=None, data=None):
         return dict(result, name=reported['name'], options=reported['options'], sha256=digest)
     if kind == 'document':
         tool = tool.resolve(strict=True)
-        result.update(json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30)))
+        reported = json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30),
+                              object_pairs_hook=manifest_object)
+        manifest_fields(reported, ('name', 'options'))
+        if (reported['name'] != 'PSP-DOCUMENT.DAT' or not isinstance(reported['options'], list)
+                or any(not isinstance(option, str) for option in reported['options'])
+                or 'page-files-only:1' not in reported['options']):
+            raise ValueError('Invalid DOCUMENT helper provenance: page-only output required')
+        result.update(reported)
         result['sha256'] = hashlib.sha256(tool.read_bytes()).hexdigest()
         return result
     result['name'] = 'rcomage' if kind == 'rco' else 'pspdecrypt-kle' if kind in ('kl3e', 'kl4e') else 'pspdecrypt'

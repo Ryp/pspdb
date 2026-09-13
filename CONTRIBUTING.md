@@ -37,11 +37,11 @@ Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v9/<source-sha256>-ingest.json
-catalog/iso/v9/<source-sha256>-tree.json
+catalog/iso/v10/<source-sha256>-ingest.json
+catalog/iso/v10/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v11/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v12/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
 Include new nested pairs too, such as `prx/v3/`, `gzip/v2/`, `psmf/v1/` and `mpegps/v2/`.
