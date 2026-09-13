@@ -310,7 +310,7 @@ function packageSerial(metadata) {
 
 function packageGroup(contentType) {
   switch (contentType) {
-    case 6: return "ps1";
+    case 6: return "psone_classic";
     case 7:
     case 14:
     case 15: return null;

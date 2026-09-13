@@ -69,7 +69,7 @@ fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website an
 static export display packages under **psn**, alongside **umd**. Generic PSP
 packages (content types 7, 14, 15) appear directly under **psn**; they include
 demos, DLC, and updates because header types do not reliably separate those roles.
-Other types select **ps1** (6), **neogeo** (16), or **theme** (9, within supported
+Other types select **psone_classic** (6), **neogeo** (16), or **theme** (9, within supported
 PSP packages). Missing or unrecognized types fall under **unknown**; empty groups
 are omitted. Grouping preserves package labels and extracted paths and
 requires no ingestion options or additional metadata.
