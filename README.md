@@ -66,8 +66,15 @@ remains case-insensitive; it must not determine which bytes an inventory path ow
 PKGs write their own versioned pairs under `catalog/pkg/v12/`. Package metadata
 includes content ID, title ID, content type, and available PSP title/version/firmware
 fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
-static export display packages under **psn**, alongside **umd**. Embedded PBP files
-use the existing nested extraction pipeline when both catalog and store are set.
+static export display packages under **psn**, alongside **umd**. Within **psn**,
+the retained PKG content type selects **ps1** (6), **psp** (7, 14, 15),
+**neogeo** (16), or **theme** (9, within supported PSP packages).
+Missing or unrecognized types fall under **unknown**; empty groups are omitted.
+The **psp** group includes demos, DLC, and updates: header types do not reliably
+separate those roles. Grouping preserves package labels and extracted paths and
+requires no ingestion options or additional metadata.
+Embedded PBP files use the existing nested extraction pipeline when both catalog
+and store are set.
 Package title metadata is taken from the already-decrypted EBOOT.PBP during its
 inventory walk, without decrypting the full game payload again. Inner PBP metadata
 retains precedence over outer package metadata regardless of entry order.

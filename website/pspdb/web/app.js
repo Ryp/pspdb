@@ -308,6 +308,18 @@ function packageSerial(metadata) {
   return id.toUpperCase().replace(/^([A-Z0-9]{4})-?([0-9]{5})$/, "$1-$2");
 }
 
+function packageGroup(contentType) {
+  switch (contentType) {
+    case 6: return "ps1";
+    case 7:
+    case 14:
+    case 15: return "psp";
+    case 9: return "theme";
+    case 16: return "neogeo";
+    default: return "unknown";
+  }
+}
+
 function packageLabels(packages) {
   const groups = new Map();
   for (const pkg of packages) {
@@ -374,9 +386,12 @@ function build(data) {
   if (packages.length) {
     const psn = addGroup(root, "psn");
     const labels = packageLabels(packages);
+    const groups = new Map();
     for (const pkg of packages) {
       const metadata = pkg.metadata || {};
-      const node = add(psn, `${pkg.sha256}.pkg`, {
+      const category = packageGroup(metadata.content_type);
+      if (!groups.has(category)) groups.set(category, addGroup(psn, category));
+      const node = add(groups.get(category), `${pkg.sha256}.pkg`, {
         type: "file", hash: pkg.sha256, size: pkg.size_bytes,
         displayName: labels.get(pkg.sha256),
         gamePrefix: packageSerial(metadata) || null,

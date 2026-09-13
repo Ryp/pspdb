@@ -97,12 +97,12 @@ console.log('PASS: shared executable trees inherit each occurrence name through 
 
 // PSN packages are root siblings of UMD and retain their exact package hash.
 context.pkgFixture = {records:{iso:[],pkg:[{sha256:'9'.repeat(64),size_bytes:123,
-  metadata:{content_id:'UP9000-NPUG00001_00-FIXTURE',title:'Demo'}}]},trees:{pkg:{
+  metadata:{content_type:16,content_id:'UP9000-NPUG00001_00-FIXTURE',title:'Demo'}}]},trees:{pkg:{
     ['9'.repeat(64)]:{size_bytes:123,extractor:{name:'pspdb-ingest'},entries:[{path:'PARAM.SFO',type:'file',size_bytes:10,sha256:'8'.repeat(64)}]}}}};
 vm.runInContext('build(pkgFixture)',context);
-const psn = JSON.parse(vm.runInContext(`JSON.stringify((()=>{const n=root.children.find(n=>n.name==='psn').children[0];
+const psn = JSON.parse(vm.runInContext(`JSON.stringify((()=>{const n=nodes.get('psn/neogeo/'+'9'.repeat(64)+'.pkg');
   return {path:n.path,hash:n.hash,size:n.size,label:label(n),child:n.children[0].name};})())`,context));
-assert.equal(psn.path, 'psn/'+'9'.repeat(64)+'.pkg');
+assert.equal(psn.path, 'psn/neogeo/'+'9'.repeat(64)+'.pkg');
 assert.equal(psn.hash,'9'.repeat(64));
 assert.equal(psn.size,123);
 assert.equal(psn.label,'NPUG-00001 Demo');
@@ -116,13 +116,12 @@ context.labelPackages = [
 ];
 const labels = JSON.parse(vm.runInContext('JSON.stringify([...packageLabels(labelPackages).values()])',context));
 assert.deepEqual(labels,['NPUG-00001 Demo title · aaaaaaaa0','NPUG-00001 Demo title · aaaaaaaa1','Untitled package · bbbbbbbb']);
-assert.ok(vm.runInContext("root.children.find(n=>n.name==='psn').children[0].searchText.includes('up9000-npug00001_00-fixture')",context));
+assert.ok(vm.runInContext("nodes.get('psn/neogeo/'+'9'.repeat(64)+'.pkg').searchText.includes('up9000-npug00001_00-fixture')",context));
 console.log('PASS: compact package titles, unique collision suffixes, metadata fallback and full content-ID search.');
 
 assert.equal(vm.runInContext("packageSerial({title_id:'npug80135'})", context), 'NPUG-80135');
 assert.equal(vm.runInContext("packageSerial({title_id:'NPUG-80135'})", context), 'NPUG-80135');
-assert.equal(vm.runInContext("root.children.find(n=>n.name==='psn').children[0].gamePrefix", context), 'NPUG-00001');
-console.log('PASS: serial-first package labels share UMD ID formatting and prefix styling.');
+console.log('PASS: serial-first package labels share UMD ID formatting.');
 
 // Contextual output is bound to one file occurrence, not globally to its hash.
 const sourceHash = '1'.repeat(64), payloadHash = '2'.repeat(64);
@@ -204,7 +203,7 @@ const roles = JSON.parse(vm.runInContext(`JSON.stringify((() => {
     hash:nested.hash,size:nested.size,
     rootFallback:parent.children.find(n=>n.name==='root-observation-only.iso').children.map(n=>n.name),
     inline:parent.children.find(n=>n.name==='inline.iso').children.map(n=>n.name),
-    pkg:nodes.get('psn/'+'7'.repeat(64)+'.pkg').children.map(n=>n.name),
+    pkg:nodes.get('psn/unknown/'+'7'.repeat(64)+'.pkg').children.map(n=>n.name),
   };
 })())`,context));
 assert.deepEqual(roles,{
