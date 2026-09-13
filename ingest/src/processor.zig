@@ -201,16 +201,26 @@ pub fn processPkgChecked(allocator: std.mem.Allocator, io: std.Io, bytes: []cons
         // PSP theme PKGs can contain only a theme payload, with no SFO or PBP.
         return error.MissingPkgMetadata;
     }
-    if (try package.readFile(allocator, "USRDIR/CONTENT/EBOOT.PBP")) |pbp| {
-        defer allocator.free(pbp);
-        const parsed = try @import("containers.zig").parsePbp(pbp);
-        result.pbp_sfo_bytes = try allocator.dupe(u8, parsed.get("PARAM.SFO").?);
-        const inner = try sfo.parsePkg(allocator, result.pbp_sfo_bytes, &result.pbp_title);
-        result.metadata = .{ .title = inner.title orelse result.metadata.title, .disc_id = inner.disc_id, .disc_version = inner.disc_version, .required_firmware = inner.required_firmware };
-    }
     var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .paths = .init(allocator) };
     defer inventory.deinit();
-    try package.walk(allocator, &inventory, Inventory.emitView);
+    const PackageInventory = struct {
+        inventory: *Inventory,
+        result: *Result,
+
+        fn emit(self: *@This(), name: []const u8, contents: ?memory.View) !void {
+            try self.inventory.emitView(name, contents);
+            const view = contents orelse return;
+            if (!std.mem.eql(u8, name, "USRDIR/CONTENT/EBOOT.PBP")) return;
+            // Use the inventory's already-decrypted PBP rather than decrypting
+            // its entire game payload a second time just to read PARAM.SFO.
+            const parsed = try @import("containers.zig").parsePbp(view.bytes);
+            self.result.pbp_sfo_bytes = try self.inventory.allocator.dupe(u8, parsed.get("PARAM.SFO").?);
+            const inner = try sfo.parsePkg(self.inventory.allocator, self.result.pbp_sfo_bytes, &self.result.pbp_title);
+            self.result.metadata = .{ .title = inner.title orelse self.result.metadata.title, .disc_id = inner.disc_id, .disc_version = inner.disc_version, .required_firmware = inner.required_firmware };
+        }
+    };
+    var context = PackageInventory{ .inventory = &inventory, .result = &result };
+    try package.walk(allocator, &context, PackageInventory.emit);
     result.entries = try inventory.finish();
     result.stored = inventory.counts.stored;
     result.reused = inventory.counts.reused;
@@ -304,7 +314,9 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
     };
     defer inventory.deinit();
     var contextual_outputs: [2]?extractor.Output = .{ null, null };
-    defer for (contextual_outputs) |item| { if (item) |value| value.deinit(allocator, io); };
+    defer for (contextual_outputs) |item| {
+        if (item) |value| value.deinit(allocator, io);
+    };
     var output: ?extractor.Output = null;
     defer if (output) |value| value.deinit(allocator, io);
     const provenance: extractor.Provenance = switch (task.kind) {

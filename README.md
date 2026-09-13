@@ -65,6 +65,9 @@ includes content ID, title ID, content type, and available PSP title/version/fir
 fields. Whole-package SHA-256/SHA-1 identify the unchanged input. The website and
 static export display packages under **psn**, alongside **umd**. Embedded PBP files
 use the existing nested extraction pipeline when both catalog and store are set.
+Package title metadata is taken from the already-decrypted EBOOT.PBP during its
+inventory walk, without decrypting the full game payload again. Inner PBP metadata
+retains precedence over outer package metadata regardless of entry order.
 The PKG extractor supports retail PSP and PS1 packages, including standard PSP
 theme packages (content type 9), not debug, native PS3, or Vita packages.
 Themes may legitimately omit `PARAM.SFO`; no title metadata is invented. Present

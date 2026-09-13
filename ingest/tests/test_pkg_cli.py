@@ -72,7 +72,9 @@ class PkgCliTests(unittest.TestCase):
     def test_psp_and_ps1_roots_zip_nested_store_and_skip(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); inputs = base/'inputs'; inputs.mkdir(); catalog = base/'catalog'; store = base/'store'
-            psp, files = pkg_bytes(); ps1, _ = pkg_bytes(6)
+            psp, files = pkg_bytes()
+            # Inner metadata must win even when the outer SFO is inventoried last.
+            ps1, _ = pkg_bytes(6, files_override=list(reversed(files)))
             (inputs/'demo.PKG').write_bytes(psp)
             with zipfile.ZipFile(inputs/'archive.zip', 'w', zipfile.ZIP_DEFLATED) as z: z.writestr('game.pkg', ps1)
             before = snapshot(inputs)
