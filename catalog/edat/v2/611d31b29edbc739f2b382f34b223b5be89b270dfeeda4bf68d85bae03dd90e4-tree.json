@@ -1,0 +1,24 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "611d31b29edbc739f2b382f34b223b5be89b270dfeeda4bf68d85bae03dd90e4",
+  "size_bytes": 368,
+  "extractor": {
+    "name": "make-npdata",
+    "sha256": "5889844a728bc2d495886cbb4fbc9129abddbb7aa9cbfd00dc2b1b927cdf6b91",
+    "version": "2",
+    "options": [
+      "upstream:5f44642fa24331da79f4bae6bea516f1784cf1c5",
+      "authenticated-edat:1"
+    ]
+  },
+  "name_rule": "source_stem",
+  "entries": [
+    {
+      "path": "payload.DAT",
+      "type": "file",
+      "size_bytes": 80,
+      "sha256": "bd4e9d51ef517fbd40648d0ccd1e97bf0481a714801645e92335ce4488211b40"
+    }
+  ]
+}
