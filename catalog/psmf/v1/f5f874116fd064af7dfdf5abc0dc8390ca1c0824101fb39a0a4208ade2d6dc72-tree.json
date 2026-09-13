@@ -1,0 +1,62 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "f5f874116fd064af7dfdf5abc0dc8390ca1c0824101fb39a0a4208ade2d6dc72",
+  "size_bytes": 2709504,
+  "extractor": {
+    "name": "pmftools",
+    "sha256": "8474b638814c632eeee668bde43ed25f357a5a2d2e37e318bcdc136a15722404",
+    "version": "1",
+    "options": [
+      "upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4",
+      "bounded-traversal:1",
+      "raw-streams:1",
+      "manifest:1",
+      "manifest-budget-env:1"
+    ]
+  },
+  "entries": [
+    {
+      "path": "audio-bd-00.framed-at3",
+      "type": "file",
+      "size_bytes": 203040,
+      "sha256": "a4bc3c44c4c8cb30ca8fbe2b62dfabdacbdb58d8959fac32ab4261ed1e2d689c"
+    },
+    {
+      "path": "audio-bd-01.framed-at3",
+      "type": "file",
+      "size_bytes": 203040,
+      "sha256": "db34a3c6eea24c94e67a7b6b5fc26964a3e85330c5cd9234fe6e0ac7e915e77e"
+    },
+    {
+      "path": "audio-bd-02.framed-at3",
+      "type": "file",
+      "size_bytes": 203040,
+      "sha256": "6c34f68f6b1128e39f889acd9ad81d04c8c90ce5387f54d92964c8d81867f10e"
+    },
+    {
+      "path": "audio-bd-03.framed-at3",
+      "type": "file",
+      "size_bytes": 203040,
+      "sha256": "d5c16fc621fcdbc32d985cfa34e52eb1af53d662ee9f8d663bdd3341619f2235"
+    },
+    {
+      "path": "audio-bd-04.framed-at3",
+      "type": "file",
+      "size_bytes": 203040,
+      "sha256": "ba55f0cf072dfafb1903c1956b4cfbf60bb1c003a927473e65b45ba4ea37f160"
+    },
+    {
+      "path": "structure.json",
+      "type": "file",
+      "size_bytes": 437313,
+      "sha256": "02e2b645d6f57e99d377c1534a0b0097b9f300273a325fca60886fbde87ba352"
+    },
+    {
+      "path": "video-e0.h264",
+      "type": "file",
+      "size_bytes": 1643421,
+      "sha256": "7f5c687311ce64870c9cb2bce23ff665f9698f98e8c5dd43c55bfd25b34756a3"
+    }
+  ]
+}
