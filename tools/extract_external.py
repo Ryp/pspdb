@@ -13,6 +13,8 @@ import stat
 import tempfile
 import xml.etree.ElementTree as ET
 
+import ijson
+
 
 VERSIONS = None
 
@@ -613,71 +615,104 @@ def mpegps_timestamp(data, start, prefix):
         raise ValueError('Invalid MPEGPS timestamp prefix or markers')
 
 
+def mpegps_manifest(stream):
+    """Yield bounded metadata and individual packets from the exact JSON schema."""
+    def chunks():
+        remaining = MPEGPS_MANIFEST_LIMIT
+        while chunk := stream.read(min(65536, remaining + 1)):
+            remaining -= len(chunk)
+            if remaining < 0:
+                raise ValueError('MPEGPS manifest exceeds size limit')
+            yield chunk
+
+    events = iter(ijson.basic_parse(ijson.from_iter(chunks()), use_float=False))
+
+    def take():
+        return next(events, (None, None))
+
+    def scalar(item):
+        event, value = item
+        if event not in ('string', 'number', 'boolean', 'null'):
+            raise ValueError('Invalid MPEGPS manifest scalar')
+        return value
+
+    def record(item, fields):
+        if item != ('start_map', None):
+            raise ValueError('Invalid MPEGPS manifest record')
+        result = {}
+        while (item := take()) != ('end_map', None):
+            event, key = item
+            if event != 'map_key' or key not in fields or key in result:
+                raise ValueError('Invalid or duplicate MPEGPS record field')
+            result[key] = scalar(take())
+        manifest_fields(result, fields)
+        return result
+
+    fields = {'source_sha256', 'source_size_bytes', 'data_start', 'data_end',
+              'consumed_end', 'observed_streams', 'packets', 'outputs'}
+    seen = set()
+    try:
+        if take() != ('start_map', None):
+            raise ValueError('Invalid MPEGPS manifest root')
+        while (item := take()) != ('end_map', None):
+            event, key = item
+            if event != 'map_key' or key not in fields or key in seen:
+                raise ValueError('Invalid or duplicate MPEGPS manifest field')
+            seen.add(key)
+            if key not in ('packets', 'observed_streams', 'outputs'):
+                yield key, scalar(take())
+                continue
+            if take() != ('start_array', None):
+                raise ValueError('Invalid MPEGPS manifest array')
+            values = []
+            while (item := take()) != ('end_array', None):
+                if key == 'packets':
+                    yield key, record(item, ('start', 'end', 'packet_id', 'stream',
+                                             'payload_start', 'payload_end'))
+                else:
+                    # bd plus e0..ef; never accumulate an unbounded metadata array.
+                    if len(values) == 17:
+                        raise ValueError('Too many MPEGPS streams or outputs')
+                    values.append(scalar(item) if key == 'observed_streams' else
+                                  record(item, ('path', 'size_bytes', 'sha256')))
+            if key != 'packets':
+                yield key, values
+        if seen != fields or take() != (None, None):
+            raise ValueError('Incomplete MPEGPS manifest or trailing data')
+    except ijson.JSONError as exc:
+        raise ValueError('Invalid MPEGPS manifest JSON') from exc
+
+
 def validate_mpegps(data, source_hash, directory):
     if hashlib.sha256(data).hexdigest() != source_hash:
         raise ValueError('MPEGPS source changed during extraction')
     if not stat.S_ISDIR(directory.lstat().st_mode):
         raise ValueError('Invalid MPEGPS helper directory')
-    with regular_file(directory / 'manifest.json', MPEGPS_MANIFEST_LIMIT) as stream:
-        raw = stream.read(MPEGPS_MANIFEST_LIMIT + 1)
-    if len(raw) > MPEGPS_MANIFEST_LIMIT:
-        raise ValueError('MPEGPS manifest exceeds size limit')
-    manifest = json.loads(raw, object_pairs_hook=manifest_object)
-    manifest_fields(manifest, ('source_sha256', 'source_size_bytes', 'data_start', 'data_end',
-                              'consumed_end', 'observed_streams', 'packets', 'outputs'))
-    if manifest['source_sha256'] != source_hash:
-        raise ValueError('MPEGPS source hash mismatch')
-    for field, expected in (('source_size_bytes', len(data)), ('data_start', 0),
-                            ('data_end', len(data)), ('consumed_end', len(data))):
-        if manifest_integer(manifest[field], MPEGPS_SOURCE_LIMIT) != expected:
-            raise ValueError('MPEGPS source identity or range mismatch')
-    streams, packets, outputs = (manifest['observed_streams'], manifest['packets'],
-                                manifest['outputs'])
-    if (not isinstance(streams, list) or not streams
-            or any(not isinstance(key, str) or not re.fullmatch(r'bd|e[0-9a-f]', key) for key in streams)
-            or len(set(streams)) != len(streams)
-            or not isinstance(packets, list) or not isinstance(outputs, list)
-            or len(outputs) != len(streams)):
-        raise ValueError('Invalid MPEGPS stream, packet or output inventory')
-    names = {key: 'private-bd.bin' if key == 'bd' else f'pes-{key}.bin' for key in streams}
-    metadata = {}
-    for item in outputs:
-        manifest_fields(item, ('path', 'size_bytes', 'sha256'))
-        name, digest = item['path'], item['sha256']
-        if not isinstance(name, str) or name not in names.values() or name in metadata:
-            raise ValueError('Invalid or duplicate MPEGPS output path')
-        if (not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)
-                or not manifest_integer(item['size_bytes'], MPEGPS_SOURCE_LIMIT)):
-            raise ValueError('Invalid MPEGPS output identity')
-        metadata[name] = item
-    if {entry.name for entry in directory.iterdir()} != set(metadata) | {'manifest.json'}:
-        raise ValueError('Unexpected or missing MPEGPS helper output')
-    observed = set()
-    count = 0
+    manifest, files, hashes, names = {}, {}, {}, {}
+    expected_packets = mpegps_packets(data)
     with ExitStack() as stack:
-        files = {key: stack.enter_context(regular_file(directory / name, MPEGPS_SOURCE_LIMIT))
-                 for key, name in names.items()}
-        hashes = {key: hashlib.sha256() for key in streams}
-        for key, stream in files.items():
-            if os.fstat(stream.fileno()).st_size != metadata[names[key]]['size_bytes']:
-                raise ValueError('MPEGPS output size mismatch')
-        for expected in mpegps_packets(data):
-            if count == len(packets):
-                raise ValueError('Missing MPEGPS packet')
-            packet = packets[count]
-            manifest_fields(packet, expected)
+        stream = stack.enter_context(regular_file(directory / 'manifest.json', MPEGPS_MANIFEST_LIMIT))
+        for field, value in mpegps_manifest(stream):
+            if field != 'packets':
+                manifest[field] = value
+                continue
+            expected = next(expected_packets, None)
+            if expected is None:
+                raise ValueError('Extra MPEGPS packet')
+            packet = value
             for field in ('start', 'end', 'packet_id', 'payload_start', 'payload_end'):
                 if packet[field] is not None or field in ('start', 'end', 'packet_id'):
                     manifest_integer(packet[field], MPEGPS_SOURCE_LIMIT)
             if packet != expected:
                 raise ValueError('MPEGPS packet or payload source range mismatch')
-            count += 1
             key = expected['stream']
             if key is None:
                 continue
             if key not in files:
-                raise ValueError('Uninventoried MPEGPS stream')
-            observed.add(key)
+                name = 'private-bd.bin' if key == 'bd' else f'pes-{key}.bin'
+                names[key] = name
+                files[key] = stack.enter_context(regular_file(directory / name, MPEGPS_SOURCE_LIMIT))
+                hashes[key] = hashlib.sha256()
             start, end = expected['payload_start'], expected['payload_end']
             while start < end:
                 chunk_end = min(start + 65536, end)
@@ -686,9 +721,34 @@ def validate_mpegps(data, source_hash, directory):
                     raise ValueError('MPEGPS output differs from source payload bytes')
                 hashes[key].update(chunk)
                 start = chunk_end
-        if count != len(packets) or observed != set(streams):
-            raise ValueError('Incomplete MPEGPS packet or stream inventory')
+        if next(expected_packets, None) is not None:
+            raise ValueError('Missing MPEGPS packet')
+        if manifest['source_sha256'] != source_hash:
+            raise ValueError('MPEGPS source hash mismatch')
+        for field, expected in (('source_size_bytes', len(data)), ('data_start', 0),
+                                ('data_end', len(data)), ('consumed_end', len(data))):
+            if manifest_integer(manifest[field], MPEGPS_SOURCE_LIMIT) != expected:
+                raise ValueError('MPEGPS source identity or range mismatch')
+        streams, outputs = manifest['observed_streams'], manifest['outputs']
+        if (not streams
+                or any(not isinstance(key, str) or not re.fullmatch(r'bd|e[0-9a-f]', key) for key in streams)
+                or len(set(streams)) != len(streams)
+                or set(streams) != set(files) or len(outputs) != len(streams)):
+            raise ValueError('Invalid MPEGPS stream or output inventory')
+        metadata = {}
+        for item in outputs:
+            name, digest = item['path'], item['sha256']
+            if not isinstance(name, str) or name not in names.values() or name in metadata:
+                raise ValueError('Invalid or duplicate MPEGPS output path')
+            if (not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)
+                    or not manifest_integer(item['size_bytes'], MPEGPS_SOURCE_LIMIT)):
+                raise ValueError('Invalid MPEGPS output identity')
+            metadata[name] = item
+        if {entry.name for entry in directory.iterdir()} != set(metadata) | {'manifest.json'}:
+            raise ValueError('Unexpected or missing MPEGPS helper output')
         for key, stream in files.items():
+            if os.fstat(stream.fileno()).st_size != metadata[names[key]]['size_bytes']:
+                raise ValueError('MPEGPS output size mismatch')
             if stream.read(1) or hashes[key].hexdigest() != metadata[names[key]]['sha256']:
                 raise ValueError('MPEGPS output hash or concatenated size mismatch')
     return sorted(metadata)

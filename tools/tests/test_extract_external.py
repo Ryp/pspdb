@@ -383,6 +383,7 @@ class MpegpsTests(unittest.TestCase):
             self.assert_rejected_cleanly()
 
     def test_preserves_interleaved_opaque_private_prefixes_and_raw_video(self):
+        self.manifest = dict(reversed(list(self.manifest.items())))
         self.adapter.extract_mpegps(self.source, self.output, self.tool)
         self.assertEqual({path.name for path in self.output.iterdir()}, set(self.outputs) | {'structure.json'})
         for name, data in self.outputs.items():
@@ -433,6 +434,43 @@ class MpegpsTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.manifest['packets'][0]['start'] = value
                 self.assert_rejected_cleanly()
+
+    def test_rejects_structural_aliases_and_late_json_errors(self):
+        original = json.dumps(self.manifest)
+        impostors = [
+            dict(self.manifest, packets={'item': self.manifest['packets']}),
+            {('packets.item' if key == 'packets' else key): value
+             for key, value in self.manifest.items()},
+            {key: value for key, value in self.manifest.items() if key != 'outputs'},
+        ]
+        malformed = [json.dumps(value) for value in impostors] + [
+            original[:-1], original + '{}',
+            original.replace('"start": 0', '"start": 0, "start": 0'),
+            original.replace('"path": "pes-e1.bin"',
+                             '"path": "pes-e1.bin", "path": "pes-e1.bin"'),
+        ]
+        for text in malformed:
+            with self.subTest(manifest=text):
+                self.helper_action = lambda directory: (directory / 'manifest.json').write_text(text)
+                self.assert_rejected_cleanly()
+
+    def test_enforces_manifest_limit_after_file_is_opened(self):
+        from contextlib import contextmanager
+
+        regular_file = self.adapter.regular_file
+
+        @contextmanager
+        def growing_manifest(path, limit):
+            with regular_file(path, limit) as stream:
+                if path.name == 'manifest.json':
+                    with path.open('ab') as writer:
+                        writer.write(b' ' * limit)
+                yield stream
+
+        limit = len(json.dumps(self.manifest).encode())
+        with patch.object(self.adapter, 'regular_file', growing_manifest), \
+                patch.object(self.adapter, 'MPEGPS_MANIFEST_LIMIT', limit):
+            self.assert_rejected_cleanly()
 
     def test_rejects_malformed_source_headers_even_with_matching_source_hash(self):
         original = self.source.read_bytes()

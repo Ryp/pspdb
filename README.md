@@ -509,6 +509,12 @@ revision-1 pairs remain historical rather than being replaced. The adapter
 requires a compact-capable helper. Source, manifest and runtime limits remain
 unchanged; compact output alone does not establish whole-video coverage.
 
+Manifest validation uses the locked `ijson` dependency to process one packet at a
+time, with explicit JSON object/array structure and duplicate-field checks.
+Metadata arrays and total manifest bytes remain bounded; every packet range,
+raw output byte and output hash is still verified before publication. This
+validation change does not alter revision-2 output bytes or raise source limits.
+
 Outputs are neutral byte ranges, not decoded media: `private-bd.bin` concatenates
 the full private-stream PES payloads, including their original prefixes, and
 `pes-e0.bin` through `pes-ef.bin` concatenate observed video-stream PES payloads.
