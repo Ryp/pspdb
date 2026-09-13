@@ -1,0 +1,38 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "01553d799243da6357bb9675b9dcf29e7f77e2dd7e9d7abf5b063d8acd51041f",
+  "size_bytes": 854016,
+  "extractor": {
+    "name": "pmftools",
+    "sha256": "8474b638814c632eeee668bde43ed25f357a5a2d2e37e318bcdc136a15722404",
+    "version": "1",
+    "options": [
+      "upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4",
+      "bounded-traversal:1",
+      "raw-streams:1",
+      "manifest:1",
+      "manifest-budget-env:1"
+    ]
+  },
+  "entries": [
+    {
+      "path": "audio-bd-00.framed-at3",
+      "type": "file",
+      "size_bytes": 99264,
+      "sha256": "16eb8e6d8731bfd4bdf44e90c1ca9ecb9c2ff90b267fbdac743ecaafd0207fd8"
+    },
+    {
+      "path": "structure.json",
+      "type": "file",
+      "size_bytes": 136864,
+      "sha256": "30db319a1548dbb8f5211cad929443d872a3a50a21dad84e4415ace136cd5100"
+    },
+    {
+      "path": "video-e0.h264",
+      "type": "file",
+      "size_bytes": 733909,
+      "sha256": "7903ae99bd256321c5b8fd0fb458687bc35206c4b2d1c8ee781c6af95c92ec58"
+    }
+  ]
+}
