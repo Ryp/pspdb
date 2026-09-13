@@ -399,8 +399,10 @@ const Inventory = struct {
 /// Process only this extraction's immediate tree. Descendants go to Dispatch.
 pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Dispatch) !Counts {
     if (dispatch.adapter.state) |state| {
-        if (state.fresh_trees.map.contains(&task.hash)) {
-            if (try reuseTask(allocator, io, task, dispatch)) |counts| return counts;
+        if (state.fresh_trees.map.getPtr(@tagName(task.kind))) |fresh| {
+            if (fresh.map.contains(&task.hash)) {
+                if (try reuseTask(allocator, io, task, dispatch)) |counts| return counts;
+            }
         }
     }
 

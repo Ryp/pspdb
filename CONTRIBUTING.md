@@ -68,7 +68,7 @@ original sources. CI does not need those sources or the extraction tools.
 Extractor fixes belong in a new revision: update
 [tools/extractor_versions.json](tools/extractor_versions.json), rebuild, and add
 results under the new `vN` folder. Keep historical results intact. The website
-selects the newest complete pair for each source.
+selects the newest complete pair for each extractor kind and source hash.
 
 ## Initial catalog
 

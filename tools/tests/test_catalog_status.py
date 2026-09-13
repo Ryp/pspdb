@@ -12,17 +12,17 @@ class CatalogStatusTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        self.revisions = {'iso': '2', 'gzip': '3', 'pbp': '1'}
+        self.revisions = {'iso': '2', 'gzip': '3', 'pbp': '1', 'iso9660': '3', 'pkg': '1'}
         self.patch = patch.object(extract_external, 'VERSIONS', self.revisions)
         self.patch.start(); self.addCleanup(self.patch.stop)
         self.current = {kind: extract_external.tool_provenance(kind) for kind in self.revisions}
 
-    def write(self, kind, version, digest, children=(), provenance=None):
+    def write(self, kind, version, digest, children=(), provenance=None, size_bytes=42):
         path = self.root / kind / ('v' + version) / (digest + '-tree.json')
         path.parent.mkdir(parents=True, exist_ok=True)
-        record = dict(kind=kind, schema_version=1, sha256=digest, size_bytes=42)
+        record = dict(kind=kind, schema_version=1, sha256=digest, size_bytes=size_bytes)
         path.with_name(digest + '-ingest.json').write_text(json.dumps(record))
-        tree = dict(kind='tree', schema_version=1, sha256=digest, size_bytes=42,
+        tree = dict(kind='tree', schema_version=1, sha256=digest, size_bytes=size_bytes,
                     extractor=provenance or dict(self.current[kind], version=version),
                     entries=[dict(path=str(i), type='file', sha256=child, size_bytes=42)
                              for i, child in enumerate(children)])
@@ -38,7 +38,7 @@ class CatalogStatusTests(unittest.TestCase):
         report = catalog_status(self.root, self.current)
         self.assertEqual(report['affected_isos'], [a])
         self.assertEqual([x['sha256'] for x in report['stale']], [c])
-        self.assertEqual(set(report['fresh_trees']), {a, b})
+        self.assertEqual(report['fresh_trees'], {'iso': {a: True}, 'pbp': {b: True}})
         self.write('gzip', '3', c)
         report = catalog_status(self.root, self.current)
         self.assertEqual(report['stale'], [])
@@ -46,8 +46,6 @@ class CatalogStatusTests(unittest.TestCase):
         self.assertEqual(old.read_bytes(), before)
 
     def test_pkg_root_tracks_nested_staleness(self):
-        self.revisions['pkg'] = '1'
-        self.current['pkg'] = extract_external.tool_provenance('pkg')
         root, child = 'd'*64, 'e'*64
         self.write('pkg', '1', root, [child])
         self.write('gzip', '2', child)
@@ -56,6 +54,104 @@ class CatalogStatusTests(unittest.TestCase):
         self.assertEqual(report['fresh_pkgs'], {})
         self.write('gzip', '3', child)
         self.assertEqual(catalog_status(self.root, self.current)['fresh_pkgs'], {root: True})
+
+    def test_stale_root_iso_does_not_taint_same_hash_iso9660_or_parent_pkg(self):
+        digest, package = 'a'*64, 'b'*64
+        self.write('iso', '1', digest)
+        self.write('iso9660', '3', digest)
+        self.write('pkg', '1', package, [digest])
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_trees'],
+                         {'iso9660': {digest: True}, 'pkg': {package: True}})
+        self.assertEqual(report['affected_isos'], [digest])
+        self.assertEqual(report['fresh_isos'], {})
+        self.assertEqual(report['affected_pkgs'], [])
+        self.assertEqual(report['fresh_pkgs'], {package: True})
+        self.assertEqual([(item['kind'], item['sha256'], item['selected_version'])
+                          for item in report['stale']], [('iso', digest, 1)])
+
+    def test_stale_iso9660_taints_parent_pkg_but_not_same_hash_root_iso(self):
+        digest, package = 'a'*64, 'b'*64
+        self.write('iso', '2', digest)
+        self.write('iso9660', '2', digest)
+        self.write('pkg', '1', package, [digest])
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_trees'],
+                         {'iso': {digest: True}, 'pkg': {package: True}})
+        self.assertEqual(report['affected_isos'], [])
+        self.assertEqual(report['fresh_isos'], {digest: True})
+        self.assertEqual(report['affected_pkgs'], [package])
+        self.assertEqual(report['fresh_pkgs'], {})
+        self.assertEqual([(item['kind'], item['sha256'], item['selected_version'])
+                          for item in report['stale']], [('iso9660', digest, 2)])
+
+    def test_same_hash_roles_follow_only_their_own_descendants(self):
+        digest, package, root_child, derived_child = ('a'*64, 'b'*64, 'c'*64, 'd'*64)
+        self.write('iso', '2', digest, [root_child])
+        self.write('iso9660', '3', digest, [derived_child])
+        self.write('pkg', '1', package, [digest])
+        self.write('gzip', '2', root_child)
+        self.write('pbp', '1', derived_child)
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['affected_isos'], [digest])
+        self.assertEqual(report['fresh_pkgs'], {package: True})
+        self.assertEqual(report['fresh_trees']['iso'], {digest: True})
+        self.assertEqual(report['fresh_trees']['iso9660'], {digest: True})
+        self.write('gzip', '3', root_child)
+        self.write('pbp', '1', derived_child, provenance=dict(self.current['pbp'], sha256='e'*64))
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_isos'], {digest: True})
+        self.assertEqual(report['affected_pkgs'], [package])
+        self.assertEqual(report['fresh_trees']['iso'], {digest: True})
+        self.assertEqual(report['fresh_trees']['iso9660'], {digest: True})
+
+    def test_root_only_byte_references_do_not_propagate_root_staleness(self):
+        parent, original, package = 'a'*64, 'b'*64, 'c'*64
+        self.write('iso', '2', parent, [original, package])
+        self.write('iso', '1', original)
+        self.write('pkg', '1', package, provenance=dict(self.current['pkg'], sha256='d'*64))
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['affected_isos'], [original])
+        self.assertEqual(report['fresh_isos'], {parent: True})
+        self.assertEqual(report['affected_pkgs'], [package])
+
+    def test_same_hash_source_sizes_must_agree_across_kinds(self):
+        digest = 'a'*64
+        self.write('iso', '2', digest)
+        self.write('iso9660', '3', digest, size_bytes=43)
+        with self.assertRaisesRegex(ValueError, 'Conflicting source size'):
+            catalog_status(self.root, self.current)
+
+    def test_ambiguous_derived_reference_requires_inline_extraction(self):
+        root, child = 'a'*64, 'b'*64
+        path = self.write('iso', '2', root, [child])
+        self.write('gzip', '2', child)
+        self.write('pbp', '1', child)
+        with self.assertRaisesRegex(ValueError, 'Ambiguous extraction kind'):
+            catalog_status(self.root, self.current)
+        decoder = dict(name='pops', version='1', sha256='c'*64, options=[])
+        self.current['pops'] = decoder
+        tree = json.loads(path.read_text())
+        tree['entries'][0]['extraction'] = dict(sha256=child, size_bytes=42,
+            extractor=decoder, name_rule='source_stem', entries=[])
+        path.write_text(json.dumps(tree))
+        self.assertEqual(catalog_status(self.root, self.current)['fresh_isos'], {root: True})
+
+    def test_legacy_tree_belongs_only_to_its_unversioned_source_kind(self):
+        digest = 'a'*64
+        path = self.write('iso', '1', digest)
+        path.with_name(digest + '-ingest.json').rename(self.root / 'iso' / (digest + '.json'))
+        (self.root / 'trees').mkdir()
+        path.rename(self.root / 'trees' / (digest + '.json'))
+        derived = self.write('iso9660', '3', digest)
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_trees'], {'iso9660': {digest: True}})
+        self.assertEqual([(item['kind'], item['sha256'], item['selected_version'])
+                          for item in report['stale']], [('iso', digest, 0)])
+        (self.root / 'iso9660' / (digest + '.json')).write_bytes(
+            derived.with_name(digest + '-ingest.json').read_bytes())
+        with self.assertRaisesRegex(ValueError, 'Ambiguous legacy source kind'):
+            catalog_status(self.root, self.current)
 
     def test_contextual_decoder_and_descendant_invalidate_parent(self):
         a, b, c = 'a'*64, 'b'*64, 'c'*64
@@ -68,7 +164,7 @@ class CatalogStatusTests(unittest.TestCase):
         path.write_text(json.dumps(tree))
         self.write('gzip', '2', c)
         report = catalog_status(self.root, self.current)
-        self.assertIn(a, report['fresh_trees'])
+        self.assertIn(a, report['fresh_trees']['pbp'])
         self.current['pops'] = dict(decoder, sha256='e'*64)
         report = catalog_status(self.root, self.current)
         self.assertEqual(next(x for x in report['stale'] if x['sha256']==a)['reason'], 'contextual extractor changed')
@@ -175,9 +271,9 @@ class CatalogStatusTests(unittest.TestCase):
                     extractor=decoder, name_rule='source_stem',
                     entries=[dict(path='payload.bin', type='file', sha256='d'*64, size_bytes=42)])
                 path.write_text(json.dumps(tree))
-                self.assertIn(root, catalog_status(self.root, self.current)['fresh_trees'])
+                self.assertIn(root, catalog_status(self.root, self.current)['fresh_trees']['pbp'])
                 self.current[kind] = dict(decoder, sha256='e'*64)
-                self.assertNotIn(root, catalog_status(self.root, self.current)['fresh_trees'])
+                self.assertNotIn(root, catalog_status(self.root, self.current)['fresh_trees'].get('pbp', {}))
 
     def test_cycles_propagate_staleness_and_terminate(self):
         a, b, c = 'a'*64, 'b'*64, 'c'*64
@@ -185,6 +281,10 @@ class CatalogStatusTests(unittest.TestCase):
         self.write('pbp', '1', b, [c])
         self.write('gzip', '2', c, [b])
         self.assertEqual(catalog_status(self.root, self.current)['affected_isos'], [a])
+        self.write('gzip', '3', c, [b])
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['stale'], [])
+        self.assertEqual(report['fresh_isos'], {a: True})
 
     def test_tool_change_and_unavailable_tool_are_not_fresh(self):
         digest = 'b'*64

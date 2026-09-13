@@ -79,5 +79,6 @@ def annotate_file_matches(trees, matches):
                 walk(entry['extraction']['entries'])
             if 'entries' in entry:
                 walk(entry['entries'])
-    for tree in trees.values():
-        walk(tree['entries'])
+    for sources in trees.values():
+        for tree in sources.values():
+            walk(tree['entries'])

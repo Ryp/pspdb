@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 def catalog_data(catalog, redump=None, umdatabase=None):
     records, trees, selected = {}, {}, {}
+    legacy_trees, legacy_kinds, sizes = {}, {}, {}
     for directory in sorted(catalog.iterdir()):
         if not directory.is_dir():
             continue
@@ -27,10 +28,16 @@ def catalog_data(catalog, redump=None, umdatabase=None):
             if (record.get('kind') != kind or record.get('schema_version') != 1
                     or not re.fullmatch(r'[0-9a-f]{64}', digest) or record.get('sha256') != digest):
                 raise ValueError(f'Invalid catalog record identity: {path}')
+            size = record.get('size_bytes')
+            if digest in sizes and sizes[digest] != size:
+                raise ValueError(f'Conflicting source sizes: {path}')
+            sizes[digest] = size
             if kind == 'tree':
-                trees[digest] = record
+                legacy_trees[digest] = record
                 continue
             tree = None
+            if not revision:
+                legacy_kinds.setdefault(digest, []).append(kind)
             if revision:
                 tree_path = path.with_name(digest + '-tree.json')
                 if not tree_path.exists():
@@ -42,13 +49,18 @@ def catalog_data(catalog, redump=None, umdatabase=None):
                         or tree.get('extractor', {}).get('version') != str(revision)
                         or not isinstance(tree.get('entries'), list)):
                     raise ValueError(f'Invalid versioned tree identity: {tree_path}')
-            previous = selected.get((kind, digest))
-            if previous and previous[0].get('size_bytes') != record.get('size_bytes'):
-                raise ValueError(f'Conflicting source sizes: {path}')
             selected[kind, digest] = record, tree
+    selected_kinds = {}
+    for kind, digest in selected:
+        selected_kinds.setdefault(digest, []).append(kind)
+    for digest, tree in legacy_trees.items():
+        owners = legacy_kinds.get(digest, selected_kinds.get(digest, []))
+        if len(owners) > 1:
+            raise ValueError(f'Ambiguous legacy tree source kind: {digest}')
+        trees.setdefault(owners[0] if owners else 'tree', {})[digest] = tree
     for (kind, digest), (record, tree) in sorted(selected.items()):
         if tree is not None:
-            trees[digest] = tree
+            trees.setdefault(kind, {})[digest] = tree
         if kind == 'iso':
             if redump is not None:
                 matches = redump.get((record.get('sha1'), record.get('size_bytes')), [])
@@ -59,9 +71,40 @@ def catalog_data(catalog, redump=None, umdatabase=None):
                 if matches:
                     record['umdatabase'] = matches
         records.setdefault(kind, []).append(record)
+    derived_trees(trees)
     from .redump import load_psx_matches, annotate_file_matches
     annotate_file_matches(trees, load_psx_matches())
     return {'records': records, 'trees': trees}
+
+
+def derived_trees(trees):
+    """Resolve byte references without choosing a root observation or a role arbitrarily."""
+    derived, sizes, ambiguous = {}, {}, set()
+    for kind, sources in trees.items():
+        for digest, tree in sources.items():
+            size = tree['size_bytes']
+            if digest in sizes and sizes[digest] != size:
+                raise ValueError(f'Conflicting source sizes: {digest}')
+            sizes[digest] = size
+            if kind in ('iso', 'pkg'):
+                continue
+            if digest in derived:
+                ambiguous.add(digest)
+            derived[digest] = None if digest in derived else tree
+    if not ambiguous:
+        return derived
+    def check(entries):
+        for entry in entries:
+            contextual = entry.get('extraction')
+            if contextual is not None:
+                if contextual.get('sha256') == entry.get('sha256') and contextual.get('size_bytes') == entry.get('size_bytes'):
+                    check(contextual['entries'])
+            elif entry.get('type') == 'file' and entry['sha256'] in ambiguous:
+                raise ValueError(f"Ambiguous non-root extraction kinds: {entry['sha256']}")
+    for sources in trees.values():
+        for tree in sources.values():
+            check(tree['entries'])
+    return derived
 
 
 def open_object(store, digest, size):
@@ -86,19 +129,27 @@ def open_object(store, digest, size):
 
 
 def download_index(data):
-    index = {}
-    def add(digest, size, name, ancestors=frozenset(), contextual=None):
+    index, expanded = {}, set()
+    derived = derived_trees(data['trees'])
+    def add(digest, size, name, ancestors=frozenset(), contextual=None, kind=None):
         if not re.fullmatch(r"[0-9a-f]{64}", digest) or not name or any(ord(c) < 32 or c in '/\\' for c in name):
             return
         if digest in index and index[digest][0] != size:
             raise ValueError("Conflicting sizes for catalog hash")
         names = index.setdefault(digest, (size, set()))[1]
-        if name in names and contextual is None:
-            return
         names.add(name)
-        tree = contextual or data['trees'].get(digest)
-        if not tree or (contextual and tree.get('sha256') != digest) or tree['size_bytes'] != size or digest in ancestors:
+        if contextual is not None:
+            tree = contextual
+        elif kind is not None:
+            tree = data['trees'].get(kind, {}).get(digest)
+        else:
+            tree = derived.get(digest)
+        if not tree or (contextual is not None and tree.get('sha256') != digest) or tree['size_bytes'] != size or id(tree) in ancestors:
             return
+        occurrence = id(tree), name
+        if occurrence in expanded:
+            return
+        expanded.add(occurrence)
         for entry in tree['entries']:
             if entry['type'] != 'file':
                 continue
@@ -115,15 +166,16 @@ def download_index(data):
                 if suffix == '.elf':
                     stem = re.sub(r'\.(?:elf|prx)$', '', stem, flags=re.I)
                 child = stem if not suffix or suffix == '.bin' or stem.endswith(suffix) else stem + suffix
-            add(entry['sha256'], entry['size_bytes'], child, ancestors | {digest}, entry.get('extraction'))
+            add(entry['sha256'], entry['size_bytes'], child, ancestors | {id(tree)}, entry.get('extraction'))
 
     for kind, records in data["records"].items():
         for record in records:
-            add(record["sha256"], record["size_bytes"], f'{record["sha256"]}.{kind}')
-    for tree in data["trees"].values():
-        for entry in tree["entries"]:
-            if entry["type"] == "file":
-                add(entry["sha256"], entry["size_bytes"], entry["path"].rsplit("/", 1)[-1], contextual=entry.get("extraction"))
+            add(record["sha256"], record["size_bytes"], f'{record["sha256"]}.{kind}', kind=kind)
+    for sources in data["trees"].values():
+        for tree in sources.values():
+            for entry in tree["entries"]:
+                if entry["type"] == "file":
+                    add(entry["sha256"], entry["size_bytes"], entry["path"].rsplit("/", 1)[-1], contextual=entry.get("extraction"))
     return index
 
 

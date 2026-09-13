@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from pspdb.server import handler_for, download_index
 from pspdb.cli import main
+from pspdb.export import export_site
 
 
 class ContextualIndexTests(unittest.TestCase):
@@ -21,7 +22,7 @@ class ContextualIndexTests(unittest.TestCase):
             entries=[dict(path='payload.gz', type='file', sha256=payload, size_bytes=7)])
         parent = dict(sha256='c'*64, size_bytes=100, entries=[
             dict(path='DATA.PSP', type='file', sha256=source, size_bytes=14, extraction=tree)])
-        data = dict(records={}, trees={'c'*64:parent})
+        data = dict(records={}, trees={'pbp': {'c'*64:parent}})
         self.assertIn('DATA.gz', download_index(data)[payload][1])
         tree['sha256'] = 'd'*64
         self.assertNotIn(payload, download_index(data))
@@ -96,9 +97,52 @@ class DownloadTests(unittest.TestCase):
         (folder / f'{self.digest}.json').write_text(json.dumps(record))
         self.start(self.store)
         with self.get('/api/catalog') as response:
-            self.assertEqual(json.load(response)['trees'][self.digest], record)
+            self.assertEqual(json.load(response)['trees']['tree'][self.digest], record)
         with self.get('/download/' + self.digest + '/decoded.prx') as response:
             self.assertEqual(response.read(), self.content)
+
+    def test_same_bytes_keep_root_and_nested_inventories_and_download_names(self):
+        def write_pair(kind, digest, version, size, entries):
+            folder = self.catalog / kind / f'v{version}'
+            folder.mkdir(parents=True, exist_ok=True)
+            record = dict(kind=kind, schema_version=1, sha256=digest, size_bytes=size, metadata={})
+            tree = dict(kind='tree', schema_version=1, sha256=digest, size_bytes=size,
+                        extractor={'name': 'pspdb-ingest', 'version': str(version)}, entries=entries)
+            (folder / f'{digest}-ingest.json').write_text(json.dumps(record))
+            tree_path = folder / f'{digest}-tree.json'
+            tree_path.write_text(json.dumps(tree))
+            return tree_path
+
+        def file(name, digest=self.empty, size=0):
+            return dict(type='file', path=name, sha256=digest, size_bytes=size)
+
+        write_pair('iso', self.digest, 2, len(self.content), [file('old-root.prx')])
+        write_pair('iso', self.digest, 10, len(self.content), [file('root-only.prx')])
+        write_pair('iso', self.digest, 11, len(self.content), [file('incomplete-root.prx')]).unlink()
+        write_pair('iso9660', self.digest, 1, len(self.content), [file('nested-only.prx')])
+        write_pair('iso9660', self.digest, 2, len(self.content), [file('incomplete-nested.prx')]).unlink()
+        parent = 'c' * 64
+        write_pair('pkg', parent, 1, 100, [file('recovered.iso', self.digest, len(self.content))])
+        before = {p: p.read_bytes() for p in self.catalog.rglob('*.json')}
+        self.start(self.store)
+        with self.get('/api/catalog') as response:
+            data = json.load(response)
+        output = self.root / 'export'
+        export_site(self.catalog, output)
+        exported = json.loads((output / 'catalog.json').read_text())
+        for snapshot in (data, exported):
+            self.assertEqual([entry['path'] for entry in snapshot['trees']['iso'][self.digest]['entries']], ['root-only.prx'])
+            self.assertEqual([entry['path'] for entry in snapshot['trees']['iso9660'][self.digest]['entries']], ['nested-only.prx'])
+            self.assertEqual(snapshot['trees']['pkg'][parent]['entries'][0]['sha256'], self.digest)
+        for name in ('root-only.prx', 'nested-only.prx'):
+            with self.get(f'/download/{self.empty}/{name}') as response:
+                self.assertEqual(response.read(), b'')
+                self.assertIn("filename*=UTF-8''" + name, response.headers['Content-Disposition'])
+        with self.get(f'/download/{self.digest}/recovered.iso') as response:
+            self.assertEqual(response.read(), self.content)
+        self.status(f'/download/{self.empty}/old-root.prx', 404)
+        self.status(f'/download/{self.empty}/incomplete-nested.prx', 404)
+        self.assertEqual(before, {p: p.read_bytes() for p in self.catalog.rglob('*.json')})
 
     def test_extraction_record_identity_is_checked(self):
         folder = self.catalog / 'trees'
@@ -171,10 +215,10 @@ class ExtractedNamesTests(unittest.TestCase):
         from pspdb.server import download_index
         compressed, decoded, parent = [c * 64 for c in 'abc']
         data = {'records': {}, 'trees': {
-            parent: {'size_bytes': 100, 'entries': [dict(path=n, type='file', size_bytes=7, sha256=compressed)
-                for n in ['DATA.gz', 'MODULE.prx.gz', 'EXISTING.elf.gz']]},
-            compressed: {'size_bytes': 7, 'name_rule': 'decoded_suffix', 'entries': [
-                dict(path='module.elf', type='file', size_bytes=20, sha256=decoded)]},
+            'iso': {parent: {'size_bytes': 100, 'entries': [dict(path=n, type='file', size_bytes=7, sha256=compressed)
+                for n in ['DATA.gz', 'MODULE.prx.gz', 'EXISTING.elf.gz']]}},
+            'gzip': {compressed: {'size_bytes': 7, 'name_rule': 'decoded_suffix', 'entries': [
+                dict(path='module.elf', type='file', size_bytes=20, sha256=decoded)]}},
         }}
         names = download_index(data)[decoded][1]
         self.assertTrue({'DATA.elf', 'MODULE.elf', 'EXISTING.elf'} <= names)
@@ -184,17 +228,17 @@ class ExtractedNamesTests(unittest.TestCase):
         from pspdb.server import download_index
         source, compressed, decoded, iso = [c * 64 for c in 'abcd']
         data = {'records': {}, 'trees': {
-            iso: {'size_bytes': 2048, 'entries': [
+            'iso': {iso: {'size_bytes': 2048, 'entries': [
                 {'path': name, 'type': 'file', 'size_bytes': 48, 'sha256': source}
-                for name in ['OPNSSMP.BIN', 'ALIAS.BIN']]},
-            source: {'size_bytes': 48, 'name_rule': 'source_stem', 'entries': [
-                {'path': 'module.prx.gz', 'type': 'file', 'size_bytes': 32, 'sha256': compressed}]},
-            compressed: {'size_bytes': 32, 'name_rule': 'strip_suffix', 'entries': [
-                {'path': 'module.prx', 'type': 'file', 'size_bytes': 64, 'sha256': decoded}]},
+                for name in ['OPNSSMP.BIN', 'ALIAS.BIN']]}},
+            'prx': {source: {'size_bytes': 48, 'name_rule': 'source_stem', 'entries': [
+                {'path': 'module.prx.gz', 'type': 'file', 'size_bytes': 32, 'sha256': compressed}]}},
+            'gzip': {compressed: {'size_bytes': 32, 'name_rule': 'strip_suffix', 'entries': [
+                {'path': 'module.prx', 'type': 'file', 'size_bytes': 64, 'sha256': decoded}]}},
         }}
         index = download_index(data)
         self.assertTrue({'OPNSSMP.prx.gz', 'ALIAS.prx.gz'} <= index[compressed][1])
         self.assertTrue({'OPNSSMP.prx', 'ALIAS.prx'} <= index[decoded][1])
-        data['trees'][decoded] = {'size_bytes': 64, 'name_rule': 'source_stem', 'entries': [
+        data['trees']['prx'][decoded] = {'size_bytes': 64, 'name_rule': 'source_stem', 'entries': [
             {'path': 'module.prx.gz', 'type': 'file', 'size_bytes': 48, 'sha256': source}]}
         self.assertLess(len(download_index(data)[source][1]), 20)

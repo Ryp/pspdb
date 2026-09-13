@@ -60,7 +60,8 @@ def catalog_status(root, current=None, unavailable=None):
     if current is None:
         current, unavailable = extract_external.current_provenance()
     unavailable = unavailable or {}
-    records, trees, parents, selected, kinds = {}, {}, defaultdict(set), {}, {}
+    records, trees, parents, selected = {}, {}, defaultdict(set), {}
+    sizes, legacy_owners, extractors = {}, {}, defaultdict(set)
     for kind in extract_external.versions():
         directory = root / kind
         candidates = {(0, path.stem) for path in directory.glob('*.json')}
@@ -85,18 +86,23 @@ def catalog_status(root, current=None, unavailable=None):
                 raise ValueError(f'Invalid versioned extraction: {tree_path}')
             if record and tree and record['size_bytes'] != tree['size_bytes']:
                 raise ValueError(f'Catalog size conflict: {record_path}')
-            if digest in kinds and kinds[digest] != kind:
-                raise ValueError(f'Ambiguous source kind: {digest}')
-            previous = records.get(digest) or trees.get(digest)
-            if previous and previous['size_bytes'] != (record or tree)['size_bytes']:
+            if not revision and tree:
+                owner = legacy_owners.setdefault(digest, kind)
+                if owner != kind:
+                    raise ValueError(f'Ambiguous legacy source kind: {digest}')
+            size = (record or tree)['size_bytes']
+            if digest in sizes and sizes[digest] != size:
                 raise ValueError(f'Conflicting source size: {digest}')
-            kinds[digest] = kind
-            records[digest] = record
+            sizes[digest] = size
+            node = kind, digest
+            records[node] = record
             if tree:
-                trees[digest] = tree
+                trees[node] = tree
             else:
-                trees.pop(digest, None)
-            selected[digest] = revision
+                trees.pop(node, None)
+            selected[node] = revision
+            if kind not in ('iso', 'pkg'):
+                extractors[digest].add(node)
     def nested_entries(tree):
         inventory = {entry['path']: entry for entry in tree['entries']}
         if len(inventory) != len(tree['entries']):
@@ -107,22 +113,26 @@ def catalog_status(root, current=None, unavailable=None):
                 validate_inline_dependencies(entry, inventory)
                 yield from nested_entries(entry['extraction'])
 
-    for digest, tree in trees.items():
+    for node, tree in trees.items():
         for entry in nested_entries(tree):
             if entry['type'] == 'file':
                 child = entry['sha256']
                 if not HASH.fullmatch(child):
-                    raise ValueError(f'Invalid child hash: {digest}')
+                    raise ValueError(f'Invalid child hash: {node[1]}')
                 if not entry.get('extraction'):
-                    parents[child].add(digest)
+                    candidates = extractors.get(child, ())
+                    if len(candidates) > 1:
+                        raise ValueError(f'Ambiguous extraction kind: {child}')
+                    for child_node in candidates:
+                        parents[child_node].add(node)
     stale, fresh = [], {}
-    for digest in sorted(records.keys() | trees.keys()):
-        record, tree = records.get(digest), trees.get(digest)
-        kind = kinds[digest]
+    for node in sorted(records.keys() | trees.keys()):
+        record, tree = records.get(node), trees.get(node)
+        kind, digest = node
         actual = tree.get('extractor') if tree else None
         expected = current.get(kind)
         reason = ('missing metadata' if not record else 'missing tree' if not tree else
-                  'missing current revision' if str(selected[digest]) != extract_external.versions()[kind] else
+                  'missing current revision' if str(selected[node]) != extract_external.versions()[kind] else
                   'extractor unavailable' if expected is None else
                   'extractor changed' if actual != expected else None)
         if not reason:
@@ -135,23 +145,23 @@ def catalog_status(root, current=None, unavailable=None):
         if reason:
             stale.append({'sha256': digest, 'kind': kind, 'reason': reason,
                           'recorded': actual, 'expected': expected,
-                          'unavailable': unavailable.get(kind), 'selected_version': selected[digest]})
+                          'unavailable': unavailable.get(kind), 'selected_version': selected[node]})
         else:
-            fresh[digest] = True
-    affected = {item['sha256'] for item in stale}
+            fresh.setdefault(kind, {})[digest] = True
+    affected = {(item['kind'], item['sha256']) for item in stale}
     queue = deque(affected)
     while queue:
         for parent in parents[queue.popleft()]:
             if parent not in affected:
                 affected.add(parent)
                 queue.append(parent)
-    roots = {digest for digest, kind in kinds.items() if kind == 'iso'}
-    packages = {digest for digest, kind in kinds.items() if kind == 'pkg'}
+    roots = {node for node in records if node[0] == 'iso'}
+    packages = {node for node in records if node[0] == 'pkg'}
     return {'provenance': current, 'unavailable': unavailable, 'stale': stale,
-            'affected_isos': sorted(roots & affected),
-            'affected_pkgs': sorted(packages & affected),
-            'fresh_pkgs': {digest: True for digest in sorted(packages - affected)},
-            'fresh_trees': fresh, 'fresh_isos': {digest: True for digest in sorted(roots - affected)}}
+            'affected_isos': sorted(digest for _, digest in roots & affected),
+            'affected_pkgs': sorted(digest for _, digest in packages & affected),
+            'fresh_pkgs': {digest: True for _, digest in sorted(packages - affected)},
+            'fresh_trees': fresh, 'fresh_isos': {digest: True for _, digest in sorted(roots - affected)}}
 
 
 def main():

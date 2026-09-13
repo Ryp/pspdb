@@ -291,11 +291,12 @@ function addInventory(parent, entries, extractions = {}, ancestors = new Set(), 
   }
 }
 
-function attachExtraction(node, extractions, ancestors = new Set(), contextual = null) {
-  const extraction = contextual || extractions[node.hash];
-  if (!extraction || (contextual && extraction.sha256 !== node.hash) || extraction.size_bytes !== node.size || ancestors.has(node.hash)) return;
+function attachExtraction(node, extractions, ancestors = new Set(), contextual = null, source = null) {
+  const extraction = contextual || (source === null ? extractions[node.hash] : source[node.hash]);
+  if (extraction === null) throw new Error(`Ambiguous non-root extraction kinds: ${node.hash}`);
+  if (!extraction || (contextual && extraction.sha256 !== node.hash) || extraction.size_bytes !== node.size || ancestors.has(extraction)) return;
   node.extraction = extraction.extractor.name;
-  addInventory(node, extraction.entries, extractions, new Set([...ancestors, node.hash]), extraction.name_rule);
+  addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
 }
 
 function addGroup(parent, name, data = {}) {
@@ -345,7 +346,15 @@ function build(data) {
     return categories.get(name);
   }
   const isos = data.records.iso || [];
-  const extractions = data.trees;
+  const extractions = Object.create(null), sizes = new Map();
+  for (const [kind, sources] of Object.entries(data.trees)) {
+    for (const [hash, tree] of Object.entries(sources)) {
+      if (sizes.has(hash) && sizes.get(hash) !== tree.size_bytes) throw new Error(`Conflicting source sizes: ${hash}`);
+      sizes.set(hash, tree.size_bytes);
+      if (kind === "iso" || kind === "pkg") continue;
+      extractions[hash] = hash in extractions ? null : tree;
+    }
+  }
   for (const iso of isos) {
     const category = mediaGroup(iso.metadata.media_code);
     const id = (iso.metadata.disc_id || iso.metadata.identifier).trim().replace(/^([A-Z]{4})-?([0-9]{5})$/, "$1-$2");
@@ -359,7 +368,7 @@ function build(data) {
       displayName,
       gamePrefix: iso.metadata.media_code === "G" ? identity : null,
     });
-    attachExtraction(node, extractions);
+    attachExtraction(node, extractions, new Set(), null, data.trees.iso || {});
   }
   const packages = data.records.pkg || [];
   if (packages.length) {
@@ -373,7 +382,7 @@ function build(data) {
         gamePrefix: packageSerial(metadata) || null,
         searchMetadata: metadata.content_id || "",
       });
-      attachExtraction(node, extractions);
+      attachExtraction(node, extractions, new Set(), null, data.trees.pkg || {});
     }
   }
   function summarize(node) {

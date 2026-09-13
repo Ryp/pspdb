@@ -13,9 +13,9 @@ vm.runInContext(fs.readFileSync(new URL('../pspdb/web/app.js', import.meta.url),
 const metadata = {disc_id:'ULJS00009', identifier:'ULJS-00009', title:'AI Shogi', disc_version:'1.00', umd_uid:'4997E9C6184F3200', media_code:'G'};
 const entries = [{path:'UMD_DATA.BIN',type:'file',size_bytes:48,sha256:'c'.repeat(64)}];
 function catalog(isos) {
-  const trees = {};
+  const trees = {iso:{}};
   const records = {iso:isos.map(({entries, ...record}) => {
-    trees[record.sha256] = {size_bytes:record.size_bytes,extractor:{name:'iso'},entries};
+    trees.iso[record.sha256] = {size_bytes:record.size_bytes,extractor:{name:'iso'},entries};
     return record;
   })};
   return {records,trees};
@@ -52,12 +52,12 @@ console.log('PASS: video without optional SFO title retains its identifier and n
 
 // A single hash-keyed extraction attaches to both occurrences, without replacing
 // the original file's identity or counting expanded bytes in its parent's size.
-Object.assign(context.fixture.trees, {
+context.fixture.trees.prx = {
   ['c'.repeat(64)]: {size_bytes:48,extractor:{name:'pspdecrypt'},entries:[
     {path:'F0/module.prx',type:'file',size_bytes:1024,sha256:'e'.repeat(64)},
     {path:'again.bin',type:'file',size_bytes:48,sha256:'c'.repeat(64)},
   ]},
-});
+};
 vm.runInContext('build(fixture)', context);
 const expanded = JSON.parse(vm.runInContext(`JSON.stringify(root.children[0].children[0].children.map(iso=>({
   size:iso.size, source:iso.children[0].hash, type:iso.children[0].type,
@@ -83,12 +83,12 @@ context.namingFixture = catalog([{sha256:'a'.repeat(64),metadata,size_bytes:2048
   {path:'ALIAS.BIN',type:'file',size_bytes:48,sha256:'c'.repeat(64)},
 ]}]);
 Object.assign(context.namingFixture.trees, {
-  ['c'.repeat(64)]: {size_bytes:48,extractor:{name:'pspdecrypt'},name_rule:'source_stem',entries:[
+  prx: {['c'.repeat(64)]: {size_bytes:48,extractor:{name:'pspdecrypt'},name_rule:'source_stem',entries:[
     {path:'module.prx.gz',type:'file',size_bytes:32,sha256:'e'.repeat(64)},
-  ]},
-  ['e'.repeat(64)]: {size_bytes:32,extractor:{name:'gzip'},name_rule:'strip_suffix',entries:[
+  ]}},
+  gzip: {['e'.repeat(64)]: {size_bytes:32,extractor:{name:'gzip'},name_rule:'strip_suffix',entries:[
     {path:'module.prx',type:'file',size_bytes:64,sha256:'f'.repeat(64)},
-  ]},
+  ]}},
 });
 vm.runInContext('build(namingFixture)', context);
 const named = JSON.parse(vm.runInContext(`JSON.stringify([...nodes.values()].filter(n=>n.hash==='e'.repeat(64)||n.hash==='f'.repeat(64)).map(n=>n.name))`,context));
@@ -97,8 +97,8 @@ console.log('PASS: shared executable trees inherit each occurrence name through 
 
 // PSN packages are root siblings of UMD and retain their exact package hash.
 context.pkgFixture = {records:{iso:[],pkg:[{sha256:'9'.repeat(64),size_bytes:123,
-  metadata:{content_id:'UP9000-NPUG00001_00-FIXTURE',title:'Demo'}}]},trees:{
-    ['9'.repeat(64)]:{size_bytes:123,extractor:{name:'pspdb-ingest'},entries:[{path:'PARAM.SFO',type:'file',size_bytes:10,sha256:'8'.repeat(64)}]}}};
+  metadata:{content_id:'UP9000-NPUG00001_00-FIXTURE',title:'Demo'}}]},trees:{pkg:{
+    ['9'.repeat(64)]:{size_bytes:123,extractor:{name:'pspdb-ingest'},entries:[{path:'PARAM.SFO',type:'file',size_bytes:10,sha256:'8'.repeat(64)}]}}}};
 vm.runInContext('build(pkgFixture)',context);
 const psn = JSON.parse(vm.runInContext(`JSON.stringify((()=>{const n=root.children.find(n=>n.name==='psn').children[0];
   return {path:n.path,hash:n.hash,size:n.size,label:label(n),child:n.children[0].name};})())`,context));
@@ -153,9 +153,9 @@ for (const [source, path, expected] of [
   context.namingArgs = {source,path};
   assert.equal(vm.runInContext('extractedName(namingArgs.source,namingArgs.path,"decoded_suffix")',context),expected);
 }
-context.contextFixture.trees[payloadHash] = {size_bytes:7,extractor:{name:'gzip'},name_rule:'decoded_suffix',entries:[
+context.contextFixture.trees.gzip = {[payloadHash]: {size_bytes:7,extractor:{name:'gzip'},name_rule:'decoded_suffix',entries:[
   {path:'module.elf',type:'file',size_bytes:20,sha256:'6'.repeat(64)},
-]};
+]}};
 vm.runInContext('build(contextFixture)',context);
 assert.equal(vm.runInContext("[...nodes.values()].find(n=>n.hash==='6'.repeat(64)).name",context),'DATA.elf');
 console.log('PASS: decoded ELF suffix survives contextual gzip naming without duplicate suffixes.');
@@ -168,3 +168,68 @@ const matchedChild = vm.runInContext(`(() => {
 })()`, context);
 assert.equal(matchedChild.redump[0].id, 38300);
 console.log('PASS: nested reconstructed discs retain exact Redump annotations.');
+
+// The same bytes can be an original ISO, a package root, and a nested ISO9660 image.
+// Inventories belong to those observations, not to the hash alone.
+const roleHash = '7'.repeat(64), parentHash = '8'.repeat(64), rootOnlyHash = '0'.repeat(64);
+const roleLeaf = name => ({path:name,type:'file',size_bytes:1,sha256:'9'.repeat(64)});
+context.roleFixture = catalog([
+  {sha256:roleHash,size_bytes:42,metadata,entries:[
+    roleLeaf('root-only.bin'), {path:'self.iso',type:'file',size_bytes:42,sha256:roleHash},
+  ]},
+  {sha256:parentHash,size_bytes:100,metadata,entries:[
+    {path:'nested.iso',type:'file',size_bytes:42,sha256:roleHash},
+    {path:'root-observation-only.iso',type:'file',size_bytes:42,sha256:rootOnlyHash},
+    {path:'inline.iso',type:'file',size_bytes:42,sha256:roleHash,extraction:{
+      sha256:roleHash,size_bytes:42,extractor:{name:'contextual'},entries:[roleLeaf('inline-only.bin')],
+    }},
+  ]},
+  {sha256:rootOnlyHash,size_bytes:42,metadata,entries:[roleLeaf('other-root-only.bin')]},
+]);
+context.roleFixture.records.pkg = [{sha256:roleHash,size_bytes:42,metadata:{title:'Package role',title_id:'NPUG00001'}}];
+context.roleFixture.trees.pkg = {[roleHash]: {size_bytes:42,extractor:{name:'pkg'},entries:[roleLeaf('package-only.bin')]}};
+context.roleFixture.trees.iso9660 = {[roleHash]: {size_bytes:42,extractor:{name:'iso9660'},entries:[
+  roleLeaf('nested-only.bin'), {path:'again.iso',type:'file',size_bytes:42,sha256:roleHash},
+]}};
+vm.runInContext('build(roleFixture)',context);
+const roles = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+  const original = nodes.get('umd/game/'+'7'.repeat(64)+'.iso');
+  const parent = nodes.get('umd/game/'+'8'.repeat(64)+'.iso');
+  const nested = parent.children.find(n=>n.name==='nested.iso');
+  return {
+    root:original.children.map(n=>n.name),
+    nested:nested.children.map(n=>n.name),
+    self:original.children.find(n=>n.name==='self.iso').children.map(n=>n.name),
+    cycle:nested.children.find(n=>n.name==='again.iso').children.map(n=>n.name),
+    hash:nested.hash,size:nested.size,
+    rootFallback:parent.children.find(n=>n.name==='root-observation-only.iso').children.map(n=>n.name),
+    inline:parent.children.find(n=>n.name==='inline.iso').children.map(n=>n.name),
+    pkg:nodes.get('psn/'+'7'.repeat(64)+'.pkg').children.map(n=>n.name),
+  };
+})())`,context));
+assert.deepEqual(roles,{
+  root:['root-only.bin','self.iso'],nested:['again.iso','nested-only.bin'],
+  self:['again.iso','nested-only.bin'],cycle:[],hash:roleHash,size:42,
+  rootFallback:[],inline:['inline-only.bin'],pkg:['package-only.bin'],
+});
+console.log('PASS: same-hash root, nested, package, and inline inventories retain their own names and byte identity.');
+
+const ambiguousFixture = structuredClone(context.roleFixture);
+ambiguousFixture.trees.prx = {[roleHash]: {size_bytes:42,extractor:{name:'prx'},entries:[roleLeaf('wrong-kind.bin')]}};
+context.ambiguousFixture = ambiguousFixture;
+assert.throws(()=>vm.runInContext('build(ambiguousFixture)',context),/Ambiguous non-root extraction kinds/);
+// Inline extraction remains authoritative even when no global kind can be selected.
+context.inlineAmbiguousFixture = catalog([{sha256:parentHash,size_bytes:100,metadata,entries:[
+  {path:'inline.iso',type:'file',size_bytes:42,sha256:roleHash,extraction:{
+    sha256:roleHash,size_bytes:42,extractor:{name:'contextual'},entries:[roleLeaf('inline-only.bin')],
+  }},
+]}]);
+context.inlineAmbiguousFixture.trees.iso9660 = {[roleHash]: {size_bytes:42,extractor:{name:'iso9660'},entries:[]}};
+context.inlineAmbiguousFixture.trees.prx = ambiguousFixture.trees.prx;
+vm.runInContext('build(inlineAmbiguousFixture)',context);
+assert.equal(vm.runInContext("[...nodes.values()].find(n=>n.name==='inline-only.bin').parent.name",context),'inline.iso');
+const conflictingFixture = structuredClone(context.roleFixture);
+conflictingFixture.trees.iso9660[roleHash].size_bytes++;
+context.conflictingFixture = conflictingFixture;
+assert.throws(()=>vm.runInContext('build(conflictingFixture)',context),/Conflicting source sizes/);
+console.log('PASS: ambiguous byte references and cross-role size conflicts fail explicitly; inline extraction overrides lookup.');

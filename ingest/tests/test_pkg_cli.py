@@ -237,6 +237,49 @@ class PkgCliTests(unittest.TestCase):
                     self.assertFalse(result_path(catalog, 'pkg', digest).exists())
                 self.assertFalse(list((catalog/'document').rglob('*-ingest.json')))
 
+    def test_same_iso_bytes_keep_root_and_nested_cache_roles_separate(self):
+        from test_ingest_cli import GAME_UMD
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); inputs = base/'inputs'; inputs.mkdir()
+            catalog, store = base/'catalog', base/'store'
+            iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
+            payload = b'shared image payload'
+            for name, data in [('UMD_DATA.BIN', GAME_UMD), ('FILE.BIN', payload)]:
+                iso.add_fp(io.BytesIO(data), len(data), iso_path='/'+name+';1')
+            image = io.BytesIO(); iso.write_fp(image); iso.close()
+            image = image.getvalue()
+            (inputs/'disc.iso').write_bytes(image)
+            package, _ = pkg_bytes(files_override=[
+                ('PARAM.SFO', sfo({'TITLE': 'Shared ISO roles'}), False),
+                ('disc.iso', image, True)])
+            (inputs/'disc.pkg').write_bytes(package)
+            digest, package_hash = hashlib.sha256(image).hexdigest(), hashlib.sha256(package).hexdigest()
+            run = self.run_ingest(inputs, '--catalog', catalog, '--store', store)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            for kind in ('iso', 'iso9660'):
+                self.assertTrue(result_path(catalog, kind, digest).exists())
+            before = snapshot(catalog)
+            run = self.run_ingest(inputs, '--catalog', catalog, '--store', store, '--skip-existing')
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertIn('Already cataloged: 2 sources skipped.', run.stderr)
+            self.assertEqual(snapshot(catalog), before)
+
+            # A fresh root ISO must not authorize reuse of stale ISO9660 output.
+            # The existing stale pair stays immutable: regeneration must conflict,
+            # not silently accept a package using another role's freshness.
+            nested_record = result_path(catalog, 'iso9660', digest)
+            nested_tree = nested_record.with_name(digest+'-tree.json')
+            tree = json.loads(nested_tree.read_text())
+            tree['extractor']['options'] = ['obsolete extraction recipe']
+            nested_tree.write_text(json.dumps(tree))
+            package_record = result_path(catalog, 'pkg', package_hash)
+            package_record.unlink()
+            package_record.with_name(package_hash+'-tree.json').unlink()
+            run = self.run_ingest(inputs, '--catalog', catalog, '--store', store, '--skip-existing')
+            self.assertNotEqual(run.returncode, 0, run.stderr)
+            self.assertFalse(package_record.exists())
+            self.assertEqual(json.loads(nested_tree.read_text()), tree)
+
     def test_invalid_packages_do_not_publish_roots(self):
         for mode in ('truncated', 'unsupported', 'traversal', 'duplicate', 'missing_parent', 'nested_failure', 'offset'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:

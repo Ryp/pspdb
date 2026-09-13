@@ -54,10 +54,10 @@ class RedumpTests(unittest.TestCase):
         entries = [dict(type='file', path='disc.bin', sha256=digest, size_bytes=size),
                    dict(type='file', path='wrong-size.bin', sha256=digest, size_bytes=size + 1),
                    dict(type='file', path='wrong-hash.bin', sha256='f' * 64, size_bytes=size)]
-        trees = {'parent': {'entries': [dict(type='file', path='DATA.BIN', sha256='a'*64, size_bytes=100,
-                                           extraction={'entries': entries})]}}
+        trees = {'pbp': {'parent': {'entries': [dict(type='file', path='DATA.BIN', sha256='a'*64, size_bytes=100,
+                                                   extraction={'entries': entries})]}}}
         annotate_file_matches(trees, matches)
         self.assertEqual(entries[0]['redump'], expected)
         self.assertNotIn('redump', entries[1])
         self.assertNotIn('redump', entries[2])
-        self.assertNotIn('redump', trees['parent']['entries'][0])
+        self.assertNotIn('redump', trees['pbp']['parent']['entries'][0])

@@ -2,7 +2,7 @@ const std = @import("std");
 
 /// Read-only snapshot of provenance and dependency freshness at run startup.
 pub const State = struct {
-    fresh_trees: std.json.ArrayHashMap(bool),
+    fresh_trees: std.json.ArrayHashMap(std.json.ArrayHashMap(bool)),
     fresh_isos: std.json.ArrayHashMap(bool),
     fresh_pkgs: std.json.ArrayHashMap(bool) = .{},
 };

@@ -25,16 +25,16 @@ class VersionedCatalogTests(unittest.TestCase):
             data = catalog_data(root)
             self.assertEqual(len(data['records']['iso']), 1)
             self.assertEqual(data['records']['iso'][0]['metadata']['title'], 'Extractor 10')
-            self.assertEqual(data['trees'][digest]['extractor']['version'], '10')
+            self.assertEqual(data['trees']['iso'][digest]['extractor']['version'], '10')
             export_site(root, Path(tmp) / 'export')
             exported = json.loads((Path(tmp) / 'export/catalog.json').read_text())
             self.assertEqual(exported['trees'], data['trees'])
             (latest / (digest + '-tree.json')).unlink()
-            self.assertEqual(catalog_data(root)['trees'][digest]['extractor']['version'], '2')
+            self.assertEqual(catalog_data(root)['trees']['iso'][digest]['extractor']['version'], '2')
             # A tree alone does not publish a newer metadata result.
             newer = write(11)
             (newer / (digest + '-ingest.json')).unlink()
-            self.assertEqual(catalog_data(root)['trees'][digest]['extractor']['version'], '2')
+            self.assertEqual(catalog_data(root)['trees']['iso'][digest]['extractor']['version'], '2')
 
     def test_pkg_metadata_and_inventory_survive_static_export(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -49,7 +49,7 @@ class VersionedCatalogTests(unittest.TestCase):
             export_site(root, Path(tmp)/'export')
             data = json.loads((Path(tmp)/'export/catalog.json').read_text())
             self.assertEqual(data['records']['pkg'], [record])
-            self.assertEqual(data['trees'][digest], tree)
+            self.assertEqual(data['trees']['pkg'][digest], tree)
             self.assertFalse(data['downloads_enabled'])
 
     def test_rejects_tree_version_and_identity_mismatch(self):
@@ -66,3 +66,64 @@ class VersionedCatalogTests(unittest.TestCase):
             path.write_text(json.dumps(tree))
             with self.assertRaisesRegex(ValueError, 'versioned tree'):
                 catalog_data(root)
+
+
+class RoleCatalogTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.digest = 'a' * 64
+
+    def write_pair(self, kind, digest, entries, size=42):
+        folder = self.root / kind / 'v1'
+        folder.mkdir(parents=True, exist_ok=True)
+        record = dict(kind=kind, schema_version=1, sha256=digest, size_bytes=size)
+        tree = dict(kind='tree', schema_version=1, sha256=digest, size_bytes=size,
+                    extractor={'name': 'pspdb-ingest', 'version': '1'}, entries=entries)
+        (folder / f'{digest}-ingest.json').write_text(json.dumps(record))
+        path = folder / f'{digest}-tree.json'
+        path.write_text(json.dumps(tree))
+        return path
+
+    def test_legacy_tree_retains_unique_historical_owner_beside_new_role(self):
+        source = self.root / 'iso'; source.mkdir()
+        record = dict(kind='iso', schema_version=1, sha256=self.digest, size_bytes=42)
+        (source / f'{self.digest}.json').write_text(json.dumps(record))
+        legacy = self.root / 'trees'; legacy.mkdir()
+        tree = dict(kind='tree', schema_version=1, sha256=self.digest, size_bytes=42,
+                    extractor={'name': 'iso'}, entries=[dict(type='directory', path='root-only')])
+        (legacy / f'{self.digest}.json').write_text(json.dumps(tree))
+        self.write_pair('iso9660', self.digest, [dict(type='directory', path='nested-only')])
+        data = catalog_data(self.root)
+        self.assertEqual(data['trees']['iso'][self.digest]['entries'][0]['path'], 'root-only')
+        self.assertEqual(data['trees']['iso9660'][self.digest]['entries'][0]['path'], 'nested-only')
+        record['kind'] = 'iso9660'
+        (self.root / 'iso9660' / f'{self.digest}.json').write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, 'Ambiguous legacy'):
+            catalog_data(self.root)
+
+    def test_conflicting_source_sizes_are_rejected_across_roles(self):
+        self.write_pair('iso', self.digest, [])
+        self.write_pair('iso9660', self.digest, [], size=43)
+        with self.assertRaisesRegex(ValueError, 'Conflicting source sizes'):
+            catalog_data(self.root)
+
+    def test_ambiguous_derived_reference_rejects_catalog_but_inline_wins(self):
+        parent, leaf = 'b' * 64, 'c' * 64
+        self.write_pair('prx', self.digest, [])
+        self.write_pair('gzip', self.digest, [])
+        # Multiple observations can coexist until a bare byte reference needs a choice.
+        data = catalog_data(self.root)
+        self.assertEqual(set(data['trees']), {'prx', 'gzip'})
+        entry = dict(type='file', path='DATA.PSP', sha256=self.digest, size_bytes=42)
+        path = self.write_pair('iso', parent, [entry], size=100)
+        with self.assertRaisesRegex(ValueError, 'Ambiguous non-root'):
+            catalog_data(self.root)
+        entry['extraction'] = dict(sha256=self.digest, size_bytes=42, name_rule='source_stem',
+                                  entries=[dict(type='file', path='payload.gz', sha256=leaf, size_bytes=7)])
+        tree = json.loads(path.read_text())
+        tree['entries'] = [entry]
+        path.write_text(json.dumps(tree))
+        from pspdb.server import download_index
+        self.assertIn('DATA.gz', download_index(catalog_data(self.root))[leaf][1])

@@ -1,7 +1,7 @@
 # pspdb
 
-A catalog of PSP file paths, byte sizes, and SHA-256 hashes. Each extracted source hash owns its
-inventory; optional file contents live in a separate deduplicated object store.
+A catalog of PSP file paths, byte sizes, and SHA-256 hashes. Each extractor kind
+and source hash owns revisioned inventories; optional file contents live in a separate deduplicated object store.
 
 - `ingest/`: Zig ISO/PKG/ZIP ingester and ingest tests.
 - `website/`: Python server, browser assets, and website tests.
@@ -42,6 +42,9 @@ output inventory and tool provenance. See the [metadata schema](schemas/record.s
 and [tree schema](schemas/tree.schema.json). The tree is published before its
 ingest record. Results are immutable within a revision; different results in the
 same namespace raise `CatalogConflict`. New revisions preserve previous results.
+The same bytes may have separate source roles: an original `iso` observation and
+a nested `iso9660` extraction retain independent inventories and provenance.
+Their SHA-256/size byte identity and stored object remain shared.
 Inputs are read-only. Catalog JSON is tracked in Git; object stores and source
 images stay local. See [CONTRIBUTING.md](CONTRIBUTING.md) to submit ingested content
 and validate new metadata/tree pairs.
@@ -141,9 +144,12 @@ extractions reuse verified stored child bytes. Missing stored children cause tha
 extractor to run again. Source ISOs/ZIPs must still be available; this command does
 not regenerate arbitrary sources directly from the object store. Without
 `--skip-existing`, all encountered sources are processed as before.
+Intermediate freshness is scoped by extractor kind and source hash:
+`fresh_trees[kind][sha256]` in status JSON. A fresh original ISO observation does
+not authorize reuse of a stale ISO9660 extraction of the same bytes.
 
-The website/export selects the highest numeric **complete** revision per source
-hash, so old revisions do not create duplicate browser rows. An incomplete newer
+The website/export selects the highest numeric **complete** revision per extractor
+kind and source hash, so old revisions do not create duplicate browser rows. An incomplete newer
 pair does not hide an older complete result. Legacy `catalog/<extractor>/<hash>.json`
 and `catalog/trees/<hash>.json` remain readable, but the status command reports
 them as unversioned; regeneration writes versioned pairs and leaves them intact.
@@ -164,6 +170,9 @@ Add `--umdatabase /path/to/pages` for exact SHA-1 links from saved UMDatabase
 entry pages named `ID.html` (for example, `E39CFE68.html`).
 UMD video labels use the SFO title when available, otherwise the observed disc
 identifier. Missing optional SFO metadata does not prevent browsing its inventory.
+The API and exported `catalog.json` keep inventories in `trees[kind][sha256]`.
+Root rows use their explicit `iso` or `pkg` inventory; nested files use their
+derived extractor inventory. Inline contextual extractions retain occurrence precedence.
 
 ## Static hosting / GitHub Pages
 
