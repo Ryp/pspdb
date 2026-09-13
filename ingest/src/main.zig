@@ -81,10 +81,15 @@ pub fn main(init: std.process.Init) !u8 {
     const freshness = if (options.skip_existing) try @import("catalog_state.zig").load(init.gpa, io, catalog.?) else null;
     defer if (freshness) |state| state.deinit();
     const state = if (freshness) |*value| &value.value else null;
-    const extractor_adapter: ?@import("extractor.zig").Adapter = if (store != null and catalog != null) .{
-        .store = store.?,
+    const rap_directory = @import("licenses.zig").directory_path(init.arena.allocator(), init.environ_map) catch |err| switch (err) {
+        error.MissingHomeDirectory => null,
+        else => return err,
+    };
+    const extractor_adapter: ?@import("extractor.zig").Adapter = if (catalog != null) .{
+        .store = store,
         .catalog = catalog.?,
         .state = state,
+        .rap_directory = rap_directory,
     } else null;
     const live = options.progress and options.threads > 1 and (std.Io.File.stderr().isTty(io) catch false);
     const root = if (live) std.Progress.start(io, .{

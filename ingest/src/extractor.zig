@@ -1,15 +1,6 @@
 const std = @import("std");
 const memory = @import("bytes.zig");
 
-/// Both embedded Python entry points need the same self-contained dependency.
-pub const python_bootstrap =
-    \\import sys, types
-    \\rap = types.ModuleType('rap')
-    \\exec(sys.argv.pop(1), rap.__dict__)
-    \\sys.modules[rap.__name__] = rap
-    \\
-;
-
 pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, edat, npumdimg, iso9660, pops, psx, vmp, document };
 
 const document_prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
@@ -63,7 +54,9 @@ pub const Output = struct {
     }
 
     pub fn walk(self: Output, allocator: std.mem.Allocator, io: std.Io, context: anytype, comptime emit: anytype) !void {
-        var directory = try std.Io.Dir.cwd().openDir(io, self.path, .{ .iterate = true });
+        var work = try std.Io.Dir.cwd().openDir(io, self.path, .{});
+        defer work.close(io);
+        var directory = try work.openDir(io, "output", .{ .iterate = true });
         defer directory.close(io);
         var walker = try directory.walk(allocator);
         defer walker.deinit();
@@ -90,30 +83,39 @@ pub const Output = struct {
 
 /// Python only extracts and reports tool provenance. No Python catalog/store work.
 pub const Adapter = struct {
-    store: []const u8,
+    store: ?[]const u8,
     catalog: []const u8,
     state: ?*const @import("catalog_state.zig").State = null,
+    rap_directory: ?[]const u8 = null,
 
-    pub fn extract(self: Adapter, allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, kind: Kind, docinfo: ?[64]u8) !Output {
+    pub fn extract(_: Adapter, allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, input: []const u8, kind: Kind, docinfo: ?[]const u8) !Output {
         if (docinfo != null and kind != .document) return error.InvalidExtractionContext;
         var random: [16]u8 = undefined;
         try io.randomSecure(&random);
-        const output = try std.fmt.allocPrint(allocator, "/tmp/pspdb-extract-{s}", .{std.fmt.bytesToHex(random, .lower)});
-        errdefer allocator.free(output);
-        try std.Io.Dir.cwd().createDir(io, output, .default_dir);
-        errdefer std.Io.Dir.cwd().deleteTree(io, output) catch {};
-        const source = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ self.store, hash[0..2], hash[2..4], hash });
+        const work_path = try std.fmt.allocPrint(allocator, "/tmp/pspdb-extract-{s}", .{std.fmt.bytesToHex(random, .lower)});
+        errdefer allocator.free(work_path);
+        try std.Io.Dir.cwd().createDir(io, work_path, .fromMode(0o700));
+        errdefer std.Io.Dir.cwd().deleteTree(io, work_path) catch {};
+        var work = try std.Io.Dir.cwd().openDir(io, work_path, .{});
+        defer work.close(io);
+        try work.writeFile(io, .{ .sub_path = "input", .data = input });
+        if (docinfo) |bytes| {
+            try work.writeFile(io, .{ .sub_path = "docinfo", .data = bytes });
+        }
+        try work.createDir(io, "output", .default_dir);
+
+        const source = try std.Io.Dir.path.join(allocator, &.{ work_path, "input" });
         defer allocator.free(source);
-        const companion = if (docinfo) |digest|
-            try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ self.store, digest[0..2], digest[2..4], digest })
-        else
-            null;
-        defer if (companion) |path| allocator.free(path);
+        const output = try std.Io.Dir.path.join(allocator, &.{ work_path, "output" });
+        defer allocator.free(output);
+        const companion = try std.Io.Dir.path.join(allocator, &.{ work_path, "docinfo" });
+        defer allocator.free(companion);
         const argv = [_][]const u8{
-            "uv",           "run",  "--no-project", "--offline", "python",     "-c",                                  python_bootstrap ++ @embedFile("extractor_adapter"), @embedFile("rap"),
-            @tagName(kind), source, "--output",     output,      "--versions", @embedFile("extractor_versions_json"), "--docinfo",                                         companion orelse "",
+            "uv",           "run",  "--no-project", "--offline", "python",     "-c",                                  @embedFile("extractor_adapter"),
+            @tagName(kind), source, "--output",     output,      "--versions", @embedFile("extractor_versions_json"), "--docinfo",
+            companion,
         };
-        const result = try std.process.run(allocator, io, .{ .argv = argv[0..if (companion != null) argv.len else argv.len - 2] });
+        const result = try std.process.run(allocator, io, .{ .argv = argv[0..if (docinfo != null) argv.len else argv.len - 2] });
         defer allocator.free(result.stdout);
         defer allocator.free(result.stderr);
         var buffer: [2048]u8 = undefined;
@@ -126,7 +128,7 @@ pub const Adapter = struct {
             else => return error.ExtractionFailed,
         }
         const provenance = try std.json.parseFromSlice(Provenance, allocator, result.stdout, .{ .allocate = .alloc_always });
-        return .{ .path = output, .provenance = provenance };
+        return .{ .path = work_path, .provenance = provenance };
     }
 };
 

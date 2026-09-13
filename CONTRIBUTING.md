@@ -13,12 +13,12 @@ run from the repository root:
 uv sync --locked
 (cd ingest && zig build -Doptimize=ReleaseSafe)
 uv run --locked ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
-  --catalog .work/contribution --store /path/to/store
+  --catalog .work/contribution
 ```
 
-Use a fresh staging catalog for each contribution. Include the store option to
-produce nested extraction trees. This command writes metadata and hashes to the
-staging catalog; extracted bytes go only to your local object store.
+Use a fresh staging catalog for each contribution. This command writes complete
+recursive metadata and hashes without a content store. Add `--store /path/to/store`
+only when you also want to persist extracted bytes locally.
 For supported manuals, configure the
 [DOCUMENT helper](README.md#legacy-document-manuals) before ingestion and
 freshness checks. Missing helpers are not successful extraction.
@@ -30,15 +30,15 @@ Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v11/<source-sha256>-ingest.json
-catalog/iso/v11/<source-sha256>-tree.json
+catalog/iso/v2/<source-sha256>-ingest.json
+catalog/iso/v2/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v1/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v2/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
-Include new nested pairs too, such as `prx/v3/`, `kl3e/v2/`, `kl4e/v2/` and `gzip/v1/`.
-Licensed NPD EDAT extraction also produces `edat/v1/` pairs containing decrypted DAT payloads.
+Include new nested pairs too, such as `prx/v4/`, `kl3e/v2/`, `kl4e/v2/` and `gzip/v1/`.
+Native licensed NPD EDAT extraction produces `edat/v2/` pairs containing decrypted DAT payloads.
 Keep RAP files and all decrypted byte objects local; submit only catalog JSON.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same

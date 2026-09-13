@@ -30,6 +30,25 @@ class CatalogValidationTests(unittest.TestCase):
         with patch.dict(os.environ, {'PATH': ''}):
             self.assertEqual(validate_catalog(self.root), {'pairs': 1, 'isos': 1})
 
+    def test_native_prx_accepts_native_provenance_but_external_requires_hash(self):
+        folder = self.root / 'prx/v4'
+        folder.mkdir(parents=True)
+        self.ingest_path.unlink()
+        self.tree_path.unlink()
+        self.ingest_path = folder / (self.digest + '-ingest.json')
+        self.tree_path = folder / (self.digest + '-tree.json')
+        self.record['kind'] = 'prx'
+        self.tree['extractor']['version'] = '4'
+        self.save()
+        self.assertEqual(validate_catalog(self.root), {'pairs': 1, 'isos': 0})
+        self.tree['extractor']['name'] = 'pspdecrypt'
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'external executable hash'):
+            validate_catalog(self.root)
+        self.tree['extractor']['sha256'] = 'b' * 64
+        self.save()
+        self.assertEqual(validate_catalog(self.root), {'pairs': 1, 'isos': 0})
+
     def test_contextual_tree_checks_attachment_and_nested_entries(self):
         entry = dict(path='DATA.PSP', type='file', sha256='b'*64, size_bytes=14)
         entry['extraction'] = dict(sha256='b'*64, size_bytes=14, name_rule='source_stem',

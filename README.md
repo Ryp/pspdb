@@ -12,18 +12,18 @@ Run the following commands from the repository root.
 ## Build and ingest
 
 Requires **Zig 0.16.0**, **libarchive** development headers/library, and GNU **patch**.
-The first build fetches the pinned Zig-PSP dependency.
+The first build fetches pinned Zig-PSP, pspdecrypt and make-npdata dependencies.
 
 ```sh
 (cd ingest && zig build -Doptimize=ReleaseSafe)
-./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store
+./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog
 ```
 
 Pass multiple input folders as positional arguments to ingest them together:
 
 ```sh
 ./ingest/zig-out/bin/pspdb-ingest /path/to/umd-videos /path/to/umd-games /path/to/pkgs \
-  --catalog catalog --store /path/to/store --threads 2
+  --catalog catalog --threads 2
 ```
 
 All folders share one worker pool, thread cap, catalog/store configuration, and
@@ -76,7 +76,7 @@ ISO and nested ISO9660 extraction resolve shared-extent file aliases
 by exact path, preserving distinct case-sensitive filenames. Metadata lookup
 remains case-insensitive; it must not determine which bytes an inventory path owns.
 
-PKGs write their own versioned pairs under `catalog/pkg/v1/`. Package metadata
+PKGs write their own versioned pairs under `catalog/pkg/v2/`. Package metadata
 includes content ID, title ID, content type, raw metadata-entry-3 `package_flags`
 (when present), and available PSP title/version/firmware fields. Whole-package
 SHA-256/SHA-1 identify the unchanged input. The website and static export retain
@@ -93,8 +93,8 @@ Other types select **minis** (15), **psone_classic** (6), **neogeo** (16), or
 **theme** (9, within supported PSP packages). Missing or unrecognized types fall under **unknown**; empty groups
 are omitted. Grouping preserves package labels and extracted paths and
 requires no ingestion options.
-Embedded PBP files use the existing nested extraction pipeline when both catalog
-and store are set.
+Embedded PBP files use the nested extraction pipeline whenever a catalog is set;
+the content store is optional and only persists extracted bytes.
 Package title metadata is taken from the already-decrypted EBOOT.PBP during its
 inventory walk, without decrypting the full game payload again. Inner PBP metadata
 retains precedence over outer package metadata regardless of entry order.
@@ -299,10 +299,10 @@ node website/tests/tree-catalog.mjs
 
 PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E, KL4E, VMP,
 supported NPD EDAT and legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
-when both catalog and store are set:
+when a catalog is set, with or without a content store:
 
 ```sh
-./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store
+./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog
 ```
 
 PSMF/PMF movies and raw MPEG program streams remain opaque source files; no movie subtrees are generated.
@@ -310,17 +310,18 @@ PSMF/PMF movies and raw MPEG program streams remain opaque source files; no movi
 Detection uses signatures, independent of filenames. SCE borrows slices directly.
 PBP extraction and embedded PKG metadata use Zig-PSP’s PBP reader in memory, with
 borrowed slices and no temporary files. The pinned dependency receives a
-[patch exposing its memory API and fixing bounds/final-section handling](tools/patches/zig-psp-pbp-memory.md). External tools extract into Zig-owned temporary directories;
-Zig hashes/stores the output and queues nested extraction using retained buffers.
-Temporary directories are removed after their immediate walk; children continue from
-memory. An ISO is reported complete only after all its extraction jobs succeed.
+[patch exposing its memory API and fixing bounds/final-section handling](tools/patches/zig-psp-pbp-memory.md). Remaining external tools receive input bytes in private temporary
+directories, not by reopening CAS objects. Zig hashes their outputs and queues
+nested extraction using retained buffers; `--store` additionally persists those bytes.
+Temporary input/output directories are removed after the immediate walk.
+Paired manuals retain their exact input and companion views until contextual extraction.
+An ISO is reported complete only after all its extraction jobs succeed.
 
 Install `pspdecrypt` for PSAR and the patched `rcomage` on PATH (overrides:
 `PSPDECRYPT`, `RCOMAGE`). RCOMage loads INI files from `../share/rcomage` relative to its binary
 (override: `RCOMAGE_DATA`). The Linux/LZR patch is in
 `tools/patches/rcomage-lzr-linux.patch`.
-Python adapters run through uv; the adapter and its RAP-storage dependency are
-embedded together in the ingest binary.
+Python adapters run through uv and are embedded in the ingest binary.
 
 PSAR revision 2 requires rebuilding the pinned external decrypter below for the
 shared PRX recipes, exact decoded firmware-table lengths, and complete CBC/IPL
@@ -416,29 +417,24 @@ This disc decoder handles NPUMDIMG, not PS1 disc payloads or EDAT. PS1 executabl
 decryption and disc reconstruction use the whole-PBP helpers described below.
 The PBP, ISO and PKG revisions were bumped to discover previously opaque children.
 
-NPD EDAT files use a separate authenticated helper:
+NPD EDAT files are authenticated and decrypted in memory by the native ingester.
+The Zig build links pinned make-npdata commit
+`5f44642fa24331da79f4bae6bea516f1784cf1c5`, with private-buffer and thread-safe
+AES-table patches. Its GPLv3 crypto code is linked into the executable.
+No EDAT subprocess, input reread, temporary plaintext file or `PSPDB_EDAT` helper is used.
 
-```sh
-uv run --locked python tools/build_edat.py \
-  --make-npdata-source /path/to/make-npdata \
-  --output .work/pspdb-edat
-export PSPDB_EDAT="$PWD/.work/pspdb-edat"
-# Optional: override the shared acquisition/extraction license directory.
-# export PSPDB_RAP_DIR="/private/path/to/licenses"
-```
-
-The builder archives make-npdata commit `5f44642fa24331da79f4bae6bea516f1784cf1c5`
-and patches only its temporary build copy. It requires Git, patch and a C compiler.
-The adapter selects a regular, nonsymlink, exactly 16-byte `<NPD-content-id>.rap`
-file from the shared license directory described above. License bytes never enter
-catalog JSON or provenance. Missing-license errors name the content ID and lookup
-directory. Missing licenses and failed authentication still fail the ingest root.
-Successful trees can be reused from the object store without decrypting again.
+The key boundary selects a regular, nonsymlink, exactly 16-byte
+`<NPD-content-id>.rap` from the shared license directory described above.
+Override that directory with `PSPDB_RAP_DIR`; otherwise `XDG_DATA_HOME` or
+`~/.local/share/pspdb/licenses` supplies the default. License bytes never enter
+catalog JSON or provenance. Missing/invalid licenses and failed authentication
+fail the ingest root. EDAT revision 2 records native `pspdb-ingest` provenance;
+ISO/PKG revision 2 enables complete recursive inventories without a store.
 
 EDAT extraction supports license-2 NPD v1/flags-0 and v2/flags-0-or-0x0c files,
 with 16 KiB blocks and at most 64 MiB plaintext. Keyed header, metadata-table and
 every ciphertext-block MAC must pass before publication. The original EDAT,
-including signatures and any optional 16-byte footer, stays unchanged; the helper
+including signatures and any optional 16-byte footer, stays unchanged; the decoder
 does not verify filename-dependent hashes or ECDSA signatures. Its sole child is
 `payload.DAT`, displayed and downloaded using the EDAT source stem:
 `ISO.BIN.EDAT` yields `ISO.BIN.DAT`, and `MINIS.EDAT` yields `MINIS.DAT`.

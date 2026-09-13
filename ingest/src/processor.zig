@@ -277,11 +277,15 @@ const Inventory = struct {
     suppress_dispatch: ?[]const u8 = null,
     pair_documents: bool = false,
     documents: std.ArrayList(usize) = .empty,
+    document_inputs: std.AutoHashMapUnmanaged(usize, memory.View) = .empty,
     entries: std.ArrayList(Entry) = .empty,
     paths: std.StringHashMap(usize),
 
     fn deinit(self: *Inventory) void {
         self.paths.deinit();
+        var inputs = self.document_inputs.valueIterator();
+        while (inputs.next()) |view| view.release();
+        self.document_inputs.deinit(self.allocator);
         self.documents.deinit(self.allocator);
         for (self.entries.items) |entry| entry.deinit(self.allocator);
         self.entries.deinit(self.allocator);
@@ -319,6 +323,14 @@ const Inventory = struct {
                 false;
         if (paired_document) try self.documents.append(self.allocator, self.entries.items.len);
         if (contents) |view| {
+            if (self.pair_documents and self.dispatch != null and
+                (paired_document or std.mem.eql(u8, std.Io.Dir.path.basename(name), "DOCINFO.EDAT")))
+            {
+                try self.document_inputs.put(self.allocator, self.entries.items.len, view);
+                _ = view.retain();
+            }
+        }
+        if (contents) |view| {
             if (!paired_document and (self.suppress_dispatch == null or !std.mem.eql(u8, name, self.suppress_dispatch.?))) {
                 if (self.dispatch) |dispatch| try dispatch.inspect(self.allocator, self.io, name, view, entry.sha256.?);
             }
@@ -341,11 +353,9 @@ const Inventory = struct {
             const companion = self.entries.items[companion_index];
             if (companion.type != .file or companion.size_bytes.? != 304) return error.InvalidDocinfo;
             if (entry.size_bytes.? > 64 * 1024 * 1024) return error.InvalidDocument;
-            if (!try verifyStoredInput(self.allocator, self.io, dispatch.adapter.store, &entry.sha256.?, entry.size_bytes.?, &.{}) or
-                !try verifyStoredInput(self.allocator, self.io, dispatch.adapter.store, &companion.sha256.?, companion.size_bytes.?, &.{}))
-                return error.ObjectDisappeared;
-
-            const output = try dispatch.adapter.extract(self.allocator, self.io, entry.sha256.?, .document, companion.sha256.?);
+            const source_input = self.document_inputs.get(index) orelse return error.InvalidDocument;
+            const companion_input = self.document_inputs.get(companion_index) orelse return error.InvalidDocinfo;
+            const output = try dispatch.adapter.extract(self.allocator, self.io, entry.sha256.?, source_input.bytes, .document, companion_input.bytes);
             // The inline tree takes the parsed provenance; temporary output
             // files still disappear after their immediate inventory walk.
             defer {
@@ -424,6 +434,29 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
     var output: ?extractor.Output = null;
     defer if (output) |value| value.deinit(allocator, io);
     const provenance: extractor.Provenance = switch (task.kind) {
+        .edat => blk: {
+            const edat = @import("edat.zig");
+            const bytes = edat.decode(allocator, task.input.bytes, null) catch |err| switch (err) {
+                error.MissingEdatRap => retry: {
+                    const directory = dispatch.adapter.rap_directory orelse return error.MissingEdatRap;
+                    const content_id = try edat.content_id(task.input.bytes);
+                    var rap = @import("licenses.zig").read_rap(io, directory, content_id) catch |key_error| {
+                        std.debug.print("EDAT {s}: {s} in {s}; configure PSPDB_RAP_DIR or import its RAP with tools/psn_acquire.py\n", .{ content_id, @errorName(key_error), directory });
+                        return key_error;
+                    };
+                    defer std.crypto.secureZero(u8, &rap);
+                    break :retry try edat.decode(allocator, task.input.bytes, rap);
+                },
+                else => return err,
+            };
+            const view = memory.Owner.allocated(allocator, bytes) catch |err| {
+                allocator.free(bytes);
+                return err;
+            };
+            defer view.release();
+            try inventory.emitView("payload.DAT", view);
+            break :blk .{ .name = "pspdb-ingest", .version = @import("extractor_versions").edat };
+        },
         .gzip, .prx, .kl3e, .kl4e => blk: {
             const bytes = try switch (task.kind) {
                 .gzip => @import("containers.zig").decodeGzip(allocator, task.input.bytes),
@@ -484,7 +517,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
             try @import("containers.zig").walkPbp(task.input.bytes, &inventory, Inventory.emit);
             if (pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
                 // Whole-PBP context; attach to the corresponding source section.
-                const section_output = try dispatch.adapter.extract(allocator, io, task.hash, section[0], null);
+                const section_output = try dispatch.adapter.extract(allocator, io, task.hash, task.input.bytes, section[0], null);
                 contextual_outputs[if (section[0] == .pops) 0 else 1] = section_output;
                 var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.adapter.store, .dispatch = dispatch, .paths = .init(allocator) };
                 defer child.deinit();
@@ -503,7 +536,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
             break :blk .{ .name = "Zig-PSP zPBPTool", .version = @import("extractor_versions").pbp, .options = &.{"in-memory"} };
         },
         else => blk: {
-            output = try dispatch.adapter.extract(allocator, io, task.hash, task.kind, null);
+            output = try dispatch.adapter.extract(allocator, io, task.hash, task.input.bytes, task.kind, null);
             try output.?.walk(allocator, io, &inventory, Inventory.emitView);
             break :blk output.?.provenance.value;
         },
@@ -519,6 +552,7 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
 
 /// Reuse an unchanged immediate inventory, but still visit its derived children.
 fn reuseTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Dispatch) !?Counts {
+    if (dispatch.adapter.store == null) return null;
     const revision = switch (task.kind) {
         inline else => |kind| @field(@import("extractor_versions"), @tagName(kind)),
     };
@@ -540,6 +574,7 @@ const SavedEntry = struct { path: []const u8, type: []const u8, sha256: ?[]const
 const SavedTree = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry, dependencies: []Dependency = &.{} };
 
 fn reuseEntries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry, dispatch: *Dispatch, pair_documents: bool) anyerror!?Counts {
+    const store = dispatch.adapter.store orelse return null;
     var counts: Counts = .{};
     for (entries) |entry| {
         try validatePath(entry.path);
@@ -552,7 +587,7 @@ fn reuseEntries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry,
             const document = std.mem.eql(u8, std.Io.Dir.path.basename(entry.path), "DOCUMENT.DAT");
             if (document and size > 64 * 1024 * 1024) return error.CatalogConflict;
             var prefix: [24]u8 = undefined;
-            if (!try verifyStoredInput(allocator, io, dispatch.adapter.store, hash, size, &prefix)) return null;
+            if (!try verifyStoredInput(allocator, io, store, hash, size, &prefix)) return null;
             if (document and extractor.pairedDocumentCandidate(prefix[0..@intCast(@min(size, prefix.len))])) {
                 if (tree.dependencies.len != 1 or tree.dependencies[0].size_bytes != 304 or
                     !std.mem.eql(u8, std.Io.Dir.path.basename(tree.dependencies[0].path), "DOCINFO.EDAT"))
@@ -578,14 +613,14 @@ fn reuseEntries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry,
                 if (!std.mem.eql(u8, bound.type, "file") or bound.sha256 == null or bound.size_bytes == null or
                     !std.mem.eql(u8, bound.sha256.?, dependency.sha256) or bound.size_bytes.? != dependency.size_bytes)
                     return error.CatalogConflict;
-                if (!try verifyStoredInput(allocator, io, dispatch.adapter.store, dependency.sha256, dependency.size_bytes, &.{})) return null;
+                if (!try verifyStoredInput(allocator, io, store, dependency.sha256, dependency.size_bytes, &.{})) return null;
             }
             // Contextual parents must not be redispatched without their sibling
             // inputs. Their verified children still visit the normal queue.
             const nested = (try reuseEntries(allocator, io, tree.entries, dispatch, false)) orelse return null;
             counts.reused += nested.reused;
         } else {
-            const object_path = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ dispatch.adapter.store, hash[0..2], hash[2..4], hash });
+            const object_path = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ store, hash[0..2], hash[2..4], hash });
             defer allocator.free(object_path);
             const object = std.Io.Dir.cwd().openFile(io, object_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
                 error.FileNotFound => return null,

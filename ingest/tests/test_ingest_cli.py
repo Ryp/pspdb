@@ -602,7 +602,7 @@ class IngestCliTests(unittest.TestCase):
     def test_psar_header_dispatches_python_adapter_for_iso_and_zip(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'inputs'; root.mkdir()
-            store = Path(tmp) / 'store'; catalog = Path(tmp) / 'catalog'
+            catalog = Path(tmp) / 'catalog'
             payload = b'PSAR' + bytes(64)
             iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
             for name, data in [('UMD_DATA.BIN', GAME_UMD), ('UNUSUAL.DAT', payload),
@@ -616,7 +616,7 @@ class IngestCliTests(unittest.TestCase):
             tool = Path(tmp) / 'pspdecrypt'
             tool.write_text('#!/bin/sh\necho "$2" >> "$PSPDB_TEST_OUTPUTS"\nmkdir -p "$2/F0"\nprintf decoded > "$2/F0/module.prx"\necho Done!\n')
             tool.chmod(0o755)
-            args = ('--catalog', str(catalog), '--store', str(store), '--threads', '2', '--no-progress')
+            args = ('--catalog', str(catalog), '--threads', '2', '--no-progress')
             with patch.dict(os.environ, {'PSPDECRYPT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
                 code, output = self.run_cli(root, *args)
             self.assertEqual(code, 0, output)
@@ -626,8 +626,6 @@ class IngestCliTests(unittest.TestCase):
             entry = next(e for e in tree['entries'] if e['type'] == 'file')
             self.assertEqual(entry['path'], 'F0/module.prx')
             self.assertEqual(entry['sha256'], hashlib.sha256(b'decoded').hexdigest())
-            blob = store / 'sha256' / entry['sha256'][:2] / entry['sha256'][2:4] / entry['sha256']
-            self.assertEqual(blob.read_bytes(), b'decoded')
             self.assertEqual(output.count('psar '), 2)
             self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
             # A child failure must be visible, even if pspdecrypt exits zero.
@@ -711,7 +709,7 @@ class IngestCliTests(unittest.TestCase):
             tool.write_text('''#!/bin/sh
 set -eu
 [ ! -d "$PSPDB_TEST_CATALOG/iso" ] || exit 1
-touch "$PSPDB_TEST_STARTED/$(basename "$3")"
+touch "$PSPDB_TEST_STARTED/$(sha256sum "$3" | cut -d ' ' -f 1)"
 n=0
 while [ "$(ls "$PSPDB_TEST_STARTED" | wc -l)" -lt 4 ]; do
     n=$((n + 1)); [ "$n" -lt 500 ] || exit 1
@@ -727,7 +725,7 @@ echo Done!
                 'PSPDB_TEST_CATALOG': str(catalog), 'PSPDB_TEST_OUTPUTS': str(root / 'outputs'),
             }):
                 code, output = self.run_cli(inputs, '--catalog', str(catalog),
-                    '--store', str(root / 'store'), '--threads', '4', '--no-progress')
+                    '--threads', '4', '--no-progress')
             self.assertEqual(code, 0, output)
             self.assertEqual({p.name for p in markers.iterdir()}, hashes)
             self.assertEqual(len(list((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json'))), 2)
@@ -813,7 +811,7 @@ echo Done!
                 iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
             iso.write(str(inputs / 'test.iso')); iso.close()
             with patch.dict(os.environ, {'PATH': ''}):
-                code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
+                code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--no-progress')
             self.assertEqual(code, 0, output)
             for kind, source, name, child in [('pbp', pbp, 'DATA.PSP', sce), ('sce', sce, 'payload.psp', compressed), ('gzip', compressed, 'module.elf', elf)]:
                 h = hashlib.sha256(source).hexdigest()
@@ -826,7 +824,7 @@ echo Done!
             for name, data in [('UMD_DATA.BIN', GAME_UMD), ('SHARE.BIN', broken)]:
                 iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
             iso.write(str(inputs / 'test.iso')); iso.close()
-            code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
+            code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--no-progress')
             self.assertEqual(code, 1, output)
             self.assertIn('InvalidPbp', output)
 
@@ -906,7 +904,7 @@ echo Done!
                 for name in ('build.zig', 'build.zig.zon'):
                     shutil.copyfile(REPO / 'ingest' / name, checkout / 'ingest' / name)
                 (checkout / 'tools').mkdir()
-                for name in ('extract_external.py', 'rap.py', 'extractor_versions.json', 'catalog_status.py', 'prepare_pspdecrypt.py'):
+                for name in ('extract_external.py', 'extractor_versions.json', 'catalog_status.py', 'prepare_pspdecrypt.py', 'prepare_edat.py'):
                     shutil.copyfile(REPO / 'tools' / name, checkout / 'tools' / name)
                 shutil.copytree(REPO / 'tools/patches', checkout / 'tools/patches')
                 data = checkout / 'website/pspdb/data'
@@ -1037,6 +1035,47 @@ echo Done!
                 self.assertIn(f"Rejected {root / name}: {reason}", output)
             self.assert_summary(output, (1, 0, 0, 6, 1, 5, valid.stat().st_size))
             self.assertEqual(snapshot(Path(tmp)), before)
+
+    def test_native_edat_rejects_missing_unsafe_and_wrong_licenses_without_store(self):
+        identifier = 'UP0001-TEST00001_00-' + 'A' * 16
+        header = bytearray(0x100)
+        header[:4] = b'NPD\0'
+        struct.pack_into('>II', header, 4, 2, 2)
+        header[0x10:0x34] = identifier.encode()
+        struct.pack_into('>I', header, 0x84, 16384)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root / 'inputs'
+            inputs.mkdir()
+            licenses = root / 'licenses'
+            licenses.mkdir()
+            license_path = licenses / (identifier + '.rap')
+            iso = pycdlib.PyCdlib()
+            iso.new(interchange_level=3)
+            for name, data in [('UMD_DATA.BIN', GAME_UMD), ('DATA.EDAT', header)]:
+                iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
+            iso.write(str(inputs / 'test.iso'))
+            iso.close()
+            target = root / 'private-key'
+            target.write_bytes(bytes(16))
+            cases = {
+                'missing': (lambda: None, 'MissingEdatRap'),
+                'oversized': (lambda: license_path.write_bytes(bytes(17)), 'InvalidEdatRap'),
+                'symlink': (lambda: license_path.symlink_to(target), 'InvalidEdatRap'),
+                'fifo': (lambda: os.mkfifo(license_path), 'InvalidEdatRap'),
+                'wrong': (lambda: license_path.write_bytes(bytes(16)), 'EdatAuthenticationFailed'),
+            }
+            for label, (prepare, expected) in cases.items():
+                with self.subTest(case=label):
+                    prepare()
+                    catalog = root / ('catalog-' + label)
+                    with patch.dict(os.environ, {'PSPDB_RAP_DIR': str(licenses), 'PSPDB_EDAT': '/missing/helper', 'PATH': ''}):
+                        code, output = self.run_cli(inputs, '--catalog', str(catalog), '--no-progress')
+                    self.assertEqual(code, 1, output)
+                    self.assertIn(expected, output)
+                    self.assertFalse(list(catalog.rglob('*-ingest.json')))
+                    if label != 'missing':
+                        license_path.unlink()
 
 
 if __name__ == "__main__":

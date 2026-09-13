@@ -1,0 +1,19 @@
+--- a/Linux/utils.c
++++ b/Linux/utils.c
+@@ -118,12 +118,12 @@
+ // Crypto functions (AES128-CBC, AES128-ECB, SHA1-HMAC and AES-CMAC).
+ void aescbc128_decrypt(unsigned char *key, unsigned char *iv, unsigned char *in, unsigned char *out, int len)
+ {
++	// Native jobs share EDAT_IV. CBC must not mutate that global or borrowed input.
++	unsigned char local_iv[0x10];
++	memcpy(local_iv, iv, sizeof(local_iv));
+ 	aes_context ctx;
+ 	aes_setkey_dec(&ctx, key, 128);
+-	aes_crypt_cbc(&ctx, AES_DECRYPT, len, iv, in, out);
+-
+-	// Reset the IV.
+-	memset(iv, 0, 0x10);
++	aes_crypt_cbc(&ctx, AES_DECRYPT, len, local_iv, in, out);
+ }
+ 
+ void aescbc128_encrypt(unsigned char *key, unsigned char *iv, unsigned char *in, unsigned char *out, int len)

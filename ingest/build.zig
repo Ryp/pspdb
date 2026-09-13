@@ -56,8 +56,33 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }));
 
+    const npdata = b.dependency("make_npdata", .{});
+    const prepare_edat = b.addSystemCommand(&.{"python3"});
+    prepare_edat.addFileArg(b.path("../tools/prepare_edat.py"));
+    prepare_edat.addDirectoryArg(npdata.path(""));
+    const edat_source = prepare_edat.addOutputDirectoryArg("make-npdata");
+    prepare_edat.addFileArg(b.path("../tools/patches/make-npdata-safety.patch"));
+    prepare_edat.addFileArg(b.path("../tools/patches/make-npdata-memory.patch"));
+    module.addIncludePath(edat_source.path(b, "Linux"));
+    // Read-only AES tables avoid upstream's unsynchronized first-use setup.
+    // Both upstream AES implementations export these CMAC helper names.
+    const edat_flags = &.{
+        "-std=c11",
+        "-fno-strict-aliasing",
+        "-DPOLARSSL_AES_ROM_TABLES",
+        "-Dxor_128=pspdb_edat_xor_128",
+        "-Dleftshift_onebit=pspdb_edat_leftshift_onebit",
+        "-Dgenerate_subkey=pspdb_edat_generate_subkey",
+        "-Dpadding=pspdb_edat_padding",
+    };
+    module.addCSourceFiles(.{
+        .root = edat_source,
+        .files = &.{ "Linux/aes.c", "Linux/sha1.c", "Linux/utils.c" },
+        .flags = edat_flags,
+    });
+    module.addCSourceFile(.{ .file = b.path("src/edat_native.c"), .flags = edat_flags });
+
     module.addAnonymousImport("extractor_adapter", .{ .root_source_file = b.path("../tools/extract_external.py") });
-    module.addAnonymousImport("rap", .{ .root_source_file = b.path("../tools/rap.py") });
 
     module.addAnonymousImport("catalog_status", .{ .root_source_file = b.path("../tools/catalog_status.py") });
     module.addAnonymousImport("extractor_versions_json", .{ .root_source_file = b.path("../tools/extractor_versions.json") });

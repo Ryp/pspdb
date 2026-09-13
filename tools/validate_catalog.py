@@ -70,7 +70,10 @@ def validate_catalog(root, versions=None):
         if role == 'tree':
             if value['extractor'].get('version') != version:
                 raise ValueError(f'Extractor revision does not match directory: {relative}')
-            if kind in ('psar', 'rco', 'prx', 'kl3e', 'kl4e', 'edat') and 'sha256' not in value['extractor']:
+            native_since = {'prx': 4, 'kl3e': 2, 'kl4e': 2, 'edat': 2}
+            native = (kind in native_since and int(version) >= native_since[kind]
+                      and value['extractor']['name'] == 'pspdb-ingest')
+            if kind in ('psar', 'rco', 'prx', 'kl3e', 'kl4e', 'edat') and not native and 'sha256' not in value['extractor']:
                 raise ValueError(f'Missing external executable hash: {relative}')
             def check_entries(tree):
                 entries = tree['entries']

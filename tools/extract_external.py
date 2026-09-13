@@ -7,21 +7,13 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import stat
 import tempfile
 import xml.etree.ElementTree as ET
 
-if __package__:
-    from .rap import read_rap
-else:
-    from rap import read_rap
 
 
 VERSIONS = None
 
-EDAT_PLAINTEXT_LIMIT = 64 * 1024 * 1024
-EDAT_SOURCE_LIMIT = EDAT_PLAINTEXT_LIMIT + EDAT_PLAINTEXT_LIMIT // 16384 * 16 + 0x110
-EDAT_UPSTREAM = 'upstream:5f44642fa24331da79f4bae6bea516f1784cf1c5'
 
 
 def versions():
@@ -37,17 +29,8 @@ def tool_provenance(kind, tool=None, data=None):
     result = {'name': 'pspdb-ingest', 'version': versions()[kind], 'options': []}
     if kind == 'pbp':
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
-    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e'):
+    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat'):
         return result
-    if kind == 'edat':
-        tool = tool.resolve(strict=True)
-        reported = json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30),
-                              object_pairs_hook=manifest_object)
-        manifest_fields(reported, ('name', 'options'))
-        if (reported['name'] != 'make-npdata' or
-                reported['options'] != [EDAT_UPSTREAM, 'authenticated-edat:1']):
-            raise ValueError('Invalid EDAT helper provenance: authenticated extraction required')
-        return dict(result, **reported, sha256=hashlib.sha256(tool.read_bytes()).hexdigest())
     if kind == 'document':
         tool = tool.resolve(strict=True)
         reported = json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30),
@@ -97,8 +80,6 @@ def current_provenance():
                 tool = executable('PSPDB_POPS', 'pspdb-pops')
             elif kind == 'npumdimg':
                 tool = executable('PKG2ZIP_NPUMDIMG', 'pkg2zip-npumdimg')
-            elif kind == 'edat':
-                tool = executable('PSPDB_EDAT', 'pspdb-edat')
             elif kind == 'document':
                 tool = executable('PSPDB_DOCUMENT', 'pspdb-document')
             elif kind == 'rco':
@@ -110,39 +91,6 @@ def current_provenance():
     return current, unavailable
 
 
-def extract_edat(source, output, tool):
-    if output.is_symlink() or not output.is_dir() or any(output.iterdir()):
-        raise ValueError('Output must be an existing empty directory')
-    provenance = tool_provenance('edat', tool)
-    with regular_file(source, EDAT_SOURCE_LIMIT) as stream:
-        data = stream.read(EDAT_SOURCE_LIMIT + 1)
-    if not 0x100 <= len(data) <= EDAT_SOURCE_LIMIT or data[:4] != b'NPD\0':
-        raise ValueError('Invalid NPD EDAT source')
-    identifier = data[0x10:0x40].rstrip(b'\0')
-    if (not re.fullmatch(rb'[A-Z]{2}[0-9]{4}-[A-Z0-9]{9}_[0-9]{2}-[A-Za-z0-9_]{16}', identifier)
-            or data[0x10:0x40] != identifier.ljust(48, b'\0')):
-        raise ValueError('Invalid EDAT content ID')
-    rap = read_rap(identifier.decode('ascii'))
-    declared_size = int.from_bytes(data[0x88:0x90], 'big')
-    if declared_size > EDAT_PLAINTEXT_LIMIT:
-        raise ValueError('EDAT plaintext exceeds extraction budget')
-    with tempfile.TemporaryDirectory(prefix='.pspdb-edat-', dir=output.parent) as directory:
-        work = Path(directory)
-        staged_source, staged_rap, plaintext = work / 'source.edat', work / 'license.rap', work / 'plaintext.bin'
-        staged_source.write_bytes(data)
-        with staged_rap.open('xb') as stream:
-            os.fchmod(stream.fileno(), 0o600)
-            stream.write(rap)
-        result = subprocess.run([str(tool.resolve(strict=True)), str(staged_source.resolve()),
-                                 str(plaintext.resolve()), str(staged_rap.resolve())],
-                                capture_output=True, text=True, errors='replace', timeout=120)
-        if result.returncode or re.search(r'warning|error|fail|invalid', result.stdout + result.stderr, re.I):
-            raise ValueError('EDAT authentication or decryption failed')
-        if not plaintext.is_file() or plaintext.is_symlink() or plaintext.stat().st_size != declared_size:
-            raise ValueError('EDAT helper returned an invalid plaintext size')
-        # Only decrypted payload is a child; wrapper bytes remain in the original source.
-        plaintext.rename(output / 'payload.DAT')
-    return provenance
 
 
 def extract_psar(source, output, tool):
@@ -284,17 +232,6 @@ def manifest_fields(value, fields):
         raise ValueError('Invalid manifest fields')
 
 
-def regular_file(path, limit):
-    # O_NONBLOCK prevents an unexpected FIFO from blocking before fstat.
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
-            raise ValueError('Invalid file type or size')
-        return os.fdopen(descriptor, 'rb')
-    except BaseException:
-        os.close(descriptor)
-        raise
 
 
 def executable(variable, name):
@@ -303,7 +240,7 @@ def executable(variable, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['psar', 'rco', 'npumdimg', 'edat', 'pops', 'psx', 'document'])
+    parser.add_argument('kind', choices=['psar', 'rco', 'npumdimg', 'pops', 'psx', 'document'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--docinfo', type=Path)
@@ -319,8 +256,6 @@ def main():
             provenance = extract_psar(args.source, args.output, executable('PSPDECRYPT', 'pspdecrypt'))
         elif args.kind == 'npumdimg':
             provenance = extract_npumdimg(args.source, args.output, executable('PKG2ZIP_NPUMDIMG', 'pkg2zip-npumdimg'))
-        elif args.kind == 'edat':
-            provenance = extract_edat(args.source, args.output, executable('PSPDB_EDAT', 'pspdb-edat'))
         elif args.kind == 'psx':
             provenance = extract_psx(args.source, args.output, executable('PSPDB_PSXTRACT2', 'psxtract.exe'))
         elif args.kind == 'pops':
