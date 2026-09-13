@@ -19,19 +19,12 @@ uv run --locked ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
 Use a fresh staging catalog for each contribution. Include the store option to
 produce nested extraction trees. This command writes metadata and hashes to the
 staging catalog; extracted bytes go only to your local object store.
-For supported manuals, PSMFs and raw MPEG2-PS streams, configure the
-[DOCUMENT helper](README.md#legacy-document-manuals),
-[PSMF helper](README.md#psmf-raw-stream-traversal) and
-[MPEG2-PS helper](README.md#raw-mpeg2-program-stream-ranges) before ingestion and
+For supported manuals, configure the
+[DOCUMENT helper](README.md#legacy-document-manuals) before ingestion and
 freshness checks. Missing helpers are not successful extraction.
 
-The MPEG2-PS helper supports standalone extraction and automatic `mpegps/v2`
-catalog pairs. Set `PSPDB_MPEGPS`, not `PSPDB_PSMF`; the default PSMF behavior is
-unchanged. Its strict supported subset and ingestion budgets are documented in
-the link above. A malformed or unsupported recognized stream, missing helper or
-verification failure rejects the containing root. Opaque private/PES bytes and
-packet spans do not establish codec or multichannel validity. Keep source files,
-manifest contents and extracted bytes local; contribute only metadata/tree pairs.
+PSMF/PMF movies and raw MPEG program streams remain opaque source files.
+Keep source files and extracted bytes local; contribute only metadata/tree pairs.
 
 Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
@@ -41,11 +34,11 @@ catalog/iso/v11/<source-sha256>-ingest.json
 catalog/iso/v11/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v14/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v1/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
-Include new nested pairs too, such as `prx/v3/`, `gzip/v2/`, `psmf/v1/` and `mpegps/v2/`.
-Licensed NPD EDAT extraction also produces `edat/v2/` pairs containing decrypted DAT payloads.
+Include new nested pairs too, such as `prx/v3/`, `kl3e/v2/`, `kl4e/v2/` and `gzip/v1/`.
+Licensed NPD EDAT extraction also produces `edat/v1/` pairs containing decrypted DAT payloads.
 Keep RAP files and all decrypted byte objects local; submit only catalog JSON.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same
@@ -92,3 +85,8 @@ start at revision 1 in this tracked baseline, including PRX and gzip, which had
 higher internal revision labels before the reset. This was a layout/provenance-label
 migration, not a new extraction run. Future extractor changes increment from this
 baseline and retain previous results.
+Native KL3E and KL4E extraction uses revision 2; PRX revision 4 folds decryption
+and contained gzip/KL/2RLZ decompression into one result, including `PSPsysGP`
+firmware resources. All use `pspdb-ingest` provenance. PSAR revision 2 uses the
+rebuilt helper with shared PRX recipes and corrected encrypted-record/IPL bounds.
+Older revisions remain as historical records; no production re-ingest is implied.

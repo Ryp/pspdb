@@ -23,5 +23,4 @@ This code is a catalog adapter, not another binary structure reader.
 The build applies the patch to a generated copy of the pinned dependency;
 neither the dependency cache nor the user's separate Zig-PSP checkout is changed.
 The patch is local and has not been submitted upstream. An upstream memory API
-would let us remove this patch. ISO revision 2 and PKG revision 3 record the reader
-change; existing catalog revisions remain immutable.
+would let us remove this patch.

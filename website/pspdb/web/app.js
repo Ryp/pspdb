@@ -316,8 +316,8 @@ function packageGroup(contentType, packageFlags) {
     case 7:
       // PSP update heuristic: package metadata entry 3, bit 4.
       return Number.isInteger(packageFlags) && (packageFlags & 0x10) !== 0 ? "update" : null;
-    case 14:
-    case 15: return null;
+    case 14: return null;
+    case 15: return "minis";
     case 9: return "theme";
     case 16: return "neogeo";
     default: return "unknown";

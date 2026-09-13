@@ -244,6 +244,29 @@ class IngestCliTests(unittest.TestCase):
                     self.assertIn(f"Rejected {root / 'empty.iso'}: EmptyFile", output)
                     self.assertEqual(snapshot(Path(tmp)), before)
 
+    def test_multiple_roots_continue_after_a_missing_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            first, second = base / "first", base / "second"
+            first.mkdir()
+            second.mkdir()
+            files = [first / "game.iso", second / "video.iso"]
+            files[0].write_bytes(iso_bytes())
+            files[1].write_bytes(iso_bytes(GAME_UMD.replace(b"|G", b"|V")))
+            catalog = base / "catalog"
+            for threads in (1, 4):
+                with self.subTest(threads=threads):
+                    code, output = self.run_cli(
+                        first, "--threads", str(threads), str(base / "missing"),
+                        "--catalog", str(catalog), str(second), "--no-progress",
+                    )
+                    self.assertEqual(code, 1, output)
+                    self.assert_processed_once(output, files)
+                    self.assert_summary(output, (2, 0, 0, 2, 2, 1, sum(p.stat().st_size for p in files)))
+                    for path in files:
+                        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                        self.assertTrue(result_path(catalog, "iso", digest).is_file())
+
     def test_many_sibling_directories_finish_exactly_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "inputs"
@@ -330,6 +353,40 @@ class IngestCliTests(unittest.TestCase):
             self.assertIn('CorruptObject', output)
             self.assertEqual(path.read_bytes(), b'x' * len(GAME_UMD))
             self.assertEqual(list((store / '.incoming').iterdir()), [])
+
+    def test_movies_remain_opaque_and_do_not_require_helpers(self):
+        import gzip
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs, store, catalog = root / 'inputs', root / 'store', root / 'catalog'
+            inputs.mkdir()
+            # Deliberately incomplete headers must remain ordinary source bytes.
+            pmf = b'PSMF0014' + bytes(32)
+            mps = b'\x00\x00\x01\xba' + bytes(32)
+            contents = {'UMD_DATA.BIN': GAME_UMD, 'INTRO.PMF': pmf,
+                        'MOVIE.MPS': mps, 'WRAPPED.GZ': gzip.compress(pmf, mtime=0)}
+            image = pycdlib.PyCdlib(); image.new(interchange_level=3)
+            for name, data in contents.items():
+                image.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
+            image.write(str(inputs / 'movies.iso')); image.close()
+            args = ('--catalog', str(catalog), '--store', str(store), '--no-progress')
+            with patch.dict(os.environ, {'PSPDB_PSMF': '/missing/psmf', 'PSPDB_MPEGPS': '/missing/mpegps'}):
+                code, output = self.run_cli(inputs, *args)
+                self.assertEqual(code, 0, output)
+                record = self.records(output)[0]
+                tree = json.loads(tree_path(catalog, record['sha256']).read_text())
+                entries = {entry['path']: entry for entry in tree['entries']}
+                for name, data in contents.items():
+                    digest = hashlib.sha256(data).hexdigest()
+                    self.assertEqual(entries[name], dict(path=name, type='file', size_bytes=len(data), sha256=digest))
+                    self.assertEqual((store / 'sha256' / digest[:2] / digest[2:4] / digest).read_bytes(), data)
+                self.assertEqual({path.name for path in catalog.iterdir()}, {'iso', 'gzip'})
+                compressed = hashlib.sha256(contents['WRAPPED.GZ']).hexdigest()
+                child = json.loads(tree_path(catalog, compressed).read_text())
+                self.assertEqual(child['entries'][0]['sha256'], hashlib.sha256(pmf).hexdigest())
+                code, output = self.run_cli(inputs, *args, '--skip-existing')
+                self.assertEqual(code, 0, output)
+                self.assertIn('Already cataloged: 1 sources skipped.', output)
 
     def test_iso_hardlinks_resolve_case_sensitive_paths(self):
         iso = pycdlib.PyCdlib(); iso.new(interchange_level=3, rock_ridge='1.09')
@@ -699,26 +756,66 @@ echo Done!
             self.assertEqual({e['path'] for e in tree['entries']}, {'resources', 'resources/icon.gim', 'structure.xml'})
             self.assertEqual(tree['extractor']['name'], 'rcomage')
 
-    def test_pbp_sce_prx_and_gzip_recurse(self):
+    def test_gzip_members_recurse_and_corrupt_streams_never_publish(self):
+        import gzip
+        elf = b'\x7fELF\x01\x01' + bytes(10) + b'\xa0\xff' + bytes(34)
+        inner = gzip.compress(elf, mtime=0)
+        first = gzip.compress(inner[:10], mtime=0)
+        second = gzip.compress(inner[10:], mtime=0)
+        source = first + b'\0\0' + second + b'\0\0'
+        bad_crc = bytearray(second); bad_crc[-8] ^= 1
+        bad_size = bytearray(second); bad_size[-4] ^= 1
+        cases = {
+            'valid': source,
+            'crc': first + bad_crc,
+            'size': first + bad_size,
+            'truncated': first + second[:-1],
+            'truncated_deflate': first + second[:12],
+            'trailing_junk': source + b'junk',
+        }
+        for label, compressed in cases.items():
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+                catalog, store = root / 'catalog', root / 'store'
+                iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
+                for name, data in [('UMD_DATA.BIN', GAME_UMD), ('OPAQUE.BIN', compressed)]:
+                    iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
+                iso.write(str(inputs / 'test.iso')); iso.close()
+                with patch.dict(os.environ, {'PATH': ''}):
+                    code, output = self.run_cli(
+                        inputs, '--catalog', str(catalog), '--store', str(store),
+                        '--threads', '2', '--no-progress',
+                    )
+                if label != 'valid':
+                    self.assertEqual(code, 1, output)
+                    self.assertFalse(list(catalog.rglob('*-tree.json')))
+                    continue
+                self.assertEqual(code, 0, output)
+                for packed, name, plain in [(source, 'payload.gz', inner), (inner, 'module.elf', elf)]:
+                    digest = hashlib.sha256(packed).hexdigest()
+                    tree = json.loads(tree_path(catalog, digest).read_text())
+                    child_hash = hashlib.sha256(plain).hexdigest()
+                    self.assertEqual(tree['entries'], [{
+                        'path': name, 'type': 'file', 'size_bytes': len(plain), 'sha256': child_hash,
+                    }])
+                    self.assertEqual((store / 'sha256' / child_hash[:2] / child_hash[2:4] / child_hash).read_bytes(), plain)
+
+    def test_pbp_sce_and_gzip_recurse(self):
         import gzip
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
             elf = b'\x7fELF' + bytes(12) + struct.pack('<H', 0xffa0) + b'decoded module'
             compressed = gzip.compress(elf, mtime=0)
-            prx = bytearray(0x150); prx[:4] = b'~PSP'; struct.pack_into('<H', prx, 6, 1)
-            struct.pack_into('<I', prx, 0xb0, len(compressed))
-            sce = b'~SCE' + struct.pack('<I', 64) + bytes(56) + prx
+            sce = b'~SCE' + struct.pack('<I', 64) + bytes(56) + compressed
             pbp = b'\0PBP' + struct.pack('<I', 0x10000) + struct.pack('<8I', *([40] * 7 + [40 + len(sce)])) + sce
             iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
             for name, data in [('UMD_DATA.BIN', GAME_UMD), ('SHARE.BIN', pbp)]:
                 iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
             iso.write(str(inputs / 'test.iso')); iso.close()
-            decoded = root / 'decrypted'; decoded.write_bytes(compressed)
-            tool = root / 'pspdecrypt'; tool.write_text('#!/bin/sh\ncp "$PSPDB_DECODED" "$2"\necho "Decryption successful"\n'); tool.chmod(0o755)
-            with patch.dict(os.environ, {'PSPDECRYPT': str(tool), 'PSPDB_DECODED': str(decoded)}):
+            with patch.dict(os.environ, {'PATH': ''}):
                 code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
             self.assertEqual(code, 0, output)
-            for kind, source, name, child in [('pbp', pbp, 'DATA.PSP', sce), ('sce', sce, 'payload.psp', prx), ('prx', prx, 'module.prx.gz', compressed), ('gzip', compressed, 'module.elf', elf)]:
+            for kind, source, name, child in [('pbp', pbp, 'DATA.PSP', sce), ('sce', sce, 'payload.psp', compressed), ('gzip', compressed, 'module.elf', elf)]:
                 h = hashlib.sha256(source).hexdigest()
                 self.assertTrue(result_path(root / 'catalog', kind, h).exists())
                 tree = json.loads(tree_path(root / 'catalog', h).read_text())
@@ -733,7 +830,7 @@ echo Done!
             self.assertEqual(code, 1, output)
             self.assertIn('InvalidPbp', output)
 
-    def test_elf_embedded_wrapper_recurses_to_kl3e(self):
+    def test_elf_embedded_invalid_prx_blocks_root_publication(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
             decoded = b'KL3E' + bytes(60)
@@ -747,21 +844,37 @@ echo Done!
             for name, data in [('UMD_DATA.BIN', GAME_UMD), ('MODULE.BIN', elf)]:
                 iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
             iso.write(str(inputs / 'test.iso')); iso.close()
-            payload = root / 'decrypted'; payload.write_bytes(decoded)
-            kle = root / 'kle'; kle.write_text('#!/bin/sh\nprintf reboot > "$2"\necho "Decompression successful"\n'); kle.chmod(0o755)
-            tool = root / 'pspdecrypt'
-            tool.write_text('#!/bin/sh\ncp "$PSPDB_DECODED" "$2"\necho "Decryption successful"\n')
-            tool.chmod(0o755)
-            with patch.dict(os.environ, {'PSPDECRYPT': str(tool), 'PSPDB_DECODED': str(payload), 'PSPDECRYPT_KLE': str(kle)}):
+            with patch.dict(os.environ, {'PATH': ''}):
                 code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
+            self.assertEqual(code, 1, output)
+            self.assertFalse((root / 'catalog' / 'iso').exists())
+            self.assertFalse((root / 'catalog' / 'prx').exists())
+
+    def test_kl_variants_decode_and_recurse_without_external_helpers(self):
+        import gzip
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+            elf = b'\x7fELF' + bytes(12) + struct.pack('<H', 0xffa0) + b'decoded module'
+            compressed = gzip.compress(elf, mtime=0)
+            streams = {kind: kind.upper().encode() + b'\x80' + struct.pack('>I', len(compressed)) + compressed
+                       for kind in ('kl3e', 'kl4e')}
+            iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
+            iso.add_fp(BytesIO(GAME_UMD), len(GAME_UMD), iso_path='/UMD_DATA.BIN;1')
+            for kind, data in streams.items():
+                iso.add_fp(BytesIO(data), len(data), iso_path='/' + kind.upper() + '.BIN;1')
+            iso.write(str(inputs / 'test.iso')); iso.close()
+            with patch.dict(os.environ, {'PATH': ''}):
+                code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'),
+                                           '--store', str(root / 'store'), '--threads', '4', '--no-progress')
             self.assertEqual(code, 0, output)
-            for kind, source, name, child in [('elf', elf, 'embedded-80.psp', wrapper), ('prx', wrapper, 'module.bin.kl3e', decoded), ('kl3e', decoded, 'payload.bin', b'reboot')]:
-                h = hashlib.sha256(source).hexdigest()
-                self.assertTrue(result_path(root / 'catalog', kind, h).exists())
-                tree = json.loads(tree_path(root / 'catalog', h).read_text())
-                self.assertEqual(tree['entries'], [{'path': name, 'type': 'file', 'size_bytes': len(child), 'sha256': hashlib.sha256(child).hexdigest()}])
-                child_hash = hashlib.sha256(child).hexdigest()
-                self.assertEqual((root / 'store/sha256' / child_hash[:2] / child_hash[2:4] / child_hash).read_bytes(), child)
+            for kind, data in streams.items():
+                tree = json.loads(tree_path(root / 'catalog', hashlib.sha256(data).hexdigest()).read_text())
+                self.assertEqual(tree['entries'], [{
+                    'path': 'payload.gz', 'type': 'file', 'size_bytes': len(compressed),
+                    'sha256': hashlib.sha256(compressed).hexdigest(),
+                }])
+            digest = hashlib.sha256(elf).hexdigest()
+            self.assertEqual((root / 'store' / 'sha256' / digest[:2] / digest[2:4] / digest).read_bytes(), elf)
 
     def test_revision_namespaces_and_nested_reuse(self):
         import gzip
@@ -793,11 +906,12 @@ echo Done!
                 for name in ('build.zig', 'build.zig.zon'):
                     shutil.copyfile(REPO / 'ingest' / name, checkout / 'ingest' / name)
                 (checkout / 'tools').mkdir()
-                for name in ('extract_external.py', 'extractor_versions.json', 'catalog_status.py'):
+                for name in ('extract_external.py', 'rap.py', 'extractor_versions.json', 'catalog_status.py', 'prepare_pspdecrypt.py'):
                     shutil.copyfile(REPO / 'tools' / name, checkout / 'tools' / name)
-                (checkout / 'tools/patches').mkdir()
-                shutil.copyfile(REPO / 'tools/patches/zig-psp-pbp-memory.patch', checkout / 'tools/patches/zig-psp-pbp-memory.patch')
-                shutil.copyfile(REPO / 'tools/patches/zig-psp-sfo-memory.patch', checkout / 'tools/patches/zig-psp-sfo-memory.patch')
+                shutil.copytree(REPO / 'tools/patches', checkout / 'tools/patches')
+                data = checkout / 'website/pspdb/data'
+                data.mkdir(parents=True)
+                shutil.copyfile(REPO / 'website/pspdb/data/contextual_extractors.json', data / 'contextual_extractors.json')
                 revisions = dict(VERSIONS)
                 def rebuild():
                     (checkout / 'tools/extractor_versions.json').write_text(json.dumps(revisions))

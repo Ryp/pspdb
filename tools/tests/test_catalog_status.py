@@ -55,44 +55,6 @@ class CatalogStatusTests(unittest.TestCase):
         self.write('gzip', '3', child)
         self.assertEqual(catalog_status(self.root, self.current)['fresh_pkgs'], {root: True})
 
-    def test_raw_stream_helper_identity_and_availability_invalidate_recursive_roots(self):
-        base = self.root
-        for kind, runner, name, options in [
-            ('psmf', 'run_psmf', 'pmftools',
-             [extract_external.PSMF_UPSTREAM, 'manifest-budget-env:1']),
-            ('mpegps', 'run_mpegps', 'pmftools-mpegps',
-             [extract_external.MPEGPS_UPSTREAM, 'raw-mpeg2:1', 'opaque-private-pes:1',
-              'manifest:1', 'manifest-budget-env:1', 'compact-manifest:1']),
-        ]:
-            with self.subTest(kind=kind):
-                self.root = base / kind
-                self.root.mkdir()
-                self.revisions[kind] = '1'
-                tool = self.root / ('pspdb-' + kind)
-                tool.write_bytes(b'executable-prefix-and-bundled-runtime-one')
-                reported = json.dumps(dict(name=name, options=options)).encode()
-                iso, pkg, pbp, movie = ('a'*64, 'b'*64, 'c'*64, 'd'*64)
-                with patch.object(extract_external, runner, return_value=reported):
-                    self.current[kind] = extract_external.tool_provenance(kind, tool)
-                    self.write('iso', '2', iso, [movie])
-                    self.write('pkg', '1', pkg, [pbp])
-                    self.write('pbp', '1', pbp, [movie])
-                    self.write(kind, '1', movie)
-                    before = catalog_status(self.root, self.current)
-                    self.assertEqual(before['fresh_isos'], {iso: True})
-                    self.assertEqual(before['fresh_pkgs'], {pkg: True})
-                    tool.write_bytes(b'executable-prefix-and-bundled-runtime-two')
-                    self.current[kind] = extract_external.tool_provenance(kind, tool)
-                after = catalog_status(self.root, self.current)
-                self.assertEqual(after['affected_isos'], [iso])
-                self.assertEqual(after['affected_pkgs'], [pkg])
-                del self.current[kind]
-                missing = catalog_status(self.root, self.current, {kind: 'helper missing'})
-                self.assertEqual(missing['fresh_isos'], {})
-                self.assertEqual(missing['fresh_pkgs'], {})
-                self.assertEqual(missing['stale'][0]['reason'], 'extractor unavailable')
-                self.assertEqual(missing['stale'][0]['unavailable'], 'helper missing')
-
     def test_stale_root_iso_does_not_taint_same_hash_iso9660_or_parent_pkg(self):
         digest, package = 'a'*64, 'b'*64
         self.write('iso', '1', digest)
@@ -301,8 +263,7 @@ class CatalogStatusTests(unittest.TestCase):
         root, source = '1'*64, 'b'*64
         path = self.write('pbp', '1', root, [source])
         tree = json.loads(path.read_text())
-        for name, kind in [('pops', 'pops'), ('pspdb-pops', 'pops'), ('PSXtract-2', 'psx'),
-                           ('pmftools', 'psmf'), ('pmftools-mpegps', 'mpegps')]:
+        for name, kind in [('pops', 'pops'), ('pspdb-pops', 'pops'), ('PSXtract-2', 'psx')]:
             with self.subTest(name=name):
                 decoder = dict(name=name, version='1', sha256='c'*64, options=[])
                 self.current[kind] = decoder

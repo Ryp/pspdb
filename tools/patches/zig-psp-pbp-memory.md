@@ -26,13 +26,11 @@ Zig-PSP checkout. GNU `patch` must be on PATH. No SDK binaries are needed at run
 metadata extraction uses the same API. Tests check borrowed-slice identity,
 complete final-section bytes, malformed headers/ranges, and nested ingest.
 
-PBP revision 2 records `Zig-PSP zPBPTool` / `in-memory` provenance. PKG revision 2
-records its switch to this reader for embedded metadata. Bump these revisions
-when changing the dependency/patch in ways that affect their results. Previous
-catalog revisions remain immutable. This patch is local, not yet submitted upstream.
+PBP extraction records `Zig-PSP zPBPTool` / `in-memory` provenance. PKG extraction
+uses this reader for embedded metadata. Bump their revisions when changing the
+dependency/patch in ways that affect results. This patch is local, not yet submitted upstream.
 
-PBP revision 5 names the final section `DATA.BIN` in the tool's analyzer, unpacker
+The reader names the final section `DATA.BIN` in the tool's analyzer, unpacker
 and memory API. The PBP stores offsets, not filenames; this neutral generated
 name avoids implying that the payload is always a firmware PSAR archive. Format
-detection continues to inspect the bytes. Previous catalog revisions retain their
-original names.
+detection continues to inspect the bytes.

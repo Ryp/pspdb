@@ -32,10 +32,36 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }));
 
+    const decrypt = b.dependency("pspdecrypt", .{});
+    const prepare = b.addSystemCommand(&.{"python3"});
+    prepare.addFileArg(b.path("../tools/prepare_pspdecrypt.py"));
+    prepare.addDirectoryArg(decrypt.path(""));
+    const native_source = prepare.addOutputDirectoryArg("pspdecrypt");
+    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-update-xor.patch"));
+    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-prx-native.patch"));
+    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-prx-coverage.patch"));
+    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-kle-native.patch"));
+    module.addIncludePath(native_source);
+    module.addCSourceFiles(.{
+        .root = native_source,
+        .files = &.{ "libkirk/kirk_engine.c", "libkirk/AES.c", "libkirk/SHA1.c", "libkirk/bn.c", "libkirk/ec.c", "kl4e.c" },
+        .flags = &.{ "-std=c11", "-fno-strict-aliasing" },
+    });
+    module.addCSourceFile(.{ .file = native_source.path(b, "PrxDecrypter.cpp"), .flags = &.{ "-std=c++17", "-fno-strict-aliasing" } });
+    module.addCSourceFile(.{ .file = b.path("src/prx_native.cpp"), .flags = &.{"-std=c++17"} });
+    module.link_libcpp = true;
+    module.addImport("zig_psp_prx_encrypt", b.createModule(.{
+        .root_source_file = sdk.path("tools/prxencrypt/prx_encrypt.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+
     module.addAnonymousImport("extractor_adapter", .{ .root_source_file = b.path("../tools/extract_external.py") });
+    module.addAnonymousImport("rap", .{ .root_source_file = b.path("../tools/rap.py") });
 
     module.addAnonymousImport("catalog_status", .{ .root_source_file = b.path("../tools/catalog_status.py") });
     module.addAnonymousImport("extractor_versions_json", .{ .root_source_file = b.path("../tools/extractor_versions.json") });
+    module.addAnonymousImport("contextual_extractors_json", .{ .root_source_file = b.path("../website/pspdb/data/contextual_extractors.json") });
     const revisions = b.addOptions();
     const revision_bytes = std.Io.Dir.cwd().readFileAlloc(b.graph.io, b.pathFromRoot("../tools/extractor_versions.json"), b.allocator, .unlimited) catch @panic("Cannot read extractor revisions");
     const parsed = std.json.parseFromSlice(std.json.Value, b.allocator, revision_bytes, .{}) catch @panic("Invalid extractor revisions");

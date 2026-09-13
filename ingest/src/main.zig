@@ -2,7 +2,7 @@ const std = @import("std");
 const ingest = @import("ingest.zig");
 
 const Options = struct {
-    folder: ?[]const u8 = null,
+    folders: []const []const u8 = &.{},
     threads: usize = 1,
     store: ?[]const u8 = null,
     catalog: ?[]const u8 = null,
@@ -11,8 +11,10 @@ const Options = struct {
     help: bool = false,
 };
 
-fn parseArgs(args: []const []const u8, default_threads: usize) !Options {
+fn parseArgs(allocator: std.mem.Allocator, args: []const []const u8, default_threads: usize) !Options {
     var options: Options = .{ .threads = default_threads };
+    var folders: std.ArrayList([]const u8) = .empty;
+    defer folders.deinit(allocator);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -37,27 +39,26 @@ fn parseArgs(args: []const []const u8, default_threads: usize) !Options {
             if (options.threads == 0) return error.InvalidThreadCount;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return error.UnknownOption;
-        } else if (options.folder != null) {
-            return error.MultipleFolders;
         } else {
-            options.folder = arg;
+            try folders.append(allocator, arg);
         }
     }
     if (!options.help) {
-        if (options.folder == null) return error.MissingFolder;
+        if (folders.items.len == 0) return error.MissingFolder;
         if (options.skip_existing and options.catalog == null) return error.SkipExistingRequiresCatalog;
     }
+    options.folders = try folders.toOwnedSlice(allocator);
     return options;
 }
 
 pub fn main(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
-    const options = parseArgs(args[1..], std.Thread.getCpuCount() catch 1) catch |err| {
-        std.debug.print("pspdb-ingest: {s}\nUsage: pspdb-ingest FOLDER [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\n", .{@errorName(err)});
+    const options = parseArgs(init.arena.allocator(), args[1..], std.Thread.getCpuCount() catch 1) catch |err| {
+        std.debug.print("pspdb-ingest: {s}\nUsage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\n", .{@errorName(err)});
         return 2;
     };
     if (options.help) {
-        std.debug.print("Usage: pspdb-ingest FOLDER [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.pkg/.zip contents; ZIP ISO/PKG members decompressed in memory. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG results and checks nested extractor provenance (requires --catalog; off by default).\nPSAR/RCO/PRX/SCE/PBP/gzip files are processed automatically when --store and --catalog are set; external adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
+        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.pkg/.zip contents across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. ZIP ISO/PKG members decompressed in memory. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG results and checks nested extractor provenance (requires --catalog; off by default).\nPSAR/RCO/PRX/SCE/PBP/gzip files are processed automatically when --store and --catalog are set; external adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
         return 0;
     }
 
@@ -91,10 +92,10 @@ pub fn main(init: std.process.Init) !u8 {
         .initial_delay_ns = .fromMilliseconds(50),
     }) else std.Progress.Node.none;
     const worker_count = options.threads - @as(usize, if (live) 1 else 0);
-    ingest.log(io, "Ingesting: {s} (thread cap {d}, ingest workers {d}, progress task {d})\n", .{
-        options.folder.?, options.threads, worker_count, @as(usize, if (live) 1 else 0),
+    ingest.log(io, "Ingesting {d} folders (thread cap {d}, ingest workers {d}, progress task {d})\n", .{
+        options.folders.len, options.threads, worker_count, @as(usize, if (live) 1 else 0),
     });
-    const stats = ingest.run(init.gpa, io, options.folder.?, worker_count, root, store, catalog, options.skip_existing, extractor_adapter, state) catch |err| {
+    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, extractor_adapter, state) catch |err| {
         root.end();
         std.debug.print("pspdb-ingest: {s}\n", .{@errorName(err)});
         return 1;
@@ -109,12 +110,16 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 test "CLI requires a folder and a positive thread cap" {
-    _ = try parseArgs(&.{"folder"}, 4);
-    try std.testing.expectError(error.MissingStorePath, parseArgs(&.{ "folder", "--store" }, 4));
-    const stored = try parseArgs(&.{ "folder", "--store", "objects" }, 4);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    _ = try parseArgs(allocator, &.{"folder"}, 4);
+    try std.testing.expectError(error.MissingFolder, parseArgs(allocator, &.{}, 4));
+    try std.testing.expectError(error.MissingStorePath, parseArgs(allocator, &.{ "folder", "--store" }, 4));
+    const stored = try parseArgs(allocator, &.{ "folder", "--store", "objects" }, 4);
     try std.testing.expectEqualStrings("objects", stored.store.?);
-    try std.testing.expectError(error.InvalidThreadCount, parseArgs(&.{ "folder", "--threads", "0" }, 4));
-    const options = try parseArgs(&.{ "folder", "--threads", "1", "--no-progress" }, 4);
+    try std.testing.expectError(error.InvalidThreadCount, parseArgs(allocator, &.{ "folder", "--threads", "0" }, 4));
+    const options = try parseArgs(allocator, &.{ "folder", "--threads", "1", "--no-progress" }, 4);
     try std.testing.expectEqual(@as(usize, 1), options.threads);
     try std.testing.expect(!options.progress);
 }

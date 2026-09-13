@@ -424,6 +424,31 @@ pub fn processTask(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatc
     var output: ?extractor.Output = null;
     defer if (output) |value| value.deinit(allocator, io);
     const provenance: extractor.Provenance = switch (task.kind) {
+        .gzip, .prx, .kl3e, .kl4e => blk: {
+            const bytes = try switch (task.kind) {
+                .gzip => @import("containers.zig").decodeGzip(allocator, task.input.bytes),
+                .prx => @import("prx.zig").decode(allocator, task.input.bytes),
+                .kl3e, .kl4e => @import("kle.zig").decode(allocator, task.input.bytes),
+                else => unreachable,
+            };
+            const view = memory.Owner.allocated(allocator, bytes) catch |err| {
+                allocator.free(bytes);
+                return err;
+            };
+            defer view.release();
+            const name: []const u8 = if (std.mem.startsWith(u8, bytes, "\x7fELF"))
+                "module.elf"
+            else if (task.kind != .prx and std.mem.startsWith(u8, bytes, "\x1f\x8b\x08"))
+                "payload.gz"
+            else
+                "payload.bin";
+            try inventory.emitView(name, view);
+            const revision = switch (task.kind) {
+                inline .gzip, .prx, .kl3e, .kl4e => |kind| @field(@import("extractor_versions"), @tagName(kind)),
+                else => unreachable,
+            };
+            break :blk .{ .name = "pspdb-ingest", .version = revision };
+        },
         .iso9660 => blk: {
             try iso.walk(allocator, task.input.bytes, &inventory, Inventory.emitView);
             try inventory.extractDocuments();

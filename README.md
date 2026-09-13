@@ -19,15 +19,29 @@ The first build fetches the pinned Zig-PSP dependency.
 ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store
 ```
 
+Pass multiple input folders as positional arguments to ingest them together:
+
+```sh
+./ingest/zig-out/bin/pspdb-ingest /path/to/umd-videos /path/to/umd-games /path/to/pkgs \
+  --catalog catalog --store /path/to/store --threads 2
+```
+
+All folders share one worker pool, thread cap, catalog/store configuration, and
+combined summary. A failed folder does not stop the others; any failure makes
+the command exit nonzero. Overlapping folders are scanned as supplied, without
+deduplicating their paths.
+
 Discovers ISO and PKG files, including members of ZIP archives. ISOs require a
 root `UMD_DATA.BIN`. Retail PSP/PS1 PKGs are decrypted by the native PKG extractor,
 preserving every file and directory at its original path. `--store` is optional. `--threads N` caps threads (default: logical CPU
 count); `--no-progress` disables terminal progress. `--skip-existing` skips current
 ISO/PKG results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
 
-Filesystem discovery stays parallel, but only one ISO or PKG is admitted through hashing,
-metadata parsing, and its immediate file walk at a time. Nested extractors share
-the worker pool and retain their input bytes in memory; they can overlap the next ISO.
+Filesystem discovery stays parallel. ISO/PKG intake concurrency is `max(1, N / 4)`,
+rounded down from the configured `--threads N` cap before reserving a progress thread.
+This covers hashing, metadata parsing, and the immediate file walk, including ZIP members.
+Nested extractors share the worker pool, retain their input bytes in memory, and
+take scheduling priority over new intakes.
 
 Each extractor revision owns a namespace under `catalog/<extractor>/v<version>/`.
 For example, ISO extractor revision 1 writes two adjacent files:
@@ -52,32 +66,31 @@ and validate new metadata/tree pairs.
 SFO metadata is parsed in memory with the pinned Zig-PSP zSFOTool code. A
 [dependency patch](tools/patches/zig-psp-sfo-memory.md) exposes its reader and
 adds bounds validation; PSPDB only selects and validates its catalog fields.
-The reader change is recorded in ISO revision 2 and PKG revision 3.
 
 Metadata is read independently before file inventory/storage: `UMD_DATA.BIN`
 and both game/video `PARAM.SFO` paths. When both SFOs exist, game metadata takes
 precedence. If neither exists, the updater SFO supplies the title and version; its generic
 ID does not replace the disc identifier.
 
-ISO revision 4 and nested ISO9660 revision 2 resolve shared-extent file aliases
+ISO and nested ISO9660 extraction resolve shared-extent file aliases
 by exact path, preserving distinct case-sensitive filenames. Metadata lookup
 remains case-insensitive; it must not determine which bytes an inventory path owns.
 
-PKGs write their own versioned pairs under `catalog/pkg/v14/`. Package metadata
+PKGs write their own versioned pairs under `catalog/pkg/v1/`. Package metadata
 includes content ID, title ID, content type, raw metadata-entry-3 `package_flags`
 (when present), and available PSP title/version/firmware fields. Whole-package
 SHA-256/SHA-1 identify the unchanged input. The website and static export retain
 the **psp** root row: its size column sums original ISO/PKG sizes without counting
 expanded contents again. Packages appear under **psn**, alongside **umd**.
 
-Generic PSP packages (content types 7, 14, 15) appear directly under **psn**.
+Generic PSP packages (content types 7, 14) appear directly under **psn**.
 The current update heuristic puts content type 7 with `package_flags & 0x10`
 under **psn/update**. This bit separates all 67 verified updates from 30 non-update
 controls in the observed corpus; it is an empirical heuristic, not a formal
 format guarantee. Legacy type-7 records without flags remain directly under
 **psn** until re-ingested. Other content types do not use the update heuristic.
-Other types select **psone_classic** (6), **neogeo** (16), or **theme** (9, within supported
-PSP packages). Missing or unrecognized types fall under **unknown**; empty groups
+Other types select **minis** (15), **psone_classic** (6), **neogeo** (16), or
+**theme** (9, within supported PSP packages). Missing or unrecognized types fall under **unknown**; empty groups
 are omitted. Grouping preserves package labels and extracted paths and
 requires no ingestion options.
 Embedded PBP files use the existing nested extraction pipeline when both catalog
@@ -94,22 +107,61 @@ supported: as with ISOs, a nested extractor failure fails that source's full ing
 
 ## PSN reference inventory and bounded acquisition
 
-Inventory local PSP/PSX NoPayStation TSV snapshots without network access:
+Fetch the current PSP/PSX NoPayStation TSV snapshots, inventory them, and import
+their inline RAPs (no PKG downloads):
 
 ```sh
-uv run --locked python tools/psn_acquire.py /path/to/tsvs \
+uv run --locked python tools/psn_acquire.py \
   --work .work/psn-acquire --catalog catalog
 ```
+
+With no positional paths, each run fetches all six supported lists from
+`https://nopaystation.com/tsv/` over HTTPS: PSP games, demos, DLCs, themes, updates,
+and PSX games. Validated snapshots are cached under `--work/snapshots`, with private
+permissions because TSVs may contain RAPs. The report records source URLs and
+snapshot hashes. Fetches use `--timeout`, reject redirects, and cap each response
+at 16 MiB. A failed or malformed response aborts without replacing the cache;
+there is no silent fallback to stale data.
+
+Pass local TSV files or directories to skip fetching. This also allows explicitly
+reusing the cached snapshots offline:
+
+```sh
+uv run --locked python tools/psn_acquire.py .work/psn-acquire/snapshots \
+  --work .work/psn-acquire --catalog catalog
+```
+
+`--limit` controls PKG attempts only, not TSV fetching; `--category` filters PKG
+downloads without narrowing the fetched lists or RAP import.
 
 The machine-local `report.json` accounts for every row across unique snapshots,
 retains duplicate-source attribution and conflicting references, and excludes
 license columns. Counts describe reference/package candidates, not a complete
 enumeration of PSN. Missing hashes or sizes remain unknown.
 
+Acquisition imports valid inline `RAP` hex into private, exactly 16-byte
+`<Content ID>.rap` files, including on inventory-only runs (`--limit 0`) and for
+packages already downloaded or ingested. Download filters do not restrict license
+import. Acquisition and EDAT extraction share `PSPDB_RAP_DIR`, defaulting to
+`${XDG_DATA_HOME:-$HOME/.local/share}/pspdb/licenses`. Acquisition's `--rap-dir`
+overrides that location for the import only; use the same `PSPDB_RAP_DIR` when
+ingesting. Unset an old `PSPDB_RAP_DIR` override to use the shared default.
+
+New license directories are mode 0700 and new files are mode 0600. Imports are
+atomic and never overwrite existing keys; identical keys are reused. Conflicting
+snapshot keys, conflicts with stored keys, malformed keys and unsafe files are
+reported rather than silently replaced. `report.json` includes license content IDs
+and `imported`, `present`, `missing`, `invalid`, or `conflict` statuses; stdout
+includes their counts and the store directory. Neither includes key bytes or
+license download URLs. No license URLs are fetched. A blank or `NOT REQUIRED` RAP
+field supplies no key; `missing` reports availability, not whether that package
+needs EDAT decryption. Supply a valid local RAP/updated snapshot for missing keys;
+resolve conflicting or invalid files explicitly before retrying.
+
 Download a bounded batch from listed public Sony package URLs, then ingest separately:
 
 ```sh
-uv run --locked python tools/psn_acquire.py /path/to/tsvs \
+uv run --locked python tools/psn_acquire.py \
   --work .work/psn-acquire --catalog catalog --category PSP_DLCS --limit 5
 ./ingest/zig-out/bin/pspdb-ingest .work/psn-acquire/completed \
   --catalog .work/psn-catalog --store /path/to/store
@@ -246,12 +298,14 @@ node website/tests/tree-catalog.mjs
 ## Extractors
 
 PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E, KL4E, VMP,
-PSMF, raw MPEG2-PS, supported NPD EDAT and legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
+supported NPD EDAT and legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
 when both catalog and store are set:
 
 ```sh
 ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store
 ```
+
+PSMF/PMF movies and raw MPEG program streams remain opaque source files; no movie subtrees are generated.
 
 Detection uses signatures, independent of filenames. SCE borrows slices directly.
 PBP extraction and embedded PKG metadata use Zig-PSP’s PBP reader in memory, with
@@ -261,16 +315,17 @@ Zig hashes/stores the output and queues nested extraction using retained buffers
 Temporary directories are removed after their immediate walk; children continue from
 memory. An ISO is reported complete only after all its extraction jobs succeed.
 
-Install `pspdecrypt` and the patched `rcomage` on PATH (overrides: `PSPDECRYPT`,
-`RCOMAGE`). RCOMage loads INI files from `../share/rcomage` relative to its binary
+Install `pspdecrypt` for PSAR and the patched `rcomage` on PATH (overrides:
+`PSPDECRYPT`, `RCOMAGE`). RCOMage loads INI files from `../share/rcomage` relative to its binary
 (override: `RCOMAGE_DATA`). The Linux/LZR patch is in
 `tools/patches/rcomage-lzr-linux.patch`.
-Python adapters run through uv and are embedded in the ingest binary.
+Python adapters run through uv; the adapter and its RAP-storage dependency are
+embedded together in the ingest binary.
 
-Use the pinned patched decrypter below for the standard update PRX recipe and
-exact decoded firmware-table lengths. Unpatched builds can retain binary tail
-bytes in decoded tables. Building requires Git, Make, a C/C++ compiler, zlib and
-OpenSSL development headers:
+PSAR revision 2 requires rebuilding the pinned external decrypter below for the
+shared PRX recipes, exact decoded firmware-table lengths, and complete CBC/IPL
+input bounds. Unpatched builds can retain binary tail bytes in decoded tables.
+Building requires Git, Make, a C/C++ compiler, zlib and OpenSSL development headers:
 
 ```sh
 uv run --locked python tools/build_pspdecrypt.py \
@@ -284,20 +339,61 @@ The source checkout must contain commit
 changed. Nothing is installed globally. The patch reuses the
 [published type-5 XOR recipe](https://github.com/hrydgard/ppsspp/blob/35d69dd4a11632ab6633b2fada84d393541e6131/Core/ELF/PrxDecrypter.cpp#L477),
 preserving the decoder's header and ciphertext integrity checks. It requires no
-title-specific key or sibling PBP section. PRX revision 2 records this recipe and
-format-based ELF naming; PSAR revision 2 tracks the shared decrypter change.
-PSAR revision 3 writes exactly the table decoder's returned length and rejects
-invalid lengths before allocation or publication. PRX revision 3 tracks the
-rebuilt shared executable; its plaintext output is unchanged. Decoded package
-tables describe model selection, not a complete installed firmware filesystem.
+title-specific key or sibling PBP section. PSAR extraction writes exactly the
+table decoder's returned length and rejects invalid lengths before allocation
+or publication. Decoded package tables describe model selection, not a complete
+installed firmware filesystem.
 
-PRX decryption preserves its decrypted payload; gzip payloads recurse to ELF.
-KL3E/KL4E streams similarly retain their compressed bytes and get a decoded child.
+PRX and KL3E/KL4E decode in memory through a pinned, patched pspdecrypt library
+linked by the Zig build. They need no external helper, NAS input reread, or
+temporary output files. This links GPLv3 pspdecrypt code into the ingest binary.
+PRX supports `~PSP` modules and `PSPsysGP` firmware resources, with 183 tag values
+and layouts 0/1/2/4/5/6/9; legacy layout 8 shares the layout-0 algorithm. Coverage
+includes standard update XOR recipes and firmware index keys, including 2.50.
+Mutable KIRK state is thread-local. This is not full authentication: type-6 and
+type-9 external ECDSA signatures are not verified, and type fallback can accept
+damaged ciphertext.
+
+Generic layouts 3/7/10 and runtime-key-dependent PAUTH/NPDRM modules are not
+supported by the standalone PRX path. PAUTH needs the game's runtime work area;
+NPDRM can require a per-module key. Fixed XOR constants do not replace those keys.
+Supported POPS executables use the existing whole-PBP contextual helper instead.
+
+PRX revision 4 decrypts and expands contained gzip/KL/2RLZ data in one extraction,
+publishing the final `module.elf` or `payload.bin` directly. The original PRX
+remains stored; decrypted compressed intermediates are neither stored nor
+cataloged. Revision-1 external and revision-2 native intermediate trees remain
+historical records. Standalone KL extractors remain at revision 2.
+All native decoders use `pspdb-ingest` provenance.
+
+The bounded Zig 2RLZ decoder is adapted from BenHur's libLZR 0.11, licensed
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/), not GPLv3.
+Its attribution and share-alike requirements remain applicable; redistribution
+of the combined binary requires resolving compatibility with the linked GPLv3 code.
+
+When a `~PSP` module's compression flag is set, `elf_size` supplies the exact expanded
+allocation size, bounded to 64 MiB and checked against the decoder's result.
+Unflagged modules and `PSPsysGP` resources can contain compressed streams whose
+expanded size is not declared by that field; those use bounded decoding up to 64 MiB.
+The [reconstructed firmware reboot caller](https://github.com/uofw/uofw/blob/master/src/kd/loadexec/loadexec.c#L1691-L1695)
+similarly supplies a fixed destination capacity, not an exact output length.
+Uncompressed payloads retain their full KIRK-declared length, including any bytes
+beyond `elf_size`. PRX-contained gzip validates one member's CRC32/ISIZE; bytes
+after that member belong to the envelope.
+
+Standalone gzip decoding uses Zig's standard-library DEFLATE decoder on the retained
+input buffer, without a Python process, NAS input reread, or temporary output
+files. Each member's CRC32 and decoded size are checked before any output is
+published; concatenated members and zero padding retain Python gzip behavior.
+The single decoded child is named `module.elf`, `payload.gz`, or `payload.bin`
+according to its signature, then enters normal storage and recursive extraction.
+Standalone KL3E/KL4E streams similarly retain their compressed bytes and get a decoded child.
 ELF files containing bounded `~PSP` wrappers expose them as `embedded-<offset>.psp`
 children, which recurse through the same decryption pipeline.
-Executable children inherit their source basename for display and download, with
-suffixes such as `.prx.gz` or `.prx.kl4e`; decompression removes the compression
-suffix. Shared inventories retain canonical paths, so identical content can appear
+Executable children inherit their source basename for display and download.
+PRX revision 4 exposes decoded ELF directly with `.elf`; historical trees can
+retain intermediate suffixes such as `.prx.gz` or `.prx.kl4e`.
+Shared inventories retain canonical paths, so identical content can appear
 under different filenames without conflicting catalog records.
 RCO outputs include native resources and generated XML; provenance includes the
 binary hash and configuration digest. Child failures fail their ISO's ingest.
@@ -306,10 +402,9 @@ results are current. Current intermediate trees can be reused from the object st
 while outdated descendants are extracted again. The thread
 cap applies to ingest itself; external tools run in child processes.
 
-KL decoding uses `pspdecrypt-kle` on PATH (`PSPDECRYPT_KLE` override): build
-pspdecrypt with `tools/patches/pspdecrypt-kle.patch` and install that binary under
-this separate name. The patch exposes standalone streams and adds decoder bounds
-checks; it rejects outputs exceeding 64 MiB.
+KL decoding bounds both input and output, rejects malformed or truncated streams,
+and caps decoded output at 64 MiB. Only output-capacity exhaustion retries with
+a larger buffer. `pspdecrypt-kle` and `PSPDECRYPT_KLE` are no longer used by ingest.
 
 NPUMDIMG (`DATA.BIN`, PBP section 7) uses the existing pkg2zip decoder,
 with a [standalone entry-point patch and build instructions](tools/patches/pkg2zip-npumdimg.md).
@@ -328,17 +423,19 @@ uv run --locked python tools/build_edat.py \
   --make-npdata-source /path/to/make-npdata \
   --output .work/pspdb-edat
 export PSPDB_EDAT="$PWD/.work/pspdb-edat"
-export PSPDB_RAP_DIR="/private/path/to/licenses"
+# Optional: override the shared acquisition/extraction license directory.
+# export PSPDB_RAP_DIR="/private/path/to/licenses"
 ```
 
 The builder archives make-npdata commit `5f44642fa24331da79f4bae6bea516f1784cf1c5`
 and patches only its temporary build copy. It requires Git, patch and a C compiler.
-The adapter selects a regular, exactly 16-byte `<NPD-content-id>.rap` file from
-`PSPDB_RAP_DIR`; license bytes never enter catalog JSON or provenance.
-Missing licenses and failed authentication fail the ingest root. Successful trees
-can be reused from the object store without decrypting again.
+The adapter selects a regular, nonsymlink, exactly 16-byte `<NPD-content-id>.rap`
+file from the shared license directory described above. License bytes never enter
+catalog JSON or provenance. Missing-license errors name the content ID and lookup
+directory. Missing licenses and failed authentication still fail the ingest root.
+Successful trees can be reused from the object store without decrypting again.
 
-EDAT revision 2 supports license-2 NPD v1/flags-0 and v2/flags-0-or-0x0c files,
+EDAT extraction supports license-2 NPD v1/flags-0 and v2/flags-0-or-0x0c files,
 with 16 KiB blocks and at most 64 MiB plaintext. Keyed header, metadata-table and
 every ciphertext-block MAC must pass before publication. The original EDAT,
 including signatures and any optional 16-byte footer, stays unchanged; the helper
@@ -368,7 +465,7 @@ is stored in the PBP result, with helper provenance and normal decoded-file
 hashes; it does not create a global standalone PRX result or a generated report.
 Decoded ELF payloads use `.elf`, including PSP PRX modules. Gzip and KL3E/KL4E
 trees use `decoded_suffix` to retain that format in display and download names,
-without duplicating existing `.elf` suffixes. KL3E/KL4E revision 2 records this naming.
+without duplicating existing `.elf` suffixes.
 
 PSN package labels use `XXXX-12345 Title`, with the serial styled like UMD IDs; collisions receive a short SHA-256
 suffix that expands as needed. Full content IDs remain searchable. Hash-based
@@ -385,8 +482,7 @@ an `.mcr` child. This follows the
 [upstream wrapper layout](https://github.com/sahlberg/pop-fe/blob/d74e4ab44eedbf41abd759a8db7cd091779dea82/vmp.py):
 131200 total bytes, `00 50 4d 56` magic and a 128-byte header. This is byte
 extraction, not signature verification or per-save filesystem interpretation.
-VMP revision 1 preserves the original wrapper; ISO revision 5 and PKG revision 7
-force root discovery of previously opaque children during `--skip-existing`.
+VMP extraction preserves the original wrapper.
 
 ### Legacy DOCUMENT manuals
 
@@ -444,170 +540,7 @@ page maps also retain the companion's byte identity. Titles are not key inputs.
 Direct helper use requires an explicit `--docinfo PATH`; it never discovers
 siblings from the input filename.
 
-DOCUMENT revision 2 and discovery revisions ISO 7 / PKG 9 / ISO9660 3 make paired
-manuals reachable during `--skip-existing`, without rewriting historical results.
+DOCUMENT extraction publishes only page images, with the generated source/page
+map on helper stdout instead of a `structure.json` child. This also applies to
+inline manual inventories. Rebuild the DOCUMENT helper before use.
 
-DOCUMENT revision 3 publishes only page images, with the generated source/page
-map on helper stdout instead of a `structure.json` child. ISO 10 / PKG 12 /
-ISO9660 6 record the corresponding change to inline manual inventories.
-Historical revisions remain immutable; rebuild the DOCUMENT helper before use.
-
-### PSMF raw-stream traversal
-
-The `psmf/v1` extractor uses the pinned
-[pmftools reader](https://github.com/TeamPBCN/pmftools/tree/1bc01f9ffbfb97adc9bb384c44e081398b9a93e4)
-with `tools/patches/pmftools-traversal.patch`. Build with .NET SDK **8.0.425**:
-
-```sh
-git clone https://github.com/TeamPBCN/pmftools .work/pmftools
-uv run --locked python tools/build_psmf.py \
-  --source .work/pmftools --dotnet /path/to/dotnet \
-  --output .work/pspdb-psmf
-export PSPDB_PSMF="$PWD/.work/pspdb-psmf"
-```
-
-The builder archives the pinned commit, applies the patch in isolation and
-publishes a Linux x64 self-contained executable with runtime **8.0.31**.
-The default format is `psmf`; passing `--format psmf` is equivalent to omitting it.
-No installed .NET runtime is needed for ingestion. Configure `PSPDB_PSMF` for
-both ingestion and freshness checks, or put `pspdb-psmf` on PATH. Provenance
-includes the upstream revision, capabilities and SHA-256 of the entire bundled
-executable. Changing the helper invalidates dependent root freshness.
-
-Success publishes raw video PES concatenations, private ATRAC payloads with
-their original frame headers, and `structure.json`. The structure identifies
-source/output bytes by SHA-256 and size, records every transport packet's
-half-open source range, associates payload ranges with stream IDs, and reports
-the final consumed offset. System, padding and private2 packets remain explicit
-opaque ranges; their contents are not decoded. Raw outputs follow ordinary
-recursive signature dispatch.
-
-Accepted headers are PSMF0012–0015. Traversal uses the declared data offset,
-accounts for pack stuffing and requires the declared data range to end at EOF.
-Premature program ends, out-of-bounds packets, unsupported or undeclared streams,
-and missing declared streams fail extraction. The adapter independently checks
-packet accounting, output inventory, regular-file/path constraints, sizes,
-hashes and exact source-span concatenations before publishing any output.
-Missing helpers and malformed supported descendants reject the containing root.
-
-Ingestion limits each source to **128 MiB**, its manifest to **16 MiB**, and
-helper execution to **120 seconds**, with a **256 MiB managed GC heap** limit
-(not a total-process RSS limit). The reader streams and enforces the manifest
-budget; raw output is bounded by source spans. Do not use `RLIMIT_FSIZE` here:
-CoreCLR's JIT creates a 2 TiB anonymous backing file and otherwise fails startup.
-Private temporary outputs are removed on failure.
-
-The standalone helper accepts `SOURCE NEW_DESTINATION`, names its manifest
-`manifest.json`, and defaults to a 256 MiB manifest budget. Ingestion explicitly
-lowers that budget through `PSPDB_PSMF_MANIFEST_LIMIT`.
-
-Seven real inputs spanning all four accepted versions and up to six audio
-streams matched independent raw references. A complete original Daxter package
-accepted with 65 unique PSMFs and then fresh-skipped. These checks establish
-exact raw payload identity, **not codec validity or complete PSMF support**.
-
-### Raw MPEG2 program-stream ranges
-
-The `mpegps/v2` extractor uses a separate mode of the same pinned builder.
-It supports both standalone extraction and automatic recursive ingestion, without
-changing the default PSMF helper or `psmf/v1` behavior. Build using .NET SDK **8.0.425**:
-
-```sh
-# Clone once if .work/pmftools does not already exist.
-git clone https://github.com/TeamPBCN/pmftools .work/pmftools
-uv run --locked python tools/build_psmf.py --format mpegps \
-  --source .work/pmftools --dotnet /path/to/dotnet \
-  --output .work/pspdb-mpegps
-.work/pspdb-mpegps --provenance
-export PSPDB_MPEGPS="$PWD/.work/pspdb-mpegps"
-.work/pspdb-mpegps /path/to/source.mpg .work/mpegps-output
-```
-
-The builder archives upstream commit
-`1bc01f9ffbfb97adc9bb384c44e081398b9a93e4`, applies
-`tools/patches/pmftools-traversal.patch` followed by
-`tools/patches/pmftools-mpegps.patch` in isolation, and publishes a self-contained
-Linux x64 executable pinned to runtime **8.0.31**. It prints both patch SHA-256
-fingerprints and the executable SHA-256, and atomically replaces the requested
-executable only after successful publication. No installed .NET runtime is
-needed to run it. `--provenance` identifies `pmftools-mpegps`, the pinned upstream
-revision and the capabilities `raw-mpeg2:1`, `opaque-private-pes:1`, `manifest:1`
-and `manifest-budget-env:1`, `compact-manifest:1`.
-Configure `PSPDB_MPEGPS` for ingestion and freshness checks, or put `pspdb-mpegps`
-on PATH. Provenance includes the SHA-256 of the complete bundled executable;
-changing it invalidates dependent ISO and PKG roots.
-
-Invocation is `pspdb-mpegps SOURCE NEW_OUTPUT_DIRECTORY`. The output directory
-must not already exist: successful extraction publishes it atomically, including
-`manifest.json`; failures do not publish partial results. Sources are limited
-to **64 MiB**. The manifest budget defaults to **16 MiB** and can be overridden
-with `PSPDB_MPEGPS_MANIFEST_LIMIT`, a positive decimal byte count no larger than
-**256 MiB**. For example, a 32 MiB manifest budget:
-
-```sh
-PSPDB_MPEGPS_MANIFEST_LIMIT=33554432 \
-  .work/pspdb-mpegps /path/to/source.mpg .work/mpegps-output-large
-```
-
-Automatic discovery recognizes the complete four-byte pack signature
-`00 00 01 ba` at offset zero, regardless of filename. Even truncated packs and
-unsupported MPEG1 headers reach the adapter and fail closed rather than remaining
-silently opaque. Missing helpers, invalid recognized descendants, budget overruns
-and verification failures reject the containing root.
-
-Ingestion enforces **64 MiB sources**, **16 MiB manifests**, **120 seconds** of
-helper execution and a **256 MiB managed GC heap** limit (not a total-process
-RSS limit). It explicitly sets `PSPDB_MPEGPS_MANIFEST_LIMIT`; the larger standalone
-override above does not enlarge ingestion's budget. As with PSMF, `RLIMIT_FSIZE`
-is not used because CoreCLR needs its large anonymous JIT backing file.
-Private temporary output is removed on failure.
-
-Before publication the adapter independently verifies every source packet and
-payload range, full source consumption, output inventory, safe regular-file paths,
-sizes, hashes and exact source-span concatenations. It publishes the verified
-manifest as `structure.json` alongside the raw files under `mpegps/v2`; raw
-outputs follow normal recursive signature dispatch. Only catalog metadata and
-inventories are contributions: source bytes, raw outputs and manifest contents
-remain in the local object store.
-
-Revision 2 removes JSON indentation from the manifest; packet fields and raw
-payload bytes are unchanged. This changes `structure.json` byte identity, so
-revision-1 pairs remain historical rather than being replaced. The adapter
-requires a compact-capable helper. Source, manifest and runtime limits remain
-unchanged; compact output alone does not establish whole-video coverage.
-
-Manifest validation uses the locked `ijson` dependency to process one packet at a
-time, with explicit JSON object/array structure and duplicate-field checks.
-Metadata arrays and total manifest bytes remain bounded; every packet range,
-raw output byte and output hash is still verified before publication. This
-validation change does not alter revision-2 output bytes or raise source limits.
-
-Outputs are neutral byte ranges, not decoded media: `private-bd.bin` concatenates
-the full private-stream PES payloads, including their original prefixes, and
-`pes-e0.bin` through `pes-ef.bin` concatenate observed video-stream PES payloads.
-Stream keys are `bd` and `e0`–`ef`; there are no inferred channel suffixes or
-declared-stream catalog. The manifest records `source_sha256`,
-`source_size_bytes`, `data_start`, `data_end`, `consumed_end`, `observed_streams`,
-`packets` and `outputs`, including packet/payload source spans and output byte
-identity. Opaque private bytes are not split into channels. These ranges and
-identities make extraction inspectable; they do **not establish codec validity,
-multichannel correctness or complete MPEG2-PS support**. Do not configure this
-executable as `PSPDB_PSMF`.
-
-The accepted subset is contiguous MPEG2 packs with validated marker/reserved bits
-and stuffing; nonempty, unscrambled `bd`/`e0`–`ef` PES payloads with bounded
-optional headers; valid PTS/DTS markers; and the optional P-STD buffer field.
-`bb`, `be` and `bf` packets remain opaque length-bounded structural ranges.
-MPEG1, zero-length PES packets, other stream IDs, scrambling, ESCR/rate/trick-mode/
-copy-info/CRC fields and other PES extension features are rejected explicitly.
-EOF is accepted at a complete packet boundary without a program-end marker;
-an explicit program-end marker must be last. Timestamp ordering, buffer semantic
-values and structural packet contents are not validated.
-
-Discovery revisions ISO **9**, PBP **11**, PKG **11**, ISO9660 **5** and PSAR **5**
-make newly recognized MPEG streams reachable during `--skip-existing`. A root
-previously considered fresh can otherwise hide an unrecorded descendant; freshness
-cannot infer that missing edge from old hashes alone. Current intermediate
-inventories still replay verified stored children through signature dispatch.
-These discovery bumps do not revise unrelated decoders or `psmf/v1`.
-Regeneration adds new revision pairs and leaves historical revisions immutable.

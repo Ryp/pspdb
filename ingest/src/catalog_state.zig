@@ -10,7 +10,7 @@ pub const State = struct {
 pub fn load(allocator: std.mem.Allocator, io: std.Io, root: []const u8) !std.json.Parsed(State) {
     // Load the embedded helper as a module so the status command uses exactly
     // the same provenance definitions and revisions as this executable.
-    const bootstrap =
+    const bootstrap = @import("extractor.zig").python_bootstrap ++
         \\import sys, types
         \\adapter = types.ModuleType('extract_external')
         \\sys.modules[adapter.__name__] = adapter
@@ -25,10 +25,13 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io, root: []const u8) !std.jso
         "python",
         "-c",
         bootstrap,
+        @embedFile("rap"),
         @embedFile("extractor_adapter"),
         @embedFile("catalog_status"),
         "--versions",
         @embedFile("extractor_versions_json"),
+        "--contextual-kinds",
+        @embedFile("contextual_extractors_json"),
         "--catalog",
         root,
         "--json",

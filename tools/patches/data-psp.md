@@ -22,11 +22,10 @@ The custom curve uses OpenSSL's low-level EC interface; no EC arithmetic is
 implemented in PSPDB. Objects are allocated separately for each verification,
 so concurrent ingestion does not share mutable crypto state.
 
-PBP revision 6 verifies this format before emitting any optional
+PBP extraction verifies this format before emitting any optional
 OPNSSMP.PGD/STARTDAT children. Signature failure fails the input's ingest.
 Generated verification reports are not extracted files and are excluded from the
-inventory and content store. Revisions 4 and 5 included a generated DATA.PSP.json;
-those historical catalog records remain unchanged.
+inventory and content store.
 The signature covers neither flags nor the whole ISO/PKG: a passing check must
 not be presented as authentication of those bytes. Also, historical PSP signing
 keys have been recovered, so validity is not proof of official Sony authorship.

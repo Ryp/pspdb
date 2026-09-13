@@ -82,7 +82,8 @@ const Pool = struct {
     jobs: std.ArrayList(Job) = .empty,
     outstanding: usize = 0,
     directories_pending: usize = 0,
-    intake_active: bool = false,
+    intake_active: usize = 0,
+    intake_limit: usize,
     intake_candidates: usize = 0,
     stats: Stats = .{},
     scan_progress: std.Progress.Node,
@@ -104,7 +105,7 @@ const Pool = struct {
         self.iso_progress.setEstimatedTotalItems(self.intake_candidates);
     }
 
-    // Extraction is preferred, then discovery, then a single eligible intake.
+    // Extraction is preferred, then discovery, then intake below the cap.
     // A gated input stays queued: no worker holds a slot while waiting for it.
     fn take(self: *Pool) ?Job {
         self.mutex.lockUncancelable(self.io);
@@ -121,7 +122,7 @@ const Pool = struct {
         var selected: ?usize = null;
         var best: usize = 3;
         for (self.jobs.items, 0..) |job, i| {
-            if (job.isIntake() and self.intake_active) continue;
+            if (job.isIntake() and self.intake_active >= self.intake_limit) continue;
             const priority: usize = if (job.kind == .extraction) 0 else if (job.isIntake()) 2 else 1;
             if (priority <= best) {
                 selected = i;
@@ -130,7 +131,7 @@ const Pool = struct {
         }
         if (selected) |i| {
             const job = self.jobs.swapRemove(i);
-            if (job.isIntake()) self.intake_active = true;
+            if (job.isIntake()) self.intake_active += 1;
             return job;
         }
         return null;
@@ -140,7 +141,7 @@ const Pool = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         self.outstanding -= 1;
-        if (kind == .iso or kind == .member) self.intake_active = false;
+        if (kind == .iso or kind == .member) self.intake_active -= 1;
         if (kind == .directory) {
             self.directories_pending -= 1;
             if (self.directories_pending == 0) {
@@ -410,7 +411,7 @@ pub fn log(io: std.Io, comptime format: []const u8, args: anytype) void {
     stderr.file_writer.interface.flush() catch {};
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, folder: []const u8, worker_count: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, extractor_adapter: ?processor.extractor.Adapter, state: ?*const @import("catalog_state.zig").State) !Stats {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, extractor_adapter: ?processor.extractor.Adapter, state: ?*const @import("catalog_state.zig").State) !Stats {
     std.debug.assert(worker_count >= 1);
     var pool: Pool = .{
         .allocator = allocator,
@@ -420,6 +421,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folder: []const u8, worker_
         .skip_existing = skip_existing,
         .state = state,
         .extractor_adapter = extractor_adapter,
+        .intake_limit = @max(1, max_threads / 4),
         .scan_progress = root.start("Scanning directories", 0),
         .iso_progress = root.start("ISO/PKG intake", 0),
         .extraction_progress = root.start("Pending ISO extractions", 0),
@@ -431,11 +433,13 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folder: []const u8, worker_
         for (pool.jobs.items) |job| job.deinit(allocator);
         pool.jobs.deinit(allocator);
     }
-    const initial = try allocator.dupe(u8, folder);
-    pool.enqueue(initial, .directory) catch |err| {
-        allocator.free(initial);
-        return err;
-    };
+    for (folders) |folder| {
+        const initial = try allocator.dupe(u8, folder);
+        pool.enqueue(initial, .directory) catch |err| {
+            allocator.free(initial);
+            return err;
+        };
+    }
     // Main also does useful work. If a thread cannot be created, finish queued
     // work with those already running, then report the startup failure.
     var threads: std.ArrayList(std.Thread) = .empty;
@@ -475,6 +479,7 @@ test "intake gate leaves workers free for discovery and child extraction" {
         .catalog = null,
         .skip_existing = false,
         .extractor_adapter = null,
+        .intake_limit = 2,
         .scan_progress = .none,
         .iso_progress = .none,
         .extraction_progress = .none,
@@ -482,10 +487,11 @@ test "intake gate leaves workers free for discovery and child extraction" {
     defer pool.jobs.deinit(pool.allocator);
     try pool.jobs.append(pool.allocator, .{ .path = "one.iso", .kind = .iso });
     try pool.jobs.append(pool.allocator, .{ .path = "archive.zip!two.iso", .kind = .member });
-    pool.outstanding = 2;
+    try pool.jobs.append(pool.allocator, .{ .path = "three.pkg", .kind = .iso });
+    pool.outstanding = 3;
     const first = pool.takeReady().?;
     try std.testing.expect(first.isIntake());
-    try std.testing.expect(pool.intake_active);
+    try std.testing.expect(pool.takeReady().?.isIntake());
     try std.testing.expectEqual(null, pool.takeReady());
     try pool.jobs.append(pool.allocator, .{ .path = "folder", .kind = .directory });
     try pool.jobs.append(pool.allocator, .{ .path = "module.psp", .kind = .extraction });

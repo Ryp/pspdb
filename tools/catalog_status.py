@@ -12,9 +12,6 @@ else:
 
 HASH = re.compile(r'[0-9a-f]{64}\Z')
 DEPENDENCY_PATH = re.compile(r'^(?!/)(?!.*(?:^|/)\.{1,2}(?:/|$))[^\\:\x00-\x1f]+$')
-CONTEXTUAL_KINDS = json.loads(
-    (Path(__file__).resolve().parents[1] / 'website' / 'pspdb' / 'data' / 'contextual_extractors.json')
-    .read_text(encoding='utf-8'))
 
 
 def validate_inline_dependencies(entry, inventory):
@@ -50,7 +47,11 @@ def validate_inline_dependencies(entry, inventory):
     return dependencies
 
 
-def catalog_status(root, current=None, unavailable=None):
+def catalog_status(root, current=None, unavailable=None, *, contextual_kinds=None):
+    if contextual_kinds is None:
+        contextual_kinds = json.loads(
+            (Path(__file__).resolve().parents[1] / 'website' / 'pspdb' / 'data' / 'contextual_extractors.json')
+            .read_text(encoding='utf-8'))
     root = Path(root)
     if not root.is_dir():
         raise ValueError(f'Catalog directory does not exist: {root}')
@@ -135,7 +136,7 @@ def catalog_status(root, current=None, unavailable=None):
         if not reason:
             for entry in nested_entries(tree):
                 contextual = entry.get('extraction')
-                contextual_kind = CONTEXTUAL_KINDS.get(contextual['extractor']['name']) if contextual else None
+                contextual_kind = contextual_kinds.get(contextual['extractor']['name']) if contextual else None
                 if contextual and contextual['extractor'] != current.get(contextual_kind):
                     reason = 'contextual extractor changed'
                     break
@@ -166,11 +167,12 @@ def main():
     parser.add_argument('--catalog', default='catalog', type=Path)
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--versions', help=argparse.SUPPRESS)
+    parser.add_argument('--contextual-kinds', type=json.loads, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.versions:
         extract_external.VERSIONS = json.loads(args.versions)
     try:
-        report = catalog_status(args.catalog)
+        report = catalog_status(args.catalog, contextual_kinds=args.contextual_kinds)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         parser.exit(2, f'catalog-status: {exc}\n')
     if args.json:

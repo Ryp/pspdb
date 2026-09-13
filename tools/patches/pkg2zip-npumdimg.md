@@ -36,7 +36,5 @@ pkg2zip both produce 185,401,344 bytes with SHA-256
 The ISO contains 752 files and 27 directories (independently checked with pycdlib).
 PS1 payload formats are not handled by this decoder.
 
-NPUMDIMG revision 1 recorded the initial standalone trial; revision 2 adds
-probability-table bounds and widens block-count arithmetic. ISO revision 3,
-PKG revision 4 and PBP revision 3 invalidate previous discovery results.
+The decoder validates probability-table bounds and uses widened block-count arithmetic.
 The patch is local, not submitted upstream.

@@ -1,7 +1,7 @@
 """Inventory PSP/PSX TSV snapshots and acquire bounded public Sony packages.
 
-No network access without --limit N. State and verified packages are machine-local;
-this does not run ingestion or establish current extractor coverage.
+With no local snapshots, fetch the current PSP/PSX TSVs from NoPayStation.
+PKG downloads require --limit N. This does not run ingestion or write the catalog.
 """
 import argparse
 from collections import Counter, defaultdict
@@ -18,11 +18,20 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import tempfile
 import time
 from urllib.parse import urlsplit
 
+if __package__:
+    from .rap import import_raps, license_directory
+else:
+    from rap import import_raps, license_directory
+
 HASH = re.compile(r'[0-9a-fA-F]{64}\Z')
 SNAPSHOT = re.compile(r'(PSP_(?:GAMES|DEMOS|DLCS|THEMES|UPDATES)|PSX_GAMES)(?:\(\d+\))?\.tsv\Z', re.I)
+SNAPSHOT_CATEGORIES = ('PSP_GAMES', 'PSP_DEMOS', 'PSP_DLCS', 'PSP_THEMES', 'PSP_UPDATES', 'PSX_GAMES')
+SNAPSHOT_BASE = 'https://nopaystation.com/tsv/'
+SNAPSHOT_LIMIT = 16 * 1024 * 1024
 HOST_PATHS = {
     'zeus.dl.playstation.net': re.compile(r'/cdn/[A-Za-z0-9_./-]+\.pkg'),
     'b0.ww.np.dl.playstation.net': re.compile(r'/tppkg/np/[A-Za-z0-9_./-]+\.pkg'),
@@ -107,7 +116,59 @@ def request(url, headers, timeout):
         raise
 
 
-def inventory(inputs):
+def fetch_snapshots(work, timeout):
+    """Validate a fresh batch before replacing the private local TSV cache."""
+    cache = work / 'snapshots'
+    cache.mkdir(mode=0o700, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.snapshots-', dir=work) as temporary:
+        staged = Path(temporary)
+        for category in SNAPSHOT_CATEGORIES:
+            filename = category + '.tsv'
+            connection = http.client.HTTPSConnection('nopaystation.com', timeout=timeout)
+            connection._create_connection = public_connection
+            try:
+                connection.request('GET', '/tsv/' + filename,
+                                   headers={'User-Agent': 'pspdb-psn-acquire/1', 'Accept-Encoding': 'identity'})
+                response = connection.getresponse()
+                if response.status != 200:
+                    raise ValueError(f'TSV fetch {filename}: HTTP {response.status}; cached snapshots were not used')
+                if response.getheader('Content-Encoding', 'identity').lower() != 'identity':
+                    raise ValueError(f'TSV fetch {filename}: unexpected content encoding')
+                length = response.getheader('Content-Length')
+                if length is not None and (not length.isascii() or not length.isdigit() or int(length) > SNAPSHOT_LIMIT):
+                    raise ValueError(f'TSV fetch {filename}: invalid or excessive content length')
+                received = 0
+                fd = os.open(staged / filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, 'wb') as stream:
+                    while block := response.read(min(CHUNK, SNAPSHOT_LIMIT + 1 - received)):
+                        received += len(block)
+                        if received > SNAPSHOT_LIMIT:
+                            raise ValueError(f'TSV fetch {filename}: exceeds snapshot size limit')
+                        stream.write(block)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                if length is not None and received != int(length):
+                    raise ValueError(f'TSV fetch {filename}: truncated response')
+            except (OSError, http.client.HTTPException) as exc:
+                # Do not log response bodies or server-controlled exception text.
+                raise ValueError(f'TSV fetch {filename}: {type(exc).__name__}; cached snapshots were not used') from None
+            finally:
+                connection.close()
+        try:
+            data = inventory([staged])
+            if any('malformed_row' in row['issues'] for row in data['rows']):
+                raise ValueError('Malformed TSV rows')
+        except (ValueError, csv.Error):
+            raise ValueError('Fetched TSVs have invalid UTF-8, headers, or rows; cached snapshots were not replaced') from None
+        paths = []
+        for category in SNAPSHOT_CATEGORIES:
+            target = cache / (category + '.tsv')
+            (staged / target.name).replace(target)
+            paths.append(target)
+    return paths
+
+
+def inventory(inputs, rap_directory=None):
     paths = set()
     for item in inputs:
         item = Path(item).expanduser()
@@ -122,6 +183,7 @@ def inventory(inputs):
     if not paths:
         raise ValueError('No in-scope PSP/PSX TSV snapshots found')
     snapshots, rows, packages = {}, [], {}
+    licenses = [] if rap_directory is not None else None
     for path in sorted(paths):
         raw = path.read_bytes()
         digest = hashlib.sha256(raw).hexdigest()
@@ -141,6 +203,8 @@ def inventory(inputs):
             issues = []
             if None in source or any(value is None for value in source.values()):
                 issues.append('malformed_row')
+            elif licenses is not None:
+                licenses.append((source.get('Content ID', ''), source.get('RAP', '')))
             values = {key: (value or '').strip() for key, value in source.items() if key is not None}
             row = {name: values.get(key) or None for key, name in FIELDS.items()}
             row.update(id=f'{digest}:{number}', snapshot=digest, row=number)
@@ -198,8 +262,11 @@ def inventory(inputs):
             conflicts.append(conflict)
             for key in {r['package'] for r in members}:
                 packages[key]['conflicts'].append(index)
-    return {'snapshots': list(snapshots.values()), 'rows': rows,
+    data = {'snapshots': list(snapshots.values()), 'rows': rows,
             'packages': sorted(packages.values(), key=lambda p: p['id']), 'conflicts': conflicts}
+    if licenses is not None:
+        data['licenses'] = import_raps(rap_directory, licenses)
+    return data
 
 
 def catalog_identities(root):
@@ -435,12 +502,13 @@ def reconcile(data, state, work, identities):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('snapshots', nargs='+', type=Path, help='TSV files or directories (PSP/PSX only)')
+    parser.add_argument('snapshots', nargs='*', type=Path, help='Local TSV files/directories; omit to fetch current PSP/PSX snapshots from NoPayStation')
     parser.add_argument('--work', type=Path, default=Path('.work/psn-acquire'), help='Machine-local state and completed/partial directories')
     parser.add_argument('--catalog', type=Path, default=Path('catalog'), help='Read-only catalog to reconcile exact PKG identities')
-    parser.add_argument('--limit', type=int, default=0, help='Maximum package attempts; 0 inventories only (default)')
+    parser.add_argument('--rap-dir', type=Path, help='Private inline RAP store (default: PSPDB_RAP_DIR, then ${XDG_DATA_HOME:-~/.local/share}/pspdb/licenses)')
+    parser.add_argument('--limit', type=int, default=0, help='Maximum PKG attempts; 0 inventories and imports RAPs only (default)')
     parser.add_argument('--package', action='append', default=[], help='Restrict downloads to candidate ID from report.json; repeatable')
-    parser.add_argument('--category', choices=['PSP_GAMES', 'PSP_DEMOS', 'PSP_DLCS', 'PSP_THEMES', 'PSP_UPDATES', 'PSX_GAMES'], help='Restrict downloads, not inventory denominator')
+    parser.add_argument('--category', choices=SNAPSHOT_CATEGORIES, help='Restrict PKG downloads, not snapshot fetching or inventory denominator')
     parser.add_argument('--reuse', action='append', type=Path, default=[], help='Read-only local PKG or directory to hash and reuse; repeatable')
     parser.add_argument('--timeout', type=float, default=30, help='Network socket timeout in seconds')
     parser.add_argument('--retries', type=int, default=2, help='Retries per attempted package (0..5)')
@@ -460,7 +528,12 @@ def main():
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise ValueError('Another acquisition process owns this work directory') from None
-            data = inventory(args.snapshots)
+            snapshots = args.snapshots or fetch_snapshots(work, args.timeout)
+            data = inventory(snapshots, license_directory(args.rap_dir))
+            if not args.snapshots:
+                for snapshot in data['snapshots']:
+                    for origin in snapshot['origins']:
+                        origin['url'] = SNAPSHOT_BASE + Path(origin['path']).name
             identities = catalog_identities(args.catalog.expanduser())
             state_path = work / 'state.json'
             state = json.loads(state_path.read_text()) if state_path.exists() else {'version': 1, 'packages': {}}
@@ -530,6 +603,7 @@ def main():
             save()
             atomic_json(work / 'report.json', data)
             print(json.dumps({'summary': data['summary'], 'attempted_this_run': attempted,
+                              'licenses': {key: data['licenses'][key] for key in ('directory', 'counts')},
                               'report': str(work / 'report.json'), 'completed_directory': data['completed_directory']}, sort_keys=True))
     except (OSError, ValueError, csv.Error) as exc:
         parser.exit(2, f'psn-acquire: {exc}\n')
