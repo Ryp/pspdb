@@ -229,7 +229,6 @@ function applySearch() {
     rowElements.get(selected?.path)?.classList.remove("selected");
     rowElements.get(selected?.path)?.setAttribute("aria-selected", "false");
     $("tree").removeAttribute("aria-activedescendant");
-    $("position").textContent = "0 rows";
   }
 }
 
@@ -437,7 +436,6 @@ function select(node, scroll = true, updateURL = true) {
   row.setAttribute("aria-selected", "true");
   $("tree").setAttribute("aria-activedescendant", node.id);
   $("selected-path").textContent = node.path || label(node);
-  $("position").textContent = `${visible.indexOf(node) + 1} / ${number.format(visible.length)} rows`;
   $("notice").textContent = "";
   if (scroll) {
     // Scroll only vertically, preserving the user's horizontal column position.

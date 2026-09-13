@@ -10,7 +10,7 @@ header { min-height: 48px; flex-shrink: 0; padding: 4px 22px; display: flex; ali
 #catalog-count { color: #b5c1d0; font-size: 11px; }
 #catalog-count { flex-shrink: 0; }
 main { flex: 1; min-height: 0; display: flex; }
-.search-bar { flex: 1; min-width: 140px; max-width: 720px; margin: 0 auto; }
+.search-bar { flex: 1; min-width: 140px; }
 .search-field { display: flex; align-items: center; gap: 8px; background: #1b222b; border: 1px solid #36404c; border-radius: 4px; padding: 4px 9px; }
 .search-field:focus-within { border-color: #91d5ae; }
 #tree-search { width: 100%; min-width: 0; border: 0; outline: none; background: transparent; color: inherit; font: inherit; padding: 4px 0; }
@@ -71,9 +71,8 @@ td.size { color: #c5d1e1; font-size: 11px; }
 footer { min-height: 37px; padding: 8px 16px; border-top: 1px solid #232c36; color: #b4c0d0; font-size: 10px; display: flex; justify-content: space-between; gap: 15px; }
 kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #394250; border-radius: 3px; min-width: 17px; padding: 0 4px; text-align: center; margin-right: 3px; }
 #message { padding: 30px; color: #c5d1e1; }
-@media (max-width: 760px) { header { gap: 10px; padding: 6px 14px; } .extra-help { display: none; } #catalog-count { font-size: 10px; margin-left: auto; } #search-count { font-size: 10px; } footer { flex-wrap: wrap; } }
-@media (max-width: 560px) { header { flex-wrap: wrap; } .search-bar { order: 1; flex-basis: 100%; max-width: none; } }
-@media (max-width: 760px) { .shortcut-help, .search-field kbd { display: none; } footer { justify-content: flex-end; } }
+@media (max-width: 760px) { header { gap: 10px; padding: 6px 14px; } .extra-help { display: none; } #search-count { font-size: 10px; } #catalog-count, #selected-path, .search-field kbd, footer { display: none; } .selection-bar:has(#notice:empty) { display: none; } }
+@media (max-width: 560px) { header { flex-wrap: wrap; } .search-bar { order: 1; flex-basis: 100%; } }
 
 /* Images whose contents are expanded into the tree. */
 .container .name, .container .toggle { color: #ffd293; }
