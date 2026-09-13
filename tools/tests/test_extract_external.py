@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -141,3 +142,156 @@ class NpumdimgTests(unittest.TestCase):
             self.assertEqual(provenance['name'], 'pkg2zip-npumdimg')
             self.assertEqual(provenance['sha256'], hashlib.sha256(Path(sys.executable).resolve().read_bytes()).hexdigest())
             self.assertEqual((output/'disc.iso').read_bytes(), iso)
+
+
+class PsmfTests(unittest.TestCase):
+    def setUp(self):
+        from tools import extract_external as adapter
+        self.adapter = adapter
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.source = self.root / 'source'
+        self.output = self.root / 'output'
+        self.output.mkdir()
+        self.tool = self.root / 'pspdb-psmf'
+        self.tool.write_bytes(b'helper identity')
+        header = bytearray(4096)
+        header[:16] = b'PSMF0014' + (4096).to_bytes(4, 'big') + bytes(4)
+        header[128:130] = (2).to_bytes(2, 'big')
+        header[130:132] = b'\xe1\x00'
+        header[146:148] = b'\xbd\x02'
+        self.outputs = {'video-e1.h264': b'\x00\x00\x00\x01\x65video-first-video-last',
+                        'audio-bd-02.framed-at3': b'\x0f\xd0\x00\x01audio-framing'}
+        packets = []
+        body = bytearray()
+
+        def packet(sid, rest, key=None, skip=None):
+            start = len(header) + len(body)
+            raw = b'\x00\x00\x01' + bytes([sid]) + rest
+            body.extend(raw)
+            packets.append(dict(start=start, end=start + len(raw), packet_id=sid, stream=key,
+                                payload_start=start + skip if skip is not None else None,
+                                payload_end=start + len(raw) if skip is not None else None))
+
+        def pes(sid, payload, key, optional=b'', private=b''):
+            rest = b'\x80\x00' + bytes([len(optional)]) + optional + private + payload
+            packet(sid, len(rest).to_bytes(2, 'big') + rest, key, 9 + len(optional) + len(private))
+
+        packet(0xba, b'\x44' + bytes(8) + b'\x02\xff\xff')
+        packet(0xbb, b'\x00\x02\x12\x34')
+        pes(0xe1, b'\x00\x00\x00\x01\x65video-first', 'e1:00', optional=b'\xff\xff')
+        pes(0xbd, self.outputs['audio-bd-02.framed-at3'], 'bd:02', private=b'\x02\x00\x00\x00')
+        packet(0xbe, b'\x00\x03\xff\xff\xff')
+        pes(0xe1, b'-video-last', 'e1:00')
+        packet(0xb9, b'')
+        header[12:16] = len(body).to_bytes(4, 'big')
+        self.source.write_bytes(header + body)
+        self.manifest = dict(source_sha256=hashlib.sha256(header + body).hexdigest(),
+                             source_size_bytes=len(header) + len(body), data_start=len(header),
+                             data_end=len(header) + len(body), consumed_end=len(header) + len(body),
+                             declared_streams=['bd:02', 'e1:00'], packets=packets,
+                             outputs=[dict(path=name, size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                                      for name, data in self.outputs.items()])
+        self.helper_action = None
+        run = patch.object(adapter, 'run_psmf', side_effect=self.run_helper)
+        run.start()
+        self.addCleanup(run.stop)
+
+    def run_helper(self, command, timeout):
+        if command[-1] == '--provenance':
+            return json.dumps(dict(name='pmftools', options=[self.adapter.PSMF_UPSTREAM, 'manifest-budget-env:1'])).encode()
+        destination = Path(command[-1])
+        destination.mkdir()
+        for name, data in self.outputs.items():
+            (destination / name).write_bytes(data)
+        (destination / 'manifest.json').write_text(json.dumps(self.manifest))
+        if self.helper_action:
+            self.helper_action(destination)
+        return b''
+
+    def extract(self):
+        return self.adapter.extract_psmf(self.source, self.output, self.tool)
+
+    def assert_rejected_cleanly(self):
+        before = {path.name for path in self.root.iterdir()}
+        with self.assertRaises((ValueError, OSError)):
+            self.extract()
+        self.assertEqual(list(self.output.iterdir()), [])
+        self.assertEqual({path.name for path in self.root.iterdir()}, before)
+
+    def test_preserves_interleaved_raw_spans_and_range_manifest(self):
+        self.extract()
+        self.assertEqual({path.name for path in self.output.iterdir()}, set(self.outputs) | {'structure.json'})
+        for name, expected in self.outputs.items():
+            self.assertEqual((self.output / name).read_bytes(), expected)
+
+    def test_rejects_wrong_source_and_output_hashes_before_publication(self):
+        self.manifest['source_sha256'] = '0' * 64
+        self.assert_rejected_cleanly()
+        self.manifest['source_sha256'] = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        self.manifest['outputs'][0]['sha256'] = '0' * 64
+        self.assert_rejected_cleanly()
+
+    def test_output_hash_cannot_authorize_bytes_absent_from_source_spans(self):
+        name = 'video-e1.h264'
+        self.outputs[name] = b'x' * len(self.outputs[name])
+        self.manifest['outputs'][0]['sha256'] = hashlib.sha256(self.outputs[name]).hexdigest()
+        self.assert_rejected_cleanly()
+
+    def test_rejects_payload_range_lie_and_omitted_structural_packet(self):
+        self.manifest['packets'][2]['payload_start'] += 1
+        self.assert_rejected_cleanly()
+        self.manifest['packets'][2]['payload_start'] -= 1
+        del self.manifest['packets'][1]
+        self.assert_rejected_cleanly()
+
+    def test_private_channel_must_be_declared_in_source_header(self):
+        raw = bytearray(self.source.read_bytes())
+        raw[self.manifest['packets'][3]['payload_start'] - 4] = 3
+        self.source.write_bytes(raw)
+        self.manifest['source_sha256'] = hashlib.sha256(raw).hexdigest()
+        self.assert_rejected_cleanly()
+
+    def test_rejects_path_escape_and_output_omission(self):
+        self.manifest['outputs'][0]['path'] = '../video-e1.h264'
+        self.assert_rejected_cleanly()
+        self.manifest['outputs'][0]['path'] = 'video-e1.h264'
+        self.manifest['outputs'].pop()
+        self.assert_rejected_cleanly()
+
+    def test_rejects_unexpected_file_and_symlink(self):
+        self.helper_action = lambda directory: (directory / 'unexpected').write_bytes(b'not inventoried')
+        self.assert_rejected_cleanly()
+
+        def symlink(directory):
+            path = directory / 'video-e1.h264'
+            path.unlink()
+            path.symlink_to(self.source)
+
+        self.helper_action = symlink
+        self.assert_rejected_cleanly()
+
+    def test_rejects_duplicate_metadata_keys_and_noninteger_ranges(self):
+        def duplicate(directory):
+            path = directory / 'manifest.json'
+            path.write_text(path.read_text().replace('"data_start": 4096', '"data_start": 0, "data_start": 4096'))
+
+        self.helper_action = duplicate
+        self.assert_rejected_cleanly()
+        self.helper_action = None
+        self.manifest['packets'][0]['end'] = float(self.manifest['packets'][0]['end'])
+        self.assert_rejected_cleanly()
+
+    def test_helper_failure_cleans_partial_private_work(self):
+        def failure(directory):
+            (directory / 'partial').write_bytes(b'partial')
+            raise ValueError('PSMF helper exceeded 120 seconds')
+
+        self.helper_action = failure
+        self.assert_rejected_cleanly()
+
+    def test_provenance_cannot_override_registry_revision(self):
+        with patch.object(self.adapter, 'run_psmf', return_value=json.dumps(dict(
+                name='pmftools', version='999', options=[self.adapter.PSMF_UPSTREAM])).encode()):
+            self.assert_rejected_cleanly()

@@ -19,21 +19,22 @@ uv run --locked ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
 Use a fresh staging catalog for each contribution. Include the store option to
 produce nested extraction trees. This command writes metadata and hashes to the
 staging catalog; extracted bytes go only to your local object store.
-For supported manuals, configure the [DOCUMENT helper](README.md#legacy-document-manuals)
-before ingestion and freshness checks. Missing helpers are not successful extraction.
+For supported manuals and PSMFs, configure the [DOCUMENT helper](README.md#legacy-document-manuals)
+and [PSMF helper](README.md#psmf-raw-stream-traversal) before ingestion and freshness
+checks. Missing helpers are not successful extraction.
 
 Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v7/<source-sha256>-ingest.json
-catalog/iso/v7/<source-sha256>-tree.json
+catalog/iso/v8/<source-sha256>-ingest.json
+catalog/iso/v8/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v9/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v10/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
-Include the new nested extractor pairs too, such as `prx/v3/` and `gzip/v2/`.
+Include new nested pairs too, such as `prx/v3/`, `gzip/v2/` and `psmf/v1/`.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same
 revision, report the discrepancy instead of replacing it. Tool executable hashes

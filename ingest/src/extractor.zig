@@ -1,7 +1,7 @@
 const std = @import("std");
 const memory = @import("bytes.zig");
 
-pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp, document };
+pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, npumdimg, iso9660, pops, psx, vmp, document, psmf };
 
 const document_prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
 
@@ -18,6 +18,8 @@ pub fn pairedDocumentCandidate(bytes: []const u8) bool {
 
 pub fn detect(bytes: []const u8) ?Kind {
     if (std.mem.startsWith(u8, bytes, "NPUMDIMG")) return .npumdimg;
+    // Recognize the family even when truncated or unsupported; the adapter rejects it.
+    if (std.mem.startsWith(u8, bytes, "PSMF")) return .psmf;
     if (bytes.len >= 32775 and bytes[32768] == 1 and std.mem.eql(u8, bytes[32769..32774], "CD001") and bytes[32774] == 1) return .iso9660;
     if (std.mem.startsWith(u8, bytes, "PSAR")) return .psar;
     if (std.mem.startsWith(u8, bytes, "\x00PRF")) return .rco;
@@ -122,6 +124,9 @@ test "format detection uses signatures" {
     try std.testing.expectEqual(null, detect("NPUMD"));
     try std.testing.expectEqual(Kind.psar, detect("PSAR\x03").?);
     try std.testing.expectEqual(Kind.rco, detect("\x00PRF").?);
+    try std.testing.expectEqual(Kind.psmf, detect("PSMF").?);
+    try std.testing.expectEqual(Kind.psmf, detect("PSMF9999").?);
+    try std.testing.expectEqual(null, detect("PSM"));
     try std.testing.expectEqual(null, detect("not an archive"));
 }
 

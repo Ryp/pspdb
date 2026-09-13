@@ -1,16 +1,24 @@
 """Extract PSP resources into a caller-owned directory; Zig owns traversal and cleanup."""
 import argparse
+from contextlib import ExitStack
 import hashlib
 import json
 import os
+import mmap
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import stat
+import tempfile
 import xml.etree.ElementTree as ET
 
 
 VERSIONS = None
+
+PSMF_SOURCE_LIMIT = 128 * 1024 * 1024
+PSMF_MANIFEST_LIMIT = 16 * 1024 * 1024
+PSMF_UPSTREAM = 'upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4'
 
 
 def versions():
@@ -28,6 +36,19 @@ def tool_provenance(kind, tool=None, data=None):
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
     if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp'):
         return result
+    if kind == 'psmf':
+        tool = tool.resolve(strict=True)
+        reported = json.loads(run_psmf([str(tool), '--provenance'], timeout=30))
+        if (not isinstance(reported, dict) or set(reported) != {'name', 'options'}
+                or reported['name'] != 'pmftools' or not isinstance(reported['options'], list)
+                or any(not isinstance(option, str) or not option for option in reported['options'])
+                or len(set(reported['options'])) != len(reported['options'])
+                or PSMF_UPSTREAM not in reported['options']
+                or 'manifest-budget-env:1' not in reported['options']):
+            raise ValueError('Invalid PSMF helper provenance')
+        with tool.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        return dict(result, name=reported['name'], options=reported['options'], sha256=digest)
     if kind == 'document':
         tool = tool.resolve(strict=True)
         result.update(json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30)))
@@ -74,6 +95,8 @@ def current_provenance():
                 tool = executable('PKG2ZIP_NPUMDIMG', 'pkg2zip-npumdimg')
             elif kind == 'document':
                 tool = executable('PSPDB_DOCUMENT', 'pspdb-document')
+            elif kind == 'psmf':
+                tool = executable('PSPDB_PSMF', 'pspdb-psmf')
             elif kind == 'rco':
                 tool = executable('RCOMAGE', 'rcomage').resolve(strict=True)
                 data = Path(os.environ.get('RCOMAGE_DATA', tool.parent.parent / 'share' / 'rcomage'))
@@ -268,13 +291,237 @@ def extract_document(source, output, tool, docinfo=None):
     return provenance
 
 
+
+
+def run_psmf(command, timeout):
+    # CoreCLR's JIT uses a 2 TiB anonymous memfd: RLIMIT_FSIZE breaks startup.
+    # Raw output is bounded by source spans; the reader enforces the manifest cap.
+    env = dict(os.environ, DOTNET_GCHeapHardLimit='0x10000000',
+               COMPlus_GCHeapHardLimit='0x10000000',
+               PSPDB_PSMF_MANIFEST_LIMIT=str(PSMF_MANIFEST_LIMIT))
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        try:
+            result = subprocess.run(command, stdout=stdout, stderr=stderr, env=env,
+                                    timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            raise ValueError(f'PSMF helper exceeded {timeout} seconds') from error
+        stderr.seek(0)
+        if result.returncode:
+            raise ValueError(f'PSMF helper exited {result.returncode}: ' + stderr.read(65536).decode('utf-8', errors='replace'))
+        stdout.seek(0)
+        data = stdout.read(65537)
+        if len(data) > 65536:
+            raise ValueError('PSMF helper stdout exceeds 64 KiB')
+        return data
+
+
+def psmf_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('Duplicate PSMF manifest key')
+        result[key] = value
+    return result
+
+
+def psmf_fields(value, fields):
+    if not isinstance(value, dict) or set(value) != set(fields):
+        raise ValueError('Invalid PSMF manifest fields')
+
+
+def psmf_integer(value):
+    if type(value) is not int or not 0 <= value <= PSMF_SOURCE_LIMIT:
+        raise ValueError('Invalid PSMF manifest integer')
+    return value
+
+
+def psmf_regular_file(path, limit):
+    # O_NONBLOCK prevents an unexpected FIFO from blocking before fstat.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
+            raise ValueError('Invalid PSMF file type or size')
+        return os.fdopen(descriptor, 'rb')
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def psmf_header(data):
+    if len(data) < 130 or data[:4] != b'PSMF':
+        raise ValueError('Invalid PSMF header')
+    if data[4:8] not in (b'0012', b'0013', b'0014', b'0015'):
+        raise ValueError('Unsupported PSMF version')
+    start = int.from_bytes(data[8:12], 'big')
+    end = start + int.from_bytes(data[12:16], 'big')
+    count = int.from_bytes(data[128:130], 'big')
+    if not count or start < 130 + 16 * count or not start < end == len(data):
+        raise ValueError('Invalid declared PSMF bounds or stream count')
+    declared = {}
+    for offset in range(130, 130 + count * 16, 16):
+        sid, channel = data[offset:offset + 2]
+        if 0xe0 <= sid <= 0xef and channel == 0:
+            name = f'video-{sid:02x}.h264'
+        elif sid == 0xbd and channel < 0x20:
+            name = f'audio-bd-{channel:02x}.framed-at3'
+        else:
+            raise ValueError('Unsupported declared PSMF stream')
+        key = f'{sid:02x}:{channel:02x}'
+        if key in declared:
+            raise ValueError('Duplicate declared PSMF stream')
+        declared[key] = name
+    return start, end, declared
+
+
+def validate_psmf(data, source_hash, directory):
+    start, end, declared = psmf_header(data)
+    if hashlib.sha256(data).hexdigest() != source_hash:
+        raise ValueError('PSMF source changed during extraction')
+    if not stat.S_ISDIR(directory.lstat().st_mode):
+        raise ValueError('Invalid PSMF helper directory')
+    with psmf_regular_file(directory / 'manifest.json', PSMF_MANIFEST_LIMIT) as stream:
+        manifest = json.load(stream, object_pairs_hook=psmf_object)
+    psmf_fields(manifest, ('source_sha256', 'source_size_bytes', 'data_start', 'data_end',
+                           'consumed_end', 'declared_streams', 'packets', 'outputs'))
+    if (manifest['source_sha256'] != source_hash
+            or psmf_integer(manifest['source_size_bytes']) != len(data)
+            or psmf_integer(manifest['data_start']) != start
+            or psmf_integer(manifest['data_end']) != end
+            or psmf_integer(manifest['consumed_end']) != end):
+        raise ValueError('PSMF source identity or declared range mismatch')
+    streams = manifest['declared_streams']
+    if (not isinstance(streams, list) or any(not isinstance(key, str) for key in streams)
+            or len(streams) != len(declared) or set(streams) != set(declared)):
+        raise ValueError('PSMF declared stream inventory mismatch')
+    packets, outputs = manifest['packets'], manifest['outputs']
+    if not isinstance(packets, list) or not isinstance(outputs, list) or len(outputs) != len(declared):
+        raise ValueError('Invalid PSMF packet or output inventory')
+    expected_names = set(declared.values())
+    metadata = {}
+    for item in outputs:
+        psmf_fields(item, ('path', 'size_bytes', 'sha256'))
+        name, digest = item['path'], item['sha256']
+        if not isinstance(name, str) or name not in expected_names or name in metadata:
+            raise ValueError('Invalid or duplicate PSMF output path')
+        if (not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest)
+                or not psmf_integer(item['size_bytes'])):
+            raise ValueError('Invalid PSMF output identity')
+        metadata[name] = item
+    if {entry.name for entry in directory.iterdir()} != expected_names | {'manifest.json'}:
+        raise ValueError('Unexpected or missing PSMF helper output')
+    observed = set()
+    consumed = start
+    with ExitStack() as stack:
+        files = {name: stack.enter_context(psmf_regular_file(directory / name, PSMF_SOURCE_LIMIT))
+                 for name in expected_names}
+        hashes = {name: hashlib.sha256() for name in expected_names}
+        for name, stream in files.items():
+            if os.fstat(stream.fileno()).st_size != metadata[name]['size_bytes']:
+                raise ValueError('PSMF output size mismatch')
+        for packet in packets:
+            psmf_fields(packet, ('start', 'end', 'packet_id', 'stream', 'payload_start', 'payload_end'))
+            packet_start = psmf_integer(packet['start'])
+            packet_end = psmf_integer(packet['end'])
+            sid = psmf_integer(packet['packet_id'])
+            if (packet_start != consumed or not packet_start + 4 <= packet_end <= end
+                    or data[packet_start:packet_start + 3] != b'\x00\x00\x01'
+                    or data[packet_start + 3] != sid):
+                raise ValueError('Invalid PSMF contiguous packet range or ID')
+            key = payload_start = payload_end = None
+            if sid == 0xba:
+                if packet_start + 14 > end or data[packet_start + 4] & 0xc0 != 0x40:
+                    raise ValueError('Invalid MPEG2 pack header')
+                expected_end = packet_start + 14 + (data[packet_start + 13] & 7)
+                if (expected_end > end
+                        or data[packet_start + 14:expected_end] != b'\xff' * (expected_end - packet_start - 14)):
+                    raise ValueError('Invalid PSMF pack stuffing')
+            elif sid == 0xb9:
+                expected_end = packet_start + 4
+                if expected_end != end:
+                    raise ValueError('Premature PSMF program end')
+            elif sid in (0xbb, 0xbe, 0xbf, 0xbd) or 0xe0 <= sid <= 0xef:
+                if packet_start + 6 > end:
+                    raise ValueError('Short PSMF packet length')
+                expected_end = packet_start + 6 + int.from_bytes(data[packet_start + 4:packet_start + 6], 'big')
+                if sid == 0xbd or 0xe0 <= sid <= 0xef:
+                    if packet_start + 9 > packet_end or data[packet_start + 6] & 0xc0 != 0x80:
+                        raise ValueError('Invalid MPEG2 PES header')
+                    payload_start = packet_start + 9 + data[packet_start + 8]
+                    channel = 0
+                    if sid == 0xbd:
+                        if payload_start + 4 >= packet_end:
+                            raise ValueError('Short PSMF private stream header or payload')
+                        channel = data[payload_start]
+                        payload_start += 4
+                    payload_end = packet_end
+                    if payload_start >= payload_end:
+                        raise ValueError('Empty or out-of-range PSMF PES payload')
+                    key = f'{sid:02x}:{channel:02x}'
+                    if key not in declared:
+                        raise ValueError('Undeclared PSMF packet stream')
+            else:
+                raise ValueError('Unsupported PSMF packet ID')
+            if packet_end != expected_end:
+                raise ValueError('PSMF packet length mismatch')
+            if (packet['stream'] != key or packet['payload_start'] != payload_start
+                    or packet['payload_end'] != payload_end):
+                raise ValueError('PSMF payload source range mismatch')
+            if key is not None:
+                psmf_integer(packet['payload_start'])
+                psmf_integer(packet['payload_end'])
+                observed.add(key)
+                name = declared[key]
+                while payload_start < payload_end:
+                    chunk_end = min(payload_start + 65536, payload_end)
+                    chunk = files[name].read(chunk_end - payload_start)
+                    if chunk != data[payload_start:chunk_end]:
+                        raise ValueError('PSMF output differs from source payload bytes')
+                    hashes[name].update(chunk)
+                    payload_start = chunk_end
+            consumed = packet_end
+        if consumed != end or observed != set(declared):
+            raise ValueError('Incomplete PSMF packet or stream inventory')
+        for name, stream in files.items():
+            if stream.read(1) or hashes[name].hexdigest() != metadata[name]['sha256']:
+                raise ValueError('PSMF output hash or concatenated size mismatch')
+    return sorted(expected_names)
+
+
+def extract_psmf(source, output, tool):
+    if not stat.S_ISDIR(output.lstat().st_mode) or any(output.iterdir()):
+        raise ValueError('PSMF output must be an existing empty directory')
+    with psmf_regular_file(source, PSMF_SOURCE_LIMIT) as stream, mmap.mmap(
+            stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        psmf_header(data)
+        source_hash = hashlib.sha256(data).hexdigest()
+        tool = tool.resolve(strict=True)
+        provenance = tool_provenance('psmf', tool)
+        # The helper requires a new destination; no unverified artifact reaches Zig.
+        with tempfile.TemporaryDirectory(prefix='pspdb-psmf-', dir=output.parent) as temporary:
+            directory = Path(temporary) / 'streams'
+            run_psmf([str(tool), str(source.resolve(strict=True)), str(directory.resolve())], timeout=120)
+            names = validate_psmf(data, source_hash, directory)
+            published = []
+            try:
+                for name in names + ['manifest.json']:
+                    target = output / ('structure.json' if name == 'manifest.json' else name)
+                    (directory / name).rename(target)
+                    published.append(target)
+            except BaseException:
+                for target in published:
+                    target.unlink()
+                raise
+        return provenance
+
+
 def executable(variable, name):
     return Path(os.environ.get(variable) or shutil.which(name) or name)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['psar', 'rco', 'prx', 'gzip', 'kl3e', 'kl4e', 'npumdimg', 'pops', 'psx', 'document'])
+    parser.add_argument('kind', choices=['psar', 'rco', 'prx', 'gzip', 'kl3e', 'kl4e', 'npumdimg', 'pops', 'psx', 'document', 'psmf'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--docinfo', type=Path)
@@ -296,6 +543,8 @@ def main():
             provenance = extract_pops(args.source, args.output, executable('PSPDB_POPS', 'pspdb-pops'))
         elif args.kind == 'document':
             provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
+        elif args.kind == 'psmf':
+            provenance = extract_psmf(args.source, args.output, executable('PSPDB_PSMF', 'pspdb-psmf'))
         elif args.kind == 'prx':
             provenance = extract_prx(args.source, args.output, executable('PSPDECRYPT', 'pspdecrypt'))
         elif args.kind in ('kl3e', 'kl4e'):
@@ -306,7 +555,7 @@ def main():
             tool = executable('RCOMAGE', 'rcomage').resolve(strict=True)
             data = Path(os.environ['RCOMAGE_DATA']) if 'RCOMAGE_DATA' in os.environ else tool.parent.parent / 'share' / 'rcomage'
             provenance = extract_rco(args.source, args.output, tool, data)
-    except (OSError, ValueError, ET.ParseError, EOFError) as exc:
+    except (OSError, ValueError, ET.ParseError, EOFError, subprocess.SubprocessError) as exc:
         parser.exit(1, f'{exc}\n')
     print(json.dumps(provenance))
 

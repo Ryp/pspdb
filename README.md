@@ -218,8 +218,8 @@ node website/tests/tree-catalog.mjs
 
 ## Extractors
 
-PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E, KL4E, VMP and
-supported legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
+PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E, KL4E, VMP,
+PSMF and supported legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
 when both catalog and store are set:
 
 ```sh
@@ -385,48 +385,55 @@ siblings from the input filename.
 DOCUMENT revision 2 and discovery revisions ISO 7 / PKG 9 / ISO9660 3 make paired
 manuals reachable during `--skip-existing`, without rewriting historical results.
 
-### Experimental PSMF raw-stream traversal
+### PSMF raw-stream traversal
 
-`tools/patches/pmftools-traversal.patch` instruments the pinned
+The `psmf/v1` extractor uses the pinned
 [pmftools reader](https://github.com/TeamPBCN/pmftools/tree/1bc01f9ffbfb97adc9bb384c44e081398b9a93e4)
-for standalone provenance experiments. It is **not registered with ingestion**.
-Build with a .NET 8 SDK; no system installation is performed by these commands:
+with `tools/patches/pmftools-traversal.patch`. Build with .NET SDK **8.0.425**:
 
 ```sh
 git clone https://github.com/TeamPBCN/pmftools .work/pmftools
-git -C .work/pmftools checkout 1bc01f9ffbfb97adc9bb384c44e081398b9a93e4
-git -C .work/pmftools apply "$PWD/tools/patches/pmftools-traversal.patch"
-dotnet build .work/pmftools/psmfdump/psmfdump.csproj \
-  -c Release -p:PublishTrimmed=false -p:PublishSingleFile=false \
-  --disable-build-servers -o .work/psmfdump
-dotnet .work/psmfdump/psmfdump.dll /path/to/source.pmf .work/pmf-output
+uv run --locked python tools/build_psmf.py \
+  --source .work/pmftools --dotnet /path/to/dotnet \
+  --output .work/pspdb-psmf
+export PSPDB_PSMF="$PWD/.work/pspdb-psmf"
 ```
 
-The destination must not exist. Success publishes raw video PES concatenations,
-private ATRAC payloads with their original frame headers, and `manifest.json`.
-The manifest identifies source/output bytes by SHA-256 and size, records every
-transport packet's half-open source range, associates payload ranges with stream
-IDs, and reports the final consumed offset. System, padding and private2 packets
-remain explicit opaque ranges; their contents are not decoded.
+The builder archives the pinned commit, applies the patch in isolation and
+publishes a Linux x64 self-contained executable with runtime **8.0.31**.
+No installed .NET runtime is needed for ingestion. Configure `PSPDB_PSMF` for
+both ingestion and freshness checks, or put `pspdb-psmf` on PATH. Provenance
+includes the upstream revision, capabilities and SHA-256 of the entire bundled
+executable. Changing the helper invalidates dependent root freshness.
 
-The trial accepts PSMF0012–0015 headers only, uses the declared data offset rather
-than searching for a pack header, accounts for pack stuffing, and requires the
-declared data range to end at source EOF. It rejects premature program ends,
-out-of-bounds packets, unsupported or undeclared streams, and missing declared
-streams. Failures remove only the trial's temporary directory. Existing
-destinations are never overwritten.
+Success publishes raw video PES concatenations, private ATRAC payloads with
+their original frame headers, and `structure.json`. The structure identifies
+source/output bytes by SHA-256 and size, records every transport packet's
+half-open source range, associates payload ranges with stream IDs, and reports
+the final consumed offset. System, padding and private2 packets remain explicit
+opaque ranges; their contents are not decoded. Raw outputs follow ordinary
+recursive signature dispatch.
 
-Packet records stream directly to the temporary manifest, flushing at 32 KiB
-pending output rather than retaining the packet list or serializing one giant
-string. Published manifests are capped at 256 MiB; exceeding that budget fails
-atomically. On a source-derived million-padding-packet fixture, peak process RSS
-fell from 902812 to 84560 KiB with identical manifest and payload bytes.
+Accepted headers are PSMF0012–0015. Traversal uses the declared data offset,
+accounts for pack stuffing and requires the declared data range to end at EOF.
+Premature program ends, out-of-bounds packets, unsupported or undeclared streams,
+and missing declared streams fail extraction. The adapter independently checks
+packet accounting, output inventory, regular-file/path constraints, sizes,
+hashes and exact source-span concatenations before publishing any output.
+Missing helpers and malformed supported descendants reject the containing root.
 
-Seven retained real inputs (PSMF0012–0015, up to six audio streams) matched
-independently retained raw payload references. Shifted-offset, stuffing and
-multiple-video fixtures also passed. A clean patch replay exercised 25 cases:
-ten accepted and fifteen malformed/unsupported/budget cases rejected without
-published output. These checks establish bounded traversal and exact raw payload
-identity, **not codec validity or complete PSMF format support**. Production
-integration still needs native recursive extraction/provenance integration and
-adapter-level execution/storage limits.
+Ingestion limits each source to **128 MiB**, its manifest to **16 MiB**, and
+helper execution to **120 seconds**, with a **256 MiB managed GC heap** limit
+(not a total-process RSS limit). The reader streams and enforces the manifest
+budget; raw output is bounded by source spans. Do not use `RLIMIT_FSIZE` here:
+CoreCLR's JIT creates a 2 TiB anonymous backing file and otherwise fails startup.
+Private temporary outputs are removed on failure.
+
+The standalone helper accepts `SOURCE NEW_DESTINATION`, names its manifest
+`manifest.json`, and defaults to a 256 MiB manifest budget. Ingestion explicitly
+lowers that budget through `PSPDB_PSMF_MANIFEST_LIMIT`.
+
+Seven real inputs spanning all four accepted versions and up to six audio
+streams matched independent raw references. A complete original Daxter package
+accepted with 65 unique PSMFs and then fresh-skipped. These checks establish
+exact raw payload identity, **not codec validity or complete PSMF support**.

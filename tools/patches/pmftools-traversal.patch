@@ -17,7 +17,7 @@
  using System.IO;
  using VGMToolbox.format;
  
-@@ -6,58 +6,40 @@
+@@ -6,58 +6,45 @@
  {
      class Program
      {
@@ -25,21 +25,20 @@
 +        static int Main(string[] args)
          {
 -            if (args.Length == 0)
-+            if (args.Length != 2)
++            if (args.Length == 1 && args[0] == "--provenance")
              {
 -                Console.WriteLine("PSP Movie Format (PMF) dumper\nCreated by LITTOMA from Team PB.");
 -                Console.WriteLine("Usage: psmfdump <PSMF File> [-a|--audio Audio path] [-v|--video Video path]");
 -                Console.WriteLine("\n\nNOTE: This tool can only works with pmf video containing 1 video and 1 audio stream. Otherwise the output file will crush.");
 -                return;
-+                Console.Error.WriteLine("Usage: psmfdump SOURCE NEW_OUTPUT_DIRECTORY");
-+                return 2;
++                Console.WriteLine("{\"name\":\"pmftools\",\"options\":[\"upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4\",\"bounded-traversal:1\",\"raw-streams:1\",\"manifest:1\",\"manifest-budget-env:1\"]}");
++                return 0;
              }
 -
 -            string vp = string.Empty;
 -            string ap = string.Empty;
 -            for (int i = 1; i < args.Length; i++)
-+            string destination = Path.GetFullPath(args[1]);
-+            if (Directory.Exists(destination) || File.Exists(destination))
++            if (args.Length != 2)
              {
 -                var arg = args[i];
 -                if (arg == "-v" || arg == "--video")
@@ -52,7 +51,7 @@
 -                    ap = args[++i];
 -                    continue;
 -                }
-+                Console.Error.WriteLine("Output destination already exists");
++                Console.Error.WriteLine("Usage: pspdb-psmf SOURCE NEW_OUTPUT_DIRECTORY | --provenance");
 +                return 2;
              }
 -
@@ -62,22 +61,17 @@
 -        static void DumpPsmf(string path, string videoPath, string audioPath)
 -        {
 -            if (!File.Exists(path))
-+            string temporary = destination + ".tmp-" + Guid.NewGuid().ToString("N");
-+            try
++            string destination = Path.GetFullPath(args[1]);
++            if (Directory.Exists(destination) || File.Exists(destination))
              {
 -                return;
-+                Directory.CreateDirectory(temporary);
-+                var options = new MpegStream.DemuxOptionsStruct {
-+                    ExtractAudio = true, ExtractVideo = true, AddHeader = false,
-+                    videoPath = temporary, audioPath = temporary
-+                };
-+                new SonyPmfStream(args[0]).DemultiplexStreams(options);
-+                Directory.Move(temporary, destination);
-+                return 0;
++                Console.Error.WriteLine("Output destination already exists");
++                return 2;
              }
 -
 -            MpegStream.DemuxOptionsStruct demuxOptions = new MpegStream.DemuxOptionsStruct
-+            catch (Exception error)
++            string temporary = destination + ".tmp-" + Guid.NewGuid().ToString("N");
++            try
              {
 -                ExtractAudio = true,
 -                ExtractVideo = true,
@@ -92,6 +86,17 @@
 -
 -            SonyPmfStream pmfStream = new SonyPmfStream(path);
 -            pmfStream.DemultiplexStreams(demuxOptions);
++                Directory.CreateDirectory(temporary);
++                var options = new MpegStream.DemuxOptionsStruct {
++                    ExtractAudio = true, ExtractVideo = true, AddHeader = false,
++                    videoPath = temporary, audioPath = temporary
++                };
++                new SonyPmfStream(args[0]).DemultiplexStreams(options);
++                Directory.Move(temporary, destination);
++                return 0;
++            }
++            catch (Exception error)
++            {
 +                Console.Error.WriteLine(error.Message);
 +                return 1;
 +            }
@@ -260,7 +265,7 @@
          }
 --- /dev/null
 +++ b/psmfdump/format/PsmfTraversal.cs
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,172 @@
 +using System;
 +using System.Buffers.Binary;
 +using System.Collections.Generic;
@@ -271,10 +276,11 @@
 +
 +namespace VGMToolbox.format
 +{
-+    // Research instrumentation for the pinned upstream traversal, not a decoder.
++    // Bounded source-range accounting for the pinned upstream traversal, not a decoder.
 +    public sealed class PsmfTraversal : IDisposable
 +    {
 +        private const long MaxManifestBytes = 256L * 1024 * 1024;
++        private readonly long manifestLimit = MaxManifestBytes;
 +        public long DataStart { get; }
 +        public long DataEnd { get; }
 +        private long consumed;
@@ -287,6 +293,13 @@
 +
 +        public PsmfTraversal(FileStream input, string directory)
 +        {
++            string configuredLimit = Environment.GetEnvironmentVariable("PSPDB_PSMF_MANIFEST_LIMIT");
++            if (configuredLimit != null)
++            {
++                if (!long.TryParse(configuredLimit, out long limit) || limit <= 0 || limit > MaxManifestBytes)
++                    throw new ArgumentException("Invalid PSMF manifest budget");
++                manifestLimit = limit;
++            }
 +            Span<byte> header = stackalloc byte[130];
 +            input.ReadExactly(header);
 +            if (!header.Slice(0, 4).SequenceEqual("PSMF"u8)) throw new FormatException("Not PSMF");
@@ -414,8 +427,8 @@
 +
 +        private void CheckManifestBudget()
 +        {
-+            if (json.BytesCommitted + json.BytesPending > MaxManifestBytes)
-+                throw new InvalidDataException("Manifest exceeds 256 MiB budget");
++            if (json.BytesCommitted + json.BytesPending > manifestLimit)
++                throw new InvalidDataException($"Manifest exceeds {manifestLimit} byte budget");
 +        }
 +
 +        public void Dispose()

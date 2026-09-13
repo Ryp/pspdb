@@ -55,6 +55,27 @@ class CatalogStatusTests(unittest.TestCase):
         self.write('gzip', '3', child)
         self.assertEqual(catalog_status(self.root, self.current)['fresh_pkgs'], {root: True})
 
+    def test_psmf_executable_change_invalidates_both_recursive_root_kinds(self):
+        self.revisions['psmf'] = '1'
+        tool = self.root / 'pspdb-psmf'
+        tool.write_bytes(b'executable-prefix-and-bundled-runtime-one')
+        reported = json.dumps(dict(name='pmftools', options=[extract_external.PSMF_UPSTREAM, 'manifest-budget-env:1'])).encode()
+        iso, pkg, pbp, movie = ('a'*64, 'b'*64, 'c'*64, 'd'*64)
+        with patch.object(extract_external, 'run_psmf', return_value=reported):
+            self.current['psmf'] = extract_external.tool_provenance('psmf', tool)
+            self.write('iso', '2', iso, [movie])
+            self.write('pkg', '1', pkg, [pbp])
+            self.write('pbp', '1', pbp, [movie])
+            self.write('psmf', '1', movie)
+            before = catalog_status(self.root, self.current)
+            self.assertEqual(before['fresh_isos'], {iso: True})
+            self.assertEqual(before['fresh_pkgs'], {pkg: True})
+            tool.write_bytes(b'executable-prefix-and-bundled-runtime-two')
+            self.current['psmf'] = extract_external.tool_provenance('psmf', tool)
+        after = catalog_status(self.root, self.current)
+        self.assertEqual(after['affected_isos'], [iso])
+        self.assertEqual(after['affected_pkgs'], [pkg])
+
     def test_stale_root_iso_does_not_taint_same_hash_iso9660_or_parent_pkg(self):
         digest, package = 'a'*64, 'b'*64
         self.write('iso', '1', digest)
