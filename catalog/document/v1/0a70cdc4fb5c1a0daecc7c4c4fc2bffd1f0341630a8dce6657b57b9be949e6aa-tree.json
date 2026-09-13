@@ -1,0 +1,82 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "0a70cdc4fb5c1a0daecc7c4c4fc2bffd1f0341630a8dce6657b57b9be949e6aa",
+  "size_bytes": 160712,
+  "extractor": {
+    "name": "PSP-DOCUMENT.DAT",
+    "sha256": "16635af4dca766ff3316cad9e3944a066beb15e751d7a98fef8b4e8f5ef25f79",
+    "version": "1",
+    "options": [
+      "upstream:8c95b37949c9a9ca183b7fd69c85d2e2dad7216d",
+      "fixed-key-99-slot-pages",
+      "platform-ordinals",
+      "pycryptodome:3.23.0",
+      "Pillow:12.3.0"
+    ]
+  },
+  "entries": [
+    {
+      "path": "ps3",
+      "type": "directory"
+    },
+    {
+      "path": "ps3/001.png",
+      "type": "file",
+      "size_bytes": 28581,
+      "sha256": "cfc025b31c9814cfc80b2be077f6904ce888698f4ea098c0e4db5ccdcfad48d0"
+    },
+    {
+      "path": "ps3/002.png",
+      "type": "file",
+      "size_bytes": 26227,
+      "sha256": "f6dea495404f33b30dfdb88f9bc269b8d5242babb507c0478f54598bc89c9b34"
+    },
+    {
+      "path": "ps3/003.png",
+      "type": "file",
+      "size_bytes": 51228,
+      "sha256": "beeff63113ae864dc7e0cefe871189f620a9d1f7214661c6d7e58d81dc49cd09"
+    },
+    {
+      "path": "ps3/004.png",
+      "type": "file",
+      "size_bytes": 41353,
+      "sha256": "ffd74a86fac9a3fe7c1787a861cad74825027e19fdb814a215e061a04ab7c6fd"
+    },
+    {
+      "path": "psp",
+      "type": "directory"
+    },
+    {
+      "path": "psp/001.png",
+      "type": "file",
+      "size_bytes": 28581,
+      "sha256": "cfc025b31c9814cfc80b2be077f6904ce888698f4ea098c0e4db5ccdcfad48d0"
+    },
+    {
+      "path": "psp/002.png",
+      "type": "file",
+      "size_bytes": 26227,
+      "sha256": "f6dea495404f33b30dfdb88f9bc269b8d5242babb507c0478f54598bc89c9b34"
+    },
+    {
+      "path": "psp/003.png",
+      "type": "file",
+      "size_bytes": 51228,
+      "sha256": "beeff63113ae864dc7e0cefe871189f620a9d1f7214661c6d7e58d81dc49cd09"
+    },
+    {
+      "path": "psp/004.png",
+      "type": "file",
+      "size_bytes": 41353,
+      "sha256": "ffd74a86fac9a3fe7c1787a861cad74825027e19fdb814a215e061a04ab7c6fd"
+    },
+    {
+      "path": "structure.json",
+      "type": "file",
+      "size_bytes": 2851,
+      "sha256": "772ccd4d8cb6bcbf7337028e31434d4e8d88c3c1894a1d6b45c53773ff86a276"
+    }
+  ]
+}
