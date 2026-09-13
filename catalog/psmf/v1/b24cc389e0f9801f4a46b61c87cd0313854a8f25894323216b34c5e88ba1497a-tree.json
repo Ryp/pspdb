@@ -1,0 +1,32 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "b24cc389e0f9801f4a46b61c87cd0313854a8f25894323216b34c5e88ba1497a",
+  "size_bytes": 411648,
+  "extractor": {
+    "name": "pmftools",
+    "sha256": "8474b638814c632eeee668bde43ed25f357a5a2d2e37e318bcdc136a15722404",
+    "version": "1",
+    "options": [
+      "upstream:1bc01f9ffbfb97adc9bb384c44e081398b9a93e4",
+      "bounded-traversal:1",
+      "raw-streams:1",
+      "manifest:1",
+      "manifest-budget-env:1"
+    ]
+  },
+  "entries": [
+    {
+      "path": "structure.json",
+      "type": "file",
+      "size_bytes": 66604,
+      "sha256": "5a6168a8e71b6bb7b86f260d54e84df76b69b21b1f3d3ffd13ccc2042c04cedd"
+    },
+    {
+      "path": "video-e0.h264",
+      "type": "file",
+      "size_bytes": 399596,
+      "sha256": "b3223844d8ffcaa114016cf0682b9177718192beb9bfb59fb003e0b3100512c4"
+    }
+  ]
+}
