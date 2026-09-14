@@ -43,15 +43,18 @@ pub fn build(b: *std.Build) void {
     prepare.addFileArg(b.path("../tools/patches/pspdecrypt-prx-coverage.patch"));
     prepare.addFileArg(b.path("../tools/patches/pspdecrypt-kle-native.patch"));
     prepare.addFileArg(b.path("../tools/patches/pspdecrypt-pops-native.patch"));
+    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-table-length.patch"));
+    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-psar-memory.patch"));
     module.addIncludePath(native_source);
     module.addCSourceFiles(.{
         .root = native_source,
-        .files = &.{ "libkirk/kirk_engine.c", "libkirk/amctrl.c", "libkirk/AES.c", "libkirk/SHA1.c", "libkirk/bn.c", "libkirk/ec.c", "kl4e.c" },
+        .files = &.{ "libkirk/kirk_engine.c", "libkirk/amctrl.c", "libkirk/AES.c", "libkirk/SHA1.c", "libkirk/bn.c", "libkirk/ec.c", "kl4e.c", "syscon_ipl_keys.c" },
         .flags = &.{ "-std=c11", "-fno-strict-aliasing" },
     });
     module.addCSourceFile(.{ .file = native_source.path(b, "PrxDecrypter.cpp"), .flags = &.{ "-std=c++17", "-fno-strict-aliasing" } });
     module.addCSourceFile(.{ .file = b.path("src/prx_native.cpp"), .flags = &.{"-std=c++17"} });
     module.addCSourceFile(.{ .file = b.path("src/pops_native.cpp"), .flags = &.{"-std=c++17"} });
+    module.addCSourceFile(.{ .file = b.path("src/psar_native.cpp"), .flags = &.{ "-std=c++17", "-fno-strict-aliasing" } });
     module.link_libcpp = true;
     module.addImport("zig_psp_prx_encrypt", b.createModule(.{
         .root_source_file = sdk.path("tools/prxencrypt/prx_encrypt.zig"),
@@ -123,6 +126,26 @@ pub fn build(b: *std.Build) void {
     }
     module.addCSourceFile(.{ .file = b.path("src/npumdimg_native.c"), .flags = npumdimg_flags });
 
+    const rcomage = b.dependency("rcomage", .{});
+    const rco_files = b.addWriteFiles();
+    for ([_][]const u8{ "tagmap.ini", "miscmap.ini", "objattribdef-psp.ini", "objattribdef-ps3.ini", "animattribdef-psp.ini", "animattribdef-ps3.ini" }) |name| {
+        _ = rco_files.addCopyFile(rcomage.path(b.fmt("data/{s}", .{name})), name);
+    }
+    const rco_config = rco_files.add("rco_config.zig",
+        \\pub const tagmap = @embedFile("tagmap.ini");
+        \\pub const miscmap = @embedFile("miscmap.ini");
+        \\pub const objattribdef_psp = @embedFile("objattribdef-psp.ini");
+        \\pub const objattribdef_ps3 = @embedFile("objattribdef-ps3.ini");
+        \\pub const animattribdef_psp = @embedFile("animattribdef-psp.ini");
+        \\pub const animattribdef_ps3 = @embedFile("animattribdef-ps3.ini");
+        \\
+    );
+    module.addImport("rco_config", b.createModule(.{
+        .root_source_file = rco_config,
+        .target = target,
+        .optimize = optimize,
+    }));
+
     module.addAnonymousImport("extractor_adapter", .{ .root_source_file = b.path("../tools/extract_external.py") });
 
     module.addAnonymousImport("catalog_status", .{ .root_source_file = b.path("../tools/catalog_status.py") });
@@ -149,6 +172,8 @@ pub fn build(b: *std.Build) void {
     module.addImport("archive", archive.createModule());
     module.linkSystemLibrary("archive", .{});
     module.linkSystemLibrary("crypto", .{});
+    module.linkSystemLibrary("z", .{});
+    module.linkSystemLibrary("expat", .{ .use_pkg_config = .force });
     module.link_libc = true;
 
     const exe = b.addExecutable(.{ .name = "pspdb-ingest", .root_module = module });

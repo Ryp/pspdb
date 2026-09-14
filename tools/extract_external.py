@@ -8,7 +8,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import xml.etree.ElementTree as ET
 
 
 
@@ -25,11 +24,11 @@ def versions():
     return VERSIONS
 
 
-def tool_provenance(kind, tool=None, data=None):
+def tool_provenance(kind, tool=None):
     result = {'name': 'pspdb-ingest', 'version': versions()[kind], 'options': []}
     if kind == 'pbp':
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
-    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat', 'npumdimg'):
+    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat', 'npumdimg', 'psar', 'rco'):
         return result
     if kind == 'pops':
         return dict(result, name='pspdb-pops', options=['in-memory'])
@@ -45,80 +44,26 @@ def tool_provenance(kind, tool=None, data=None):
         result.update(reported)
         result['sha256'] = hashlib.sha256(tool.read_bytes()).hexdigest()
         return result
-    result['name'] = 'rcomage' if kind == 'rco' else 'pspdecrypt'
-    result['sha256'] = hashlib.sha256(tool.resolve(strict=True).read_bytes()).hexdigest()
-    result['options'] = ['-O' if kind == 'psar' else '-o', '<output>', '<source>']
     if kind == 'psx':
-        result['name'] = 'PSXtract-2'
-        result['options'] = ['<parent.pbp>', 'reconstructed-disc', 'wine-sha256:' + hashlib.sha256(executable('PSPDB_WINE', 'wine').resolve(strict=True).read_bytes()).hexdigest()]
-    if kind == 'rco':
-        paths = sorted(data.resolve(strict=True).glob('*.ini'))
-        if not paths:
-            raise ValueError('Missing RCOMage INI configuration')
-        config_hash = hashlib.sha256()
-        for path in paths:
-            config_hash.update(path.name.encode() + b'\0' + path.read_bytes())
-        result['options'] = ['dump', '<source>', 'structure.xml', '--resdir', 'resources',
-                             '--ini-dir', 'sha256:' + config_hash.hexdigest()]
-    return result
+        return dict(result, name='PSXtract-2',
+                    sha256=hashlib.sha256(tool.resolve(strict=True).read_bytes()).hexdigest(),
+                    options=['<parent.pbp>', 'reconstructed-disc', 'wine-sha256:' + hashlib.sha256(executable('PSPDB_WINE', 'wine').resolve(strict=True).read_bytes()).hexdigest()])
+    raise ValueError(f'Unknown extractor kind: {kind}')
 
 
 def current_provenance():
     current, unavailable = {}, {}
     for kind in versions():
         try:
-            tool = data = None
-            if kind == 'psar':
-                tool = executable('PSPDECRYPT', 'pspdecrypt')
-            elif kind == 'psx':
+            tool = None
+            if kind == 'psx':
                 tool = executable('PSPDB_PSXTRACT2', 'psxtract.exe')
             elif kind == 'document':
                 tool = executable('PSPDB_DOCUMENT', 'pspdb-document')
-            elif kind == 'rco':
-                tool = executable('RCOMAGE', 'rcomage').resolve(strict=True)
-                data = Path(os.environ.get('RCOMAGE_DATA', tool.parent.parent / 'share' / 'rcomage'))
-            current[kind] = tool_provenance(kind, tool, data)
+            current[kind] = tool_provenance(kind, tool)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             unavailable[kind] = str(exc)
     return current, unavailable
-
-
-
-
-def extract_psar(source, output, tool):
-    with source.open('rb') as stream:
-        if stream.read(4) != b'PSAR':
-            raise ValueError('Source is not a firmware PSAR')
-    tool = tool.resolve(strict=True)
-    result = subprocess.run([str(tool), '-O', str(output), str(source.resolve())],
-                            capture_output=True, text=True, errors='replace')
-    log = result.stdout + result.stderr
-    # Upstream sometimes reports failures only in its log, with a zero exit.
-    if result.returncode or 'Done!' not in log or re.search(r'error|fail', log, re.I):
-        raise ValueError(f'Extractor did not complete cleanly:\n{log}')
-    return tool_provenance('psar', tool)
-
-
-
-def extract_rco(source, output, tool, data):
-    tool = tool.resolve(strict=True)
-    data = data.resolve(strict=True)
-    provenance = tool_provenance('rco', tool, data)
-    (output / 'resources').mkdir()
-    result = subprocess.run([str(tool), 'dump', str(source.resolve()), 'structure.xml',
-                            '--resdir', 'resources', '--ini-dir', str(data)], cwd=output,
-                            capture_output=True, text=True, errors='replace')
-    log = result.stdout + result.stderr
-    if result.returncode or re.search(r'^(?:Warning|Error):', log, re.M):
-        raise ValueError(f'RCO extraction did not complete cleanly:\n{log}')
-    ET.parse(output / 'structure.xml')
-    for path in (output / 'resources').glob('*.xml'):
-        ET.parse(path)
-    return provenance
-
-
-
-
 
 
 def extract_psx(source, output, tool):
@@ -191,7 +136,7 @@ def executable(variable, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['psar', 'rco', 'psx', 'document'])
+    parser.add_argument('kind', choices=['psx', 'document'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--docinfo', type=Path)
@@ -203,17 +148,11 @@ def main():
         global VERSIONS
         VERSIONS = json.loads(args.versions)
     try:
-        if args.kind == 'psar':
-            provenance = extract_psar(args.source, args.output, executable('PSPDECRYPT', 'pspdecrypt'))
-        elif args.kind == 'psx':
+        if args.kind == 'psx':
             provenance = extract_psx(args.source, args.output, executable('PSPDB_PSXTRACT2', 'psxtract.exe'))
-        elif args.kind == 'document':
-            provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
         else:
-            tool = executable('RCOMAGE', 'rcomage').resolve(strict=True)
-            data = Path(os.environ['RCOMAGE_DATA']) if 'RCOMAGE_DATA' in os.environ else tool.parent.parent / 'share' / 'rcomage'
-            provenance = extract_rco(args.source, args.output, tool, data)
-    except (OSError, ValueError, ET.ParseError, EOFError, subprocess.SubprocessError) as exc:
+            provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
+    except (OSError, ValueError, EOFError, subprocess.SubprocessError) as exc:
         parser.exit(1, f'{exc}\n')
     print(json.dumps(provenance))
 

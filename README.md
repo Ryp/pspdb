@@ -11,8 +11,11 @@ Run the following commands from the repository root.
 
 ## Build and ingest
 
-Requires **Zig 0.16.0**, **libarchive** development headers/library, and GNU **patch**.
-The first build fetches pinned Zig-PSP, pspdecrypt and make-npdata dependencies.
+Requires **Zig 0.16.0**, GNU **patch**, **pkg-config**, and development headers/libraries
+for **libarchive**, **OpenSSL 3**, **zlib** and **Expat**. PSAR filename-table
+decryption also requires OpenSSL's **legacy provider** for DES-CBC.
+The first build fetches pinned Zig-PSP, pspdecrypt, make-npdata, pkg2zip and
+RCOMage configuration sources.
 
 ```sh
 (cd ingest && zig build -Doptimize=ReleaseSafe)
@@ -332,33 +335,36 @@ Native source normalization and patch lists live in `ingest/build.zig`;
 the fetched dependencies. Standalone builders explicitly opt into patching
 their already isolated temporary source directory.
 
-Install `pspdecrypt` for PSAR and the patched `rcomage` on PATH (overrides:
-`PSPDECRYPT`, `RCOMAGE`). RCOMage loads INI files from `../share/rcomage` relative to its binary
-(override: `RCOMAGE_DATA`). The Linux/LZR patch is in
-`tools/patches/rcomage-lzr-linux.patch`.
-Python adapters run through uv and are embedded in the ingest binary.
+PSAR revision 3 runs the pinned pspdecrypt algorithms through a native memory
+bridge. It preserves final-write semantics, decoded table lengths, secondary
+compression members, reboot modules, IPL stages and kernel-key outputs.
+The collector retains at most 8 MiB of output payloads. Larger archives retain
+only final names/event positions and replay the immutable source to emit final
+writes; this is a buffering policy, not an output-size limit or a process-wide
+memory cap. The first complete walk must succeed before any output is emitted.
+Consumers borrow names/views until their callback returns and retain a view
+when its bytes must outlive that call.
 
-PSAR revision 2 requires rebuilding the pinned external decrypter below for the
-shared PRX recipes, exact decoded firmware-table lengths, and complete CBC/IPL
-input bounds. Unpatched builds can retain binary tail bytes in decoded tables.
-Building requires Git, Make, a C/C++ compiler, zlib and OpenSSL development headers:
+The build uses pspdecrypt commit `c156627db7634d395c380c0a9589130f603307fc`,
+shared PRX recipes and bounded per-call IPL state. DES uses a private OpenSSL
+legacy-provider context; KIRK state remains thread-local. The former custom
+SHA-256 variant is standard SHA-224, including its 28-byte output.
+Decoded package tables describe model selection, not a complete installed
+firmware filesystem.
 
-```sh
-uv run --locked python tools/build_pspdecrypt.py \
-  --pspdecrypt-source /path/to/pspdecrypt \
-  --output .work/pspdecrypt
-export PSPDECRYPT="$PWD/.work/pspdecrypt"
-```
+RCO revision 2 uses `rco/model.zig` for bounded resource/tree parsing,
+`rco/config.zig` for pinned configuration and `rco/xml.zig` for byte-compatible
+serialization. These are LGPL-2.1 ports of RCOMage
+`54ca649a9a6aba150a1fbe423f4c3aec611ee913`. The build embeds its six INI files;
+there is no runtime configuration discovery. Raw assets borrow their backing;
+decompressed resources and XML have explicit owned buffers. Expat validates XML
+without a second DOM or a new depth limit. As with the former dumper, large valid
+trees can expand substantially when serialized; no new XML output-budget policy
+is imposed.
 
-The source checkout must contain commit
-`c156627db7634d395c380c0a9589130f603307fc`; local modifications are not used or
-changed. Nothing is installed globally. The patch reuses the
-[published type-5 XOR recipe](https://github.com/hrydgard/ppsspp/blob/35d69dd4a11632ab6633b2fada84d393541e6131/Core/ELF/PrxDecrypter.cpp#L477),
-preserving the decoder's header and ciphertext integrity checks. It requires no
-title-specific key or sibling PBP section. PSAR extraction writes exactly the
-table decoder's returned length and rejects invalid lengths before allocation
-or publication. Decoded package tables describe model selection, not a complete
-installed firmware filesystem.
+PSAR/RCO no longer use `pspdecrypt`, `rcomage`, their environment overrides or
+temporary extraction directories. Only PSX and DOCUMENT retain external
+Python adapters, embedded in the binary and run through uv.
 
 PRX and KL3E/KL4E decode in memory through a pinned, patched pspdecrypt library
 linked by the Zig build. They need no external helper, NAS input reread, or

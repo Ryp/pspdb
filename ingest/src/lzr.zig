@@ -4,23 +4,33 @@ const std = @import("std");
 
 const max_decoded_size = 64 << 20;
 
-fn body(bytes: []const u8) ![]const u8 {
-    if (bytes.len < 9 or !std.mem.eql(u8, bytes[0..4], "2RLZ")) return error.InvalidLzr;
-    const input = bytes[4..];
+pub const Member = struct {
+    written: usize,
+    consumed: usize,
+};
+
+fn validate_header(input: []const u8) !void {
+    if (input.len < 5) return error.InvalidLzr;
     // Unlike LZRC, LZR includes the output position in its literal context.
     // Shifts 5..8 are the named 8/16/32/64-bit data types in libLZR.h; the
     // smaller shifts also have defined contexts in the original algorithm.
     if (input[0] < 0x80 and input[0] > 8) return error.InvalidLzr;
+}
+
+fn body(bytes: []const u8) ![]const u8 {
+    if (bytes.len < 9 or !std.mem.eql(u8, bytes[0..4], "2RLZ")) return error.InvalidLzr;
+    const input = bytes[4..];
+    try validate_header(input);
+    if (input[0] & 0x80 != 0 and std.mem.readInt(u32, input[1..5], .big) > max_decoded_size)
+        return error.LzrOutputTooLarge;
     return input;
 }
 
-fn directLength(input: []const u8) !usize {
+fn direct_length(input: []const u8, comptime require_padding: bool) !usize {
     const size = std.mem.readInt(u32, input[1..5], .big);
-    if (size == 0) return error.InvalidLzr;
-    if (size > max_decoded_size) return error.LzrOutputTooLarge;
-    // libLZRCompress appends one padding byte and LZRDecompress consumes it
-    // after the literal data. Its value is not part of the decoded output.
-    if (size >= input.len - 5) return error.InvalidLzr;
+    // Chained members include libLZR's skipped padding byte in their extent.
+    // A standalone RCO literal needs only the bytes actually copied.
+    if (size > input.len - 5 or (require_padding and size == input.len - 5)) return error.InvalidLzr;
     return size;
 }
 
@@ -93,14 +103,34 @@ const Decoder = struct {
 /// InvalidLzr. Only a valid literal/copy exceeding capacity is LzrOutputTooSmall.
 /// Compressed streams must reach their end marker, even at exact capacity.
 /// Storage larger than the 64 MiB PSP bound is LzrOutputTooLarge.
-pub fn decodeInto(bytes: []const u8, output: []u8) !usize {
+pub fn decode_into(bytes: []const u8, output: []u8) !usize {
     const input = try body(bytes);
     if (output.len > max_decoded_size) return error.LzrOutputTooLarge;
+    const member = try decode_body_into(input, output, true);
+    if (member.written == 0) return error.InvalidLzr;
+    return member.written;
+}
+
+/// Decode a raw RCO/PSAR stream into borrowed storage, without the 2RLZ prefix
+/// or the PSP container's 64 MiB policy. Input and output remain fully bounded.
+pub fn decode_raw_into(input: []const u8, output: []u8) !usize {
+    try validate_header(input);
+    return (try decode_body_into(input, output, false)).written;
+}
+
+/// Return the exact raw member extent, including direct-copy padding.
+/// Bytes following the member are left for the caller's next stream.
+pub fn decode_raw_member_into(input: []const u8, output: []u8) !Member {
+    try validate_header(input);
+    return decode_body_into(input, output, true);
+}
+
+fn decode_body_into(input: []const u8, output: []u8, comptime require_padding: bool) !Member {
     if (input[0] & 0x80 != 0) {
-        const size = try directLength(input);
+        const size = try direct_length(input, require_padding);
         if (size > output.len) return error.LzrOutputTooSmall;
         @memcpy(output[0..size], input[5..][0..size]);
-        return size;
+        return .{ .written = size, .consumed = size + 6 };
     }
 
     var decoder: Decoder = .{
@@ -140,8 +170,7 @@ pub fn decodeInto(bytes: []const u8, output: []u8) !usize {
                 model = 2552 + (@as(usize, length_bits) << 5) + (((produced << length_bits) & 3) << 3) + state;
                 sequence_length = try decoder.number(length_bits, model, 8, &flag);
                 if (sequence_length == 255) {
-                    if (produced == 0) return error.InvalidLzr;
-                    return produced;
+                    return .{ .written = produced, .consumed = 5 + decoder.cursor };
                 }
                 if (flag != 0 or n_bits > 0) {
                     distance_model += 56;
@@ -161,9 +190,8 @@ pub fn decodeInto(bytes: []const u8, output: []u8) !usize {
             if (flag != 0 or n_bits > 0) {
                 if (flag == 0) n_bits -= 8;
                 // number(n) has n+1 value bits following its leading one.
-                // n > 25 therefore cannot reference any byte within 64 MiB.
-                // Reject before the original C's signed-number shifts overflow.
-                if (n_bits > 25 * 8) return error.InvalidLzr;
+                // Larger numbers cannot be represented by this u32 codec.
+                if (n_bits > 30 * 8) return error.InvalidLzr;
                 distance = try decoder.number(@intCast(@divExact(n_bits, 8)), @intCast(2344 + n_bits), 1, &flag);
             }
             if (distance > produced) return error.InvalidLzr;
@@ -183,10 +211,11 @@ pub fn decodeInto(bytes: []const u8, output: []u8) !usize {
 /// never become successful partial output and all failed allocations are freed.
 pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
     const input = try body(bytes);
-    var capacity: usize = if (input[0] & 0x80 != 0) try directLength(input) else 1 << 20;
+    var capacity: usize = if (input[0] & 0x80 != 0) try direct_length(input, true) else 1 << 20;
+    if (capacity == 0) return error.InvalidLzr;
     while (true) {
         const output = try allocator.alloc(u8, capacity);
-        const decoded = decodeInto(bytes, output) catch |err| {
+        const member = decode_body_into(input, output, true) catch |err| {
             allocator.free(output);
             if (err != error.LzrOutputTooSmall) return err;
             if (capacity == max_decoded_size) return error.LzrOutputTooLarge;
@@ -194,7 +223,8 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
             continue;
         };
         errdefer allocator.free(output);
-        return allocator.realloc(output, decoded);
+        if (member.written == 0) return error.InvalidLzr;
+        return allocator.realloc(output, member.written);
     }
 }
 
@@ -212,18 +242,18 @@ test "LZR direct-copy requires its skipped padding byte and preserves input" {
     try std.testing.expectEqualStrings("abc", decoded);
     try std.testing.expectEqualSlices(u8, &original, &input);
     var output: [4]u8 = @splat(0xa5);
-    try std.testing.expectEqual(@as(usize, 3), try decodeInto(input[0..13], output[0..3]));
+    try std.testing.expectEqual(@as(usize, 3), try decode_into(input[0..13], output[0..3]));
     try std.testing.expectEqualSlices(u8, "abc\xa5", &output);
-    try std.testing.expectError(error.LzrOutputTooSmall, decodeInto(&input, output[0..2]));
-    for (0..13) |length| try std.testing.expectError(error.InvalidLzr, decodeInto(input[0..length], output[0..2]));
+    try std.testing.expectError(error.LzrOutputTooSmall, decode_into(&input, output[0..2]));
+    for (0..13) |length| try std.testing.expectError(error.InvalidLzr, decode_into(input[0..length], output[0..2]));
 }
 
 test "LZR rejects invalid types, empty streams and oversized declarations" {
     var output: [8]u8 = undefined;
-    try std.testing.expectError(error.InvalidLzr, decodeInto("2RLZ\x09\x00\x00\x00\x00", &output));
-    try std.testing.expectError(error.InvalidLzr, decodeInto("2RLZ\x7f\x00\x00\x00\x00", &output));
-    try std.testing.expectError(error.InvalidLzr, decodeInto("2RLZ\xff\x00\x00\x00\x00\x00", &output));
-    try std.testing.expectError(error.InvalidLzr, decodeInto("2RLZ\x05\x00\x00\x00\x00\x00", &output));
+    try std.testing.expectError(error.InvalidLzr, decode_into("2RLZ\x09\x00\x00\x00\x00", &output));
+    try std.testing.expectError(error.InvalidLzr, decode_into("2RLZ\x7f\x00\x00\x00\x00", &output));
+    try std.testing.expectError(error.InvalidLzr, decode_into("2RLZ\xff\x00\x00\x00\x00\x00", &output));
+    try std.testing.expectError(error.InvalidLzr, decode_into("2RLZ\x05\x00\x00\x00\x00\x00", &output));
     try std.testing.expectError(error.InvalidLzr, decode(std.testing.allocator, "2RLZ\xff\x04\x00\x00\x00"));
     try std.testing.expectError(error.LzrOutputTooLarge, decode(std.testing.allocator, "2RLZ\xff\x04\x00\x00\x01"));
 }
@@ -232,27 +262,63 @@ test "LZR coded literals use position contexts and require an end marker at exac
     for (0..8) |offset| {
         var storage: [17]u8 align(8) = @splat(0xa5);
         const output = storage[offset..][0..8];
-        try std.testing.expectEqual(@as(usize, 8), try decodeInto(compressed, output));
+        try std.testing.expectEqual(@as(usize, 8), try decode_into(compressed, output));
         try std.testing.expectEqualStrings("offsets!", output);
         try std.testing.expectEqual(@as(u8, 0xa5), storage[offset + 8]);
-        try std.testing.expectError(error.LzrOutputTooSmall, decodeInto(compressed, output[0..7]));
+        try std.testing.expectError(error.LzrOutputTooSmall, decode_into(compressed, output[0..7]));
     }
     const decoded = try decode(std.testing.allocator, compressed);
     defer std.testing.allocator.free(decoded);
     try std.testing.expectEqualStrings("offsets!", decoded);
     var output: [8]u8 = undefined;
-    for (0..compressed.len) |length| try std.testing.expectError(error.InvalidLzr, decodeInto(compressed[0..length], &output));
+    for (0..compressed.len) |length| try std.testing.expectError(error.InvalidLzr, decode_into(compressed[0..length], &output));
 }
 
 test "LZR overlapping short and long matches check distance and remaining capacity" {
     var output: [131]u8 = @splat(0xa5);
-    try std.testing.expectEqual(@as(usize, 130), try decodeInto(overlapping, output[0..130]));
+    try std.testing.expectEqual(@as(usize, 130), try decode_into(overlapping, output[0..130]));
     try std.testing.expectEqualSlices(u8, &([_]u8{'a'} ** 130), output[0..130]);
     try std.testing.expectEqual(@as(u8, 0xa5), output[130]);
-    try std.testing.expectError(error.LzrOutputTooSmall, decodeInto(overlapping, output[0..129]));
-    for (0..overlapping.len) |length| try std.testing.expectError(error.InvalidLzr, decodeInto(overlapping[0..length], &output));
+    try std.testing.expectError(error.LzrOutputTooSmall, decode_into(overlapping, output[0..129]));
+    for (0..overlapping.len) |length| try std.testing.expectError(error.InvalidLzr, decode_into(overlapping[0..length], &output));
     // One literal followed by a distance-two copy has no valid source byte.
     const invalid = "2RLZ\x05\xcf\x32\xbf\x80\x00\x00\x00";
-    try std.testing.expectError(error.InvalidLzr, decodeInto(invalid, &output));
-    try std.testing.expectError(error.InvalidLzr, decodeInto(invalid, output[0..1]));
+    try std.testing.expectError(error.InvalidLzr, decode_into(invalid, &output));
+    try std.testing.expectError(error.InvalidLzr, decode_into(invalid, output[0..1]));
+}
+
+test "raw LZR is not constrained by the tagged PSP output policy" {
+    const output = try std.testing.allocator.alloc(u8, max_decoded_size + 1);
+    defer std.testing.allocator.free(output);
+    const written = try decode_raw_into(compressed[4..], output);
+    try std.testing.expectEqualStrings("offsets!", output[0..written]);
+    try std.testing.expectError(error.LzrOutputTooLarge, decode_into(compressed, output));
+}
+
+test "raw member boundaries preserve the following stream" {
+    const input = "\xff\x00\x00\x00\x03abc\xa5" ++ compressed[4..];
+    var output: [8]u8 = undefined;
+    const first = try decode_raw_member_into(input, &output);
+    try std.testing.expectEqualStrings("abc", output[0..first.written]);
+    const second = try decode_raw_member_into(input[first.consumed..], &output);
+    try std.testing.expectEqualStrings("offsets!", output[0..second.written]);
+}
+
+test "raw empty members remain invalid in tagged PSP streams" {
+    const raw = "\xff\x00\x00\x00\x00\xa5";
+    var output: [0]u8 = .{};
+    const member = try decode_raw_member_into(raw, &output);
+    try std.testing.expectEqual(@as(usize, 0), member.written);
+    try std.testing.expectEqual(raw.len, member.consumed);
+    try std.testing.expectError(error.InvalidLzr, decode_into("2RLZ" ++ raw, &output));
+}
+
+test "standalone raw literals do not require a chained member padding byte" {
+    var output: [4]u8 = @splat(0xa5);
+    const literal = "\xff\x00\x00\x00\x03abc";
+    try std.testing.expectEqual(@as(usize, 3), try decode_raw_into(literal, output[0..3]));
+    try std.testing.expectEqualSlices(u8, "abc\xa5", &output);
+    try std.testing.expectError(error.InvalidLzr, decode_raw_into(literal[0 .. literal.len - 1], &output));
+    try std.testing.expectError(error.InvalidLzr, decode_raw_member_into(literal, &output));
+    try std.testing.expectEqual(@as(usize, 0), try decode_raw_into("\xff\x00\x00\x00\x00", &output));
 }

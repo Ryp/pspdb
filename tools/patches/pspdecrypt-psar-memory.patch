@@ -1,0 +1,1057 @@
+--- a/pspdecrypt_lib.cpp
++++ b/pspdecrypt_lib.cpp
+@@ -1,154 +1,22 @@
+-/*
+- * Code partly taken from newpsardumper-660
+- * See PsarDecrypter.cpp for details.
+- */
+-#include <stdlib.h>
+-#include <string.h>
+-#include <stdio.h>
+-#include <openssl/des.h>
+-
+-extern "C" {
+-#include "libkirk/kirk_engine.h"
+-#include "kl4e.h"
+-#include "libLZR.h"
+-}
+-#include "pspdecrypt_lib.h"
+-#include "PrxDecrypter.h"
+-#include "ipl_decrypt.h"
+-#include "common.h"
+-
+-////////// SignCheck //////////
+-
+-u8 check_keys0[0x10] =
+-{
+-	0x71, 0xF6, 0xA8, 0x31, 0x1E, 0xE0, 0xFF, 0x1E,
+-	0x50, 0xBA, 0x6C, 0xD2, 0x98, 0x2D, 0xD6, 0x2D
+-};
+-
+-u8 check_keys1[0x10] =
+-{
+-	0xAA, 0x85, 0x4D, 0xB0, 0xFF, 0xCA, 0x47, 0xEB,
+-	0x38, 0x7F, 0xD7, 0xE4, 0x3D, 0x62, 0xB0, 0x10
+-};
+-
+-static int Encrypt(u32 *buf, int size)
+-{
+-	buf[0] = 4;
+-	buf[1] = buf[2] = 0;
+-	buf[3] = 0x100;
+-	buf[4] = size;
+-
+-	/* Note: this encryption returns different data in each psp,
+-	   But it always returns the same in a specific psp (even if it has two nands) */
+-	if (sceUtilsBufferCopyWithRange((u8*)buf, size+0x14, (u8*)buf, size+0x14, 5) != 0)
+-		return -1;
+-
+-	return 0;
+-}
+-
+-int pspSignCheck(u8 *buf)
+-{
+-	u8 enc[0xD0+0x14];
+-	int iXOR, res;
+-
+-	memcpy(enc+0x14, buf+0x110, 0x40);
+-	memcpy(enc+0x14+0x40, buf+0x80, 0x90);
+-	
+-	for (iXOR = 0; iXOR < 0xD0; iXOR++)
+-	{
+-		enc[0x14+iXOR] ^= check_keys0[iXOR&0xF];
+-	}
+-
+-	if ((res = Encrypt((u32 *)enc, 0xD0)) != 0)
+-	{
+-		printf("Encrypt failed.\n");
+-		return -1;
+-	}
+-
+-	for (iXOR = 0; iXOR < 0xD0; iXOR++)
+-	{
+-		enc[0x14+iXOR] ^= check_keys1[iXOR&0xF];
+-	}
+-
+-	memcpy(buf+0x80, enc+0x14, 0xD0);
+-	
+-	return 0;
+-}
+-
+-int pspIsSignChecked(u8 *buf)
+-{
+-	int i, res = 0;
+-
+-	for (i = 0; i < 0x58; i++)
+-	{
+-		if (buf[0xD4+i] != 0)
+-		{
+-			res = 1;
+-			break;
+-		}
+-	}
+-
+-	return res;
+-}
+-
+-////////// UnsignCheck //////////
+-
+-static int Decrypt(u32 *buf, int size)
+-{
+-	buf[0] = 5;
+-	buf[1] = buf[2] = 0;
+-	buf[3] = 0x100;
+-	buf[4] = size;
+-
+-	if (sceUtilsBufferCopyWithRange((u8*)buf, size+0x14, (u8*)buf, size+0x14, 8) != 0)
+-		return -1;
+-	
+-	return 0;
+-}
+-
+-int pspUnsignCheck(u8 *buf)
+-{
+-	u8 enc[0xD0+0x14];
+-	int iXOR, res;
+-
+-	memcpy(enc+0x14, buf+0x80, 0xD0);
+-
+-	for (iXOR = 0; iXOR < 0xD0; iXOR++)
+-	{
+-		enc[iXOR+0x14] ^= check_keys1[iXOR&0xF]; 
+-	}
+-
+-	if ((res = Decrypt((u32 *)enc, 0xD0)) < 0)
+-	{
+-		printf("Decrypt failed.\n");
+-		return res;
+-	}
+-
+-	for (iXOR = 0; iXOR < 0xD0; iXOR++)
+-	{
+-		enc[iXOR] ^= check_keys0[iXOR&0xF];
+-	}
+-
+-	memcpy(buf+0x80, enc+0x40, 0x90);
+-	memcpy(buf+0x110, enc, 0x40);
+-
+-	return 0;
+-}
+-
++/* Native PSAR subset of newpsardumper/pspdecrypt; see PsarDecrypter.cpp credits.
++ * Included by psar_native.cpp: no filesystem boundary or process mutable state. */
+ int kirk1block(const u8 *pbIn, u8 *pbOut)
+ {
+-    static u8 g_dataTmp[0x1040] __attribute__((aligned(0x40)));
++    u8 g_dataTmp[0x1040] __attribute__((aligned(0x40))) = {};
++    const u32 decoded = read_le32(pbIn + 0x70);
++    if (decoded < 16 || decoded > 0x1000) return -1;
+     memcpy(g_dataTmp+0x40, pbIn, 0x1000);
+     int ret = sceUtilsBufferCopyWithRange(g_dataTmp, 0x1040, g_dataTmp+0x40, 0x1000, 1);
+     if (ret != 0) {
+         return ret;
+     }
++    if (read_le32(g_dataTmp + 4) > decoded - 16) return -1;
+     memcpy(pbOut, g_dataTmp, 0x1000);
+     return 0;
+ }
+ 
+ /* xor keys & original descrambling code thanks to Davee and Proxima's awesome work! */
+-u32 xorkeys[] = {
++static const u32 xorkeys[] = {
+     0x61A0C918, 0x45695E82, 0x9CAFD36E, 0xFA499B0F,
+     0x7E84B6E2, 0x91324D29, 0xB3522009, 0xA8BC0FAF,
+     0x48C3C1C5, 0xE4C2A9DC, 0x00012ED1, 0x57D9327C,
+@@ -172,7 +40,7 @@
+     u32 i = 0;
+     u32 x = 0;
+     for (i = 0; i < 32; i++) {
+-        x |= ((b & (1<<i))>>i) << (0x1F-i);
++        x |= ((b & (1u<<i))>>i) << (0x1F-i);
+     }
+     return x;
+ }
+@@ -186,10 +54,10 @@
+     u32 x2 = xorkeys[idx+1];
+     u32 x3 = xorkeys[idx+2];
+     u32 x4 = xorkeys[idx+3];
+-    x1 = ((x1 >> rot) | (x1 << (0x20-rot)));
+-    x2 = bitrev(((x2 >> rot) | (x2 << (0x20-rot))));
+-    x3 = (((x3 >> rot) | (x3 << (0x20-rot)))  ^ x4);
+-    x4 = ((x4 >> rot) | (x4 << (0x20-rot)));
++    x1 = ((x1 >> rot) | (x1 << ((0x20-rot) & 31)));
++    x2 = bitrev(((x2 >> rot) | (x2 << ((0x20-rot) & 31))));
++    x3 = (((x3 >> rot) | (x3 << ((0x20-rot) & 31)))  ^ x4);
++    x4 = ((x4 >> rot) | (x4 << ((0x20-rot) & 31)));
+     data[0] ^= x1;
+     data[1] ^= x2;
+     data[2] ^= x3;
+@@ -197,8 +65,9 @@
+ }
+ 
+ ////////// IPL Decryption /////////
+-int pspDecryptIPL1(const u8* pbIn, u8* pbOut, int cbIn, std::string &logStr)
++int pspDecryptIPL1(const u8* pbIn, u8* pbOut, int cbIn)
+ {
++    if (cbIn <= 0 || cbIn % 0x1000 != 0) return -1;
+     int cbOut = 0;
+     int xorkeyIdx = -1;
+     while (cbIn >= 0x1000)
+@@ -219,27 +88,21 @@
+                     memcpy(decData, pbIn, 16); // reset header
+                 }
+                 if (i == 0x7E0) {
+-                    printf("Decrypt IPL 1 for 03g+ failed for first block!\n");
+-                    break;
++                    return -1;
+                 }
+                 xorkeyIdx = i;
+-                char xorkeyStr[5];
+-                snprintf(xorkeyStr, sizeof(xorkeyStr), "%d", xorkeyIdx);
+-                logStr += std::string(",descramble using xorkey ") + xorkeyStr;
+             } else {
+                 descramble03g((u32*)decData, xorkeyIdx);
+                 int ret = kirk1block(decData, pbOut);
+                 if (ret != 0) {
+-                    printf("Decrypt IPL 1 for 03g+ failed for other blocks!\n");
+-                    break;
++                    return -1;
+                 }
+             }
+         } else {
+             int ret = kirk1block(pbIn, pbOut);
+ 	        if (ret != 0)
+             {
+-	            printf("Decrypt IPL 1 failed 0x%08X, WTF!\n", ret);
+-                break; // stop, save what we can
++                return -1;
+             }
+         }
+         pbIn += 0x1000;
+@@ -253,6 +116,7 @@
+ 
+ int pspLinearizeIPL2(const u8* pbIn, u8* pbOut, int cbIn, u32 *startAddr)
+ {
++	if (cbIn <= 0 || cbIn % 0x1000 != 0) return -1;
+ 	u32 nextAddr = 0;
+     int cbOut = 0;
+     while (cbIn > 0)
+@@ -270,6 +134,7 @@
+         }
+ 
+         u32 count = pl[1];
++        if (count > 0xff0 || addr > UINT32_MAX - count) return -1;
+         nextAddr = addr + count;
+         memcpy(pbOut, pbIn+0x10, count);
+         pbOut += count;
+@@ -281,97 +146,6 @@
+     return cbOut;
+ }
+ 
+-int decryptIPL(u8 *inData, u32 inDataSize, int version, const char *filename, std::string outdir, u8 *preipl, u32 preiplSize, bool verbose, bool keepAll, std::string &logStr)
+-{
+-    u8 *tmpData = new u8[inDataSize];
+-    kirk_init();
+-
+-    int cb1 = pspDecryptIPL1(inData, tmpData, inDataSize, logStr);
+-    if (cb1 > 0)
+-    {
+-        logStr += ",decrypted IPL";
+-        u32 addr;
+-        int cb2 = pspLinearizeIPL2(tmpData, inData, cb1, &addr);
+-        std::string szDataPath = outdir + "/stage1_" + filename;
+-        if (cb2 > 0 && WriteFile(szDataPath.c_str(), inData, cb2))
+-        {
+-            char addrStr[9];
+-            snprintf(addrStr, sizeof(addrStr), "%08x", addr);
+-            logStr += std::string(",linearized at ") + addrStr;
+-        }
+-        else
+-        {
+-            logStr += ",failed linearizing";
+-            return -1;
+-        }
+-
+-        if (extractIPLStages(inData, cb2, version, addr, filename, outdir, preipl, preiplSize, verbose, keepAll, logStr) != 0)
+-        {
+-            logStr += ",failed IPL stages decryption";
+-            return -2;
+-        }
+-    }
+-    else
+-    {
+-        logStr += ",failed decrypting IPL";
+-        return -3;
+-    }
+-
+-    delete []tmpData;
+-
+-    return 0;
+-}
+-
+-////////// Decompression //////////
+-
+-int pspIsCompressed(u8 *buf)
+-{
+-	int res = 0;
+-
+-	if (buf[0] == 0x1F && buf[1] == 0x8B)
+-		res = 1;
+-	else if (memcmp(buf, "2RLZ", 4) == 0)
+-		res = 1;
+-
+-	return res;
+-}
+-
+-int pspDecompress(u8 *inbuf, u32 insize, u8 *outbuf, u32 outcapacity, std::string &logStr, u8 **inbufEnd)
+-{
+-	int retsize;
+-	
+-	if (inbuf[0] == 0x1F && inbuf[1] == 0x8B) 
+-	{
+-	    u32 realSize;
+-	    retsize = gunzip(inbuf, insize, outbuf, outcapacity, &realSize);
+-	    if (inbufEnd != NULL) {
+-		    *inbufEnd = inbuf + realSize;
+-		}
+-	    logStr += ",gzip";
+-	}
+-	else if (memcmp(inbuf, "2RLZ", 4) == 0) 
+-	{
+-	    retsize = LZRDecompress(outbuf, outcapacity, inbuf+4, inbufEnd);
+-		logStr += ",lzrc";
+-	}
+-	else if (memcmp(inbuf, "KL4E", 4) == 0)
+-	{
+-		retsize = decompress_kle(outbuf, outcapacity, inbuf+4, (void **)inbufEnd, 1);
+-		logStr += ",kl4e";
+-	}
+-	else if (memcmp(inbuf, "KL3E", 4) == 0) 
+-	{
+-		retsize = decompress_kle(outbuf, outcapacity, inbuf+4, (void **)inbufEnd, 0);
+-		logStr += ",kl3e";
+-	}
+-	else
+-	{
+-		retsize = -1;
+-	}
+-
+-	return retsize;
+-}
+-
+ ////////// DES Table decryption //////////
+ 
+ typedef struct
+@@ -380,7 +154,7 @@
+     u8 iv[8];
+ } TABLE_KEYS;
+ 
+-TABLE_KEYS table_keys[] =
++static const TABLE_KEYS table_keys[] =
+ {
+     {{ 0x95, 0x62, 0x0B, 0x49, 0xB7, 0x30, 0xE5, 0xC7 }, { 0x9E, 0xA4, 0x33, 0x81, 0x86, 0x0C, 0x52, 0x85 }},
+     {{ 0x5A, 0x7B, 0x3D, 0x9D, 0x45, 0xC9, 0xDC, 0x95 }, { 0xB2, 0xFE, 0xD9, 0x79, 0x8A, 0x02, 0xB1, 0x87 }},
+@@ -390,22 +164,21 @@
+     {{ 0xD7, 0xBD, 0x74, 0x81, 0x3D, 0x64, 0x26, 0xE7 }, { 0xA6, 0x83, 0x0C, 0x2F, 0x63, 0x0B, 0x96, 0x29 }},
+ };
+ 
+-static void DecryptT(u8 *buf, int size, int mode)
++static void DecryptT(des_context &des, u8 *buf, int size, int mode)
+ {
+-    DES_key_schedule schedule;
+-    DES_set_key_unchecked((DES_cblock*)&table_keys[mode].key, &schedule);
+-    DES_cbc_encrypt(buf, buf, size, &schedule, (DES_cblock*)&table_keys[mode].iv, DES_DECRYPT);
++    des.decrypt(buf, size, table_keys[mode].key, table_keys[mode].iv);
+ }
+ 
+-int pspDecryptTable(u8 *buf1, u8 *buf2, int size, int psarVersion, int mode)
++int pspDecryptTable(des_context &des, u8 *buf1, u8 *buf2, int size, int psarVersion, int mode)
+ {
++	if (size <= 0 || size % 8 || mode < 0 || mode >= 6) return -1;
+ 	int retsize;
+ 
+ 	if (buf1 != buf2) {
+ 	    memcpy(buf2, buf1, size);
+ 	}
+ 
+-	DecryptT(buf2, size, mode);
++	DecryptT(des, buf2, size, mode);
+ 
+ 	if (psarVersion == 4) {
+ 	    memcpy(buf1, buf2, size);
+--- a/ipl_decrypt.cpp
++++ b/ipl_decrypt.cpp
+@@ -1,41 +1,4 @@
+-#include <cstdint>
+-#include <string>
+-#include <cstring>
+-#include <cstdio>
+-#include <openssl/sha.h>
+-#include <map>
+-#include <array>
+-
+-#include "CommonTypes.h"
+-#include "common.h"
+-
+-extern "C" {
+-#include "libkirk/kirk_engine.h"
+-#include "syscon_ipl_keys.h"
+-
+-}
+-
+-#define max(a, b) ((a) < (b) ? (b) : (a))
+-
+-bool g_debug = false;
+-
+-// 3.80+ use a custom Sha256 (with different initialization constants and the output truncated to 28 bytes), in part1 only
+-int g_customSha = 0;
+-// Use a SFMT19937 PRNG instead of MT19937 starting with 3.80 in part2 and 5.05 also in part1
+-int g_useSfmt = 0;
+-// 3.10+ have an additional unused round of MT19937
+-int g_emptyRound = 0;
+-// 1 if we use a precomputed key (see below), which avoids requiring a pre-ipl dump at hand
+-int g_usePrecomp = 0;
+-std::array<u32, 8> g_precompKey;
+-
+-// In 3.30+, derive the key from a scrambled key first (g_newKey) and if the key's checksum is equal to g_checksum,
+-// XOR it with g_xorKey. Used to handle several preipl versions, only present on retail 01g and 02g.
+-u8 *g_newKey;
+-u8 *g_xorKey;
+-u8 g_checksum;
+-
+-std::map<u32, std::array<u32, 8>> g_keys {
++static constexpr std::pair<u32, std::array<u32, 8>> g_keys[] = {
+     {0x3ca104f4, {0x351934f6, 0x7c77b627, 0xc774d96b, 0xac1381ef, 0xa93ba068, 0x9bf7a518, 0xd7e040e4, 0x41d18c07}}, // 2.60
+     {0x3f0449dd, {0x941a62b7, 0xa8b33d7e, 0xf59f3d90, 0xbfe0a24d, 0x295206e9, 0xe8d280fa, 0xb705572a, 0x99ad3262}}, // 2.7x
+     {0xfcc312e8, {0x4ebb9a84, 0x9d5b13a5, 0x569beec5, 0x343d4264, 0x2b3896dd, 0x00c962d8, 0x09fca971, 0x6aa5bcff}}, // 2.8x
+@@ -88,38 +51,34 @@
+     {0xb331d7a6, {0x0163e80e, 0x3175e31e, 0xe5134ea3, 0x03d1bb84, 0x49cd898d, 0x41f3047a, 0x7de563d1, 0x00000000}}  // 6.60 testing tool
+ };
+ 
+-s32 sha256Digest(u8 *data, u32 size, u8 *digest);
+-
+-void SHA256_Init2(SHA256_CTX *ctx)
+-{
+-    SHA256_Init(ctx);
+-    if (g_customSha) {
+-        ctx->h[0] = 0xC1059ED8;
+-        ctx->h[1] = 0x367CD507;
+-        ctx->h[2] = 0x3070DD17;
+-        ctx->h[3] = 0xF70E5939;
+-        ctx->h[4] = 0xFFC00B31;
+-        ctx->h[5] = 0x68581511;
+-        ctx->h[6] = 0x64F98FA7;
+-        ctx->h[7] = 0xBEFA4FA4;
+-    }
+-}
+-
+-void SHA256_Final2(u8 *digest, SHA256_CTX *ctx)
+-{
+-    // Custom sha256 is only 7 words of output long, so we need to backup the last word
+-    u8 back[4];
+-    memcpy(back, digest + 28, 4);
+-    SHA256_Final(digest, ctx);
+-    if (g_customSha) {
+-        memcpy(digest + 28, back, 4);
+-    }
+-}
++struct ipl_context {
++    psar_sink &sink;
++    explicit ipl_context(psar_sink &value) : sink(value) {}
++
++
++// 3.80+ use a custom Sha256 (with different initialization constants and the output truncated to 28 bytes), in part1 only
++int g_customSha = 0;
++// Use a SFMT19937 PRNG instead of MT19937 starting with 3.80 in part2 and 5.05 also in part1
++int g_useSfmt = 0;
++// 3.10+ have an additional unused round of MT19937
++int g_emptyRound = 0;
++// 1 if we use a precomputed key (see below), which avoids requiring a pre-ipl dump at hand
++int g_usePrecomp = 0;
++std::array<u32, 8> g_precompKey;
++
++// In 3.30+, derive the key from a scrambled key first (g_newKey) and if the key's checksum is equal to g_checksum,
++// XOR it with g_xorKey. Used to handle several preipl versions, only present on retail 01g and 02g.
++u8 *g_newKey = nullptr;
++u8 *g_xorKey = nullptr;
++u8 g_checksum = 0;
++
++
++
++
+ 
+ void sha256hmac(u8 *key, u32 keylen, u8 *data, u32 datalen, u8 *out) // at 0x040F0C08 in 2.60
+ {
+-    SHA256_CTX ctx; // sp
+-    u8 buf1[32]; // sp + 112 // actually 28 in 3.80+
++    u8 buf1[32] = {}; // sp + 112 // actually 28 in 3.80+
+     u8 buf2[64]; // sp + 144
+     if (datalen == 0 || data == NULL) {
+         sha256Digest(key, keylen, out);
+@@ -134,17 +93,11 @@
+     for (s32 i = 0; i < 64; i++) {
+         buf2[i] ^= 0x36; // I_PAD
+     }
+-    SHA256_Init2(&ctx);
+-    SHA256_Update(&ctx, buf2, 64);
+-    SHA256_Update(&ctx, data, datalen);
+-    SHA256_Final2(buf1, &ctx);
++    pspdb_psar_hash(g_customSha, buf2, 64, data, datalen, buf1);
+     for (s32 i = 0; i < 64; i++) {
+         buf2[i] ^= 0x6A; // I_PAD ^ O_OPAD
+     }
+-    SHA256_Init2(&ctx);
+-    SHA256_Update(&ctx, buf2, 64);
+-    SHA256_Update(&ctx, buf1, g_customSha ? 28 : 32);
+-    SHA256_Final2(out, &ctx);
++    pspdb_psar_hash(g_customSha, buf2, 64, buf1, g_customSha ? 28 : 32, out);
+     // in 3.30+, here ctx, buf1 and buf2 are memset to 0
+ }
+ 
+@@ -264,7 +217,7 @@
+     return ctx->state[0];
+ }
+ 
+-u32 g_sfmtParity[4] = {1, 0, 0, 0x13C9E684};
++static constexpr u32 g_sfmtParity[4] = {1, 0, 0, 0x13C9E684};
+ 
+ void sfmtCertify(SceKernelUtilsMt19937Context *ctx) // at 0x0400378C  in 3.80 part2
+ {
+@@ -302,7 +255,7 @@
+     for (s32 i = 0; i < 624; i++) {
+         ctx->state[i] = 0x8B8B8B8B;
+     }
+-    s32 a3 = max(seedSize + 1, 624) - 1;
++    s32 a3 = std::max(seedSize + 1, 624u) - 1;
+     u32 t0 = 0;
+     u32 *state1 = &ctx->state[0];
+     u32 *state2 = &ctx->state[306];
+@@ -372,16 +325,7 @@
+         memcpy(hmac, g_precompKey.data(), 32);
+     } else {
+         sha256hmac((u8*)preiplHmacKey, 64, (u8*)preipl, preiplSize, (u8*)hmac);
+-        if (preipl != NULL && g_debug) {
+-            printf("using hmac = {0x%08x, {", *(u32*)preiplHmacKey);
+-            for (s32 i = 0; i < 8; i++) {
+-                printf("0x%08x", hmac[i]);
+-                if (i < 7) {
+-                    printf(", ");
+-                }
+-            }
+-            printf("}}\n");
+-        }
++        
+     }
+     ctx.count = 0;
+     if (g_useSfmt) {
+@@ -426,7 +370,10 @@
+             }
+         } else {
+             for (s32 j = 0; j <hmacSize / 4; j++) {
+-                *(u32*)decryptBuf ^= hmac2[j];
++                u32 word;
++                memcpy(&word, decryptBuf, sizeof(word));
++                word ^= hmac2[j];
++                memcpy(decryptBuf, &word, sizeof(word));
+                 decryptBuf += 4;
+             }
+         }
+@@ -437,6 +384,7 @@
+ // for 3.30+ part1
+ void decrypt330(u32 *preipl, u32 preiplSize, void *preiplHmacKey, void *dataHmacKey, void *encryptedImg, s32 encryptedSize, u32 realPreiplSize) // at 0x040F1018 in 3.30 part1
+ {
++    if (!preipl || realPreiplSize > 4096 || realPreiplSize % 4 || !g_newKey || !g_xorKey) throw psar_error{};
+     u8 buf1[32];
+     SceKernelUtilsMt19937Context ctx;
+     u32 buf2[1024];
+@@ -453,9 +401,7 @@
+     for (s32 i = 0; i < 32; i++) {
+         checksum = (checksum + buf1[i]) & 0xFF;
+     }
+-    if (g_debug) {
+-        printf("checksum %02x vs %02x\n", g_checksum, checksum);
+-    }
++    
+     if (g_checksum == checksum) {
+         for (s32 i = 0; i < 32; i++) {
+             buf1[i] ^= g_xorKey[i];
+@@ -466,15 +412,15 @@
+ 
+ s32 sha256Digest(u8 *data, u32 size, u8 *digest) // at 0x040F12CC 
+ {
+-    SHA256_CTX ctx;
+-    SHA256_Init2(&ctx);
+-    SHA256_Update(&ctx, data, size);
+-    SHA256_Final2(digest, &ctx);
++    pspdb_psar_hash(g_customSha, data, size, nullptr, 0, digest);
+     return 0;
+ }
+ 
+ int pspDecryptIPL3(const u8* pbIn, u8* pbOut, int cbIn)
+ {
++    if (cbIn < 0x90 || cbIn > 1000000 - 0x40) return 0;
++    const u32 declared = read_le32(pbIn + 0x70);
++    if (!declared || declared > static_cast<u32>(cbIn) || declared > 1000000) return 0;
+     int ret;
+ 
+     // all together now (pbIn/pbOut must be aligned)
+@@ -485,21 +431,18 @@
+         return 0;
+     }
+ 
+-    ret = *(u32*)&pbIn[0x70];  // true size
++    ret = read_le32(pbIn + 0x70);  // true size
+ 
+     return ret;
+ }
+ 
+ // Decompress/unscramble IPL stages 2 & 3 and kernel keys
+-int extractIPLStages(u8 *inData, u32 inDataSize, int version, u32 loadAddr, const char *filename, std::string outdir, u8 *preipl_bin, u32 preiplSize, bool verbose, bool keepAll, std::string &logStr)
+-{
+-    g_debug = verbose;
+-    if (g_debug) {
+-        printf("Version %d\n", version);
+-    }
++int extractIPLStages(u8 *inData, u32 inDataSize, int version, u32 loadAddr, const char *filename, const std::string &outdir, u8 *preipl_bin, u32 preiplSize)
++{
++    if (inDataSize < 0x100) return 1;
++    
+     g_customSha = g_useSfmt = g_emptyRound = g_usePrecomp = 0;
+ 
+-    kirk_init();
+ 
+     u8 decBuf[1000000];
+     u8 outBuf[1000000];
+@@ -516,47 +459,38 @@
+     /////////////////////////
+ 
+     if (version < 260) {
+-        for (u32 off = 0; off < 0x100; off += 4) {
+-            u32 gzip_hi = *(u32*)(inData + off);
+-            u32 gzip_lo = *(u32*)(inData + off + 4);
++        for (u32 off = 0; off + 8 <= 0x100; off += 4) {
++            u32 gzip_hi = read_le32(inData + off);
++            u32 gzip_lo = read_le32(inData + off + 4);
+             if (gzip_hi >> 16 == 0x3C06 && gzip_lo >> 16 == 0x24C6) { // lui $a2, x & addiu $a2, $a2, x
+                 u32 gzip_addr = (gzip_hi << 16) + (s16)(gzip_lo & 0xFFFF);
+-                if (g_debug) {
+-                    printf("Decompressing zip at %08x\n", gzip_addr);
+-                }
++                
+                 u32 realInSize;
+ 
+-                int decSize = gunzip((u8*)inData+gzip_addr-loadAddr, 0xE0000, decBuf, sizeof(decBuf), &realInSize);
++                if (!address_range(gzip_addr, loadAddr, inDataSize, 2)) return 1;
++                int decSize = gunzip((u8*)inData + (gzip_addr - loadAddr), inDataSize - (gzip_addr-loadAddr), decBuf, sizeof(decBuf), &realInSize);
+                 if (decSize < 0) {
+-                    printf("Failed decompressing stage2!\n");
+                     return 1;
+                 }
+-                if (g_debug) {
+-                    printf("decompressed %d bytes\n", decSize);
+-                }
+-                if (keepAll) {
+-                    szDataPath = outdir + "/stage2_" + std::string(filename) + ".gz" ;
+-                    WriteFile(szDataPath.c_str(), (u8*)inData+gzip_addr-loadAddr, realInSize);
+-                }
++                
++                
+ 
+                 szDataPath = outdir + "/stage2_" + std::string(filename);
+-                WriteFile(szDataPath.c_str(), decBuf, decSize);
+-                logStr += ",stage2 decompressed";
+-                decSize = pspDecryptIPL3((u8*)inData+img2_addr-loadAddr, outBuf, inDataSize - (img2_addr-loadAddr));
++                if (!sink.file(szDataPath.c_str(), decBuf, decSize)) return 1;
++                
++                if (!address_range(img2_addr, loadAddr, inDataSize, 0x90)) return 1;
++                decSize = pspDecryptIPL3((u8*)inData + (img2_addr - loadAddr), outBuf, inDataSize - (img2_addr-loadAddr));
+                 if (!decSize) {
+-                    printf("Failed decrypting stage3!\n");
++                    return 1;
+                 } else {
+-                    logStr += ",stage3 decrypted";
++                    
+                     szDataPath = outdir + "/stage3_" + std::string(filename);
+-                    WriteFile(szDataPath.c_str(), outBuf, decSize);
+-                    if (g_debug) {
+-                        printf("decrypted %d bytes\n", decSize);
+-                    }
++                    if (!sink.file(szDataPath.c_str(), outBuf, decSize)) return 1;
++                    
+                 }
+                 return 0;
+             }
+         }
+-        printf("stage2 not found!?");
+         return 1;
+     }
+ 
+@@ -567,7 +501,7 @@
+     u32 key1_off = 0, key2_off = 0, img_off = 0, img_size = 0;
+     // scan the binary for offsets
+     for (u32 off = 0; off < 0x100; off += 4) {
+-        u32 curInstr = *(u32*)(inData + off);
++        u32 curInstr = read_le32(inData + off);
+         if (curInstr >> 16 == 0x3C06) { // lui $a2, x
+             key1_off = curInstr << 16;
+         }
+@@ -596,6 +530,9 @@
+             break;
+         }
+     }
++    if (!address_range(key1_off, loadAddr, inDataSize, 64) ||
++        !address_range(key2_off, loadAddr, inDataSize, 64) ||
++        !address_range(img_off, loadAddr, inDataSize, img_size) || img_size == 0 || img_size > INT_MAX) return 1;
+     if (version >= 310) {
+         g_emptyRound = 1;
+     }
+@@ -605,11 +542,8 @@
+     if (version >= 505) {
+         g_useSfmt = 1;
+     }
+-    if (g_debug) {
+-        printf("keys at %08x, %08x, img at %08x, size %08x\n", key1_off, key2_off, img_off, img_size);
+-    }
++    
+     if (key1_off == 0 || key2_off == 0 || img_off == 0 || img_size == 0) {
+-        printf("One offset or size is not found, abort!\n");
+         return 1;
+     }
+ 
+@@ -618,12 +552,12 @@
+     /////////////////////////
+ 
+     if (version >= 330) {
+-        for (u32 off = 0; off < img_off; off += 4) {
+-            u32 curInstr = *(u32*)(inData + off);
++        for (u32 off = 0; off + 4 <= img_off - loadAddr; off += 4) {
++            u32 curInstr = read_le32(inData + off);
+             if (curInstr == 0x27BDE5D0) { // addiu      $sp, $sp, -6704
+                 u32 loadInstr_hi = 0, loadInstr_lo = 0;
+-                for (u32 off2 = off; off2 < off + 0x100; off2 += 4) {
+-                    u32 curInstr2 = *(u32*)(inData + off2);
++                for (u32 off2 = off; off2 < off + 0x100 && off2 + 4 <= inDataSize; off2 += 4) {
++                    u32 curInstr2 = read_le32(inData + off2);
+                     if (curInstr2 >> 16 == 0x3C07) { // lui $a3, x
+                         loadInstr_hi = curInstr2;
+                     }
+@@ -632,18 +566,16 @@
+                     }
+                 }
+                 if (loadInstr_hi == 0 || loadInstr_lo == 0) {
+-                    printf("Couldn't find key part2 for 3.30+\n");
+                     return 1;
+                 }
+ 
+                 s16 addrLo = loadInstr_lo & 0xFFFF;
+                 u32 addr = (loadInstr_hi << 16) + addrLo;
+-                g_newKey = (u8*)inData+addr-loadAddr;
+-                g_xorKey = (u8*)inData+addr-loadAddr+0x300;
++                if (!address_range(addr, loadAddr, inDataSize, 0x321)) return 1;
++                g_newKey = (u8*)inData + (addr - loadAddr);
++                g_xorKey = (u8*)inData + (addr - loadAddr)+0x300;
+                 g_checksum = inData[addr-loadAddr+0x320];
+-                if (g_debug) {
+-                    printf("key2 is %08x, %08x, %02x\n", addr, addr+0x300, g_checksum);
+-                }
++                
+                 break;
+             }
+         }
+@@ -652,27 +584,24 @@
+     /////////////////////////
+     // Do the actual decryption & decompression of stage2
+     /////////////////////////
+-    u32 key_idx = *(u32*)(inData+key1_off-loadAddr);
+-    auto precompKeyIt = g_keys.find(key_idx);
+-    if (precompKeyIt != g_keys.end()) {
+-        if (g_debug) {
+-            printf("found key %08x %08x...\n", precompKeyIt->second[0], precompKeyIt->second[1]);
+-        }
++    u32 key_idx = read_le32(inData + (key1_off - loadAddr));
++    auto precompKeyIt = std::find_if(std::begin(g_keys), std::end(g_keys), [key_idx](const auto &entry) { return entry.first == key_idx; });
++    if (precompKeyIt != std::end(g_keys)) {
++        
+         g_usePrecomp = 1;
+         g_precompKey = precompKeyIt->second;
+-        decrypt(NULL, 0, inData+key1_off-loadAddr, inData+key2_off-loadAddr, inData+img_off-loadAddr, img_size); // decrypt function
++        decrypt(NULL, 0, inData + (key1_off - loadAddr), inData + (key2_off - loadAddr), inData + (img_off - loadAddr), img_size); // decrypt function
+     } else {
+         if (preipl_bin != nullptr) {
+             if (version >= 330) {
+-                decrypt330((u32*)preipl_bin, 640, inData+key1_off-loadAddr, inData+key2_off-loadAddr, inData+img_off-loadAddr, img_size, preiplSize); // decrypt function // 3.30+
++                decrypt330((u32*)preipl_bin, 640, inData + (key1_off - loadAddr), inData + (key2_off - loadAddr), inData + (img_off - loadAddr), img_size, preiplSize); // decrypt function // 3.30+
+             } else {
+-                decrypt(preipl_bin + 0x40, 640, inData+key1_off-loadAddr, inData+key2_off-loadAddr, inData+img_off-loadAddr, img_size); // decrypt function
++                if (preiplSize < 0x40 + 640) return 1;
++                decrypt(preipl_bin + 0x40, 640, inData + (key1_off - loadAddr), inData + (key2_off - loadAddr), inData + (img_off - loadAddr), img_size); // decrypt function
+             }
+         } else {
+-            if (g_debug) {
+-                printf("No preipl provided and key not found, aborting\n");
+-            }
+-            logStr += ",no key found";
++            
++            
+             return 1;
+         }
+     }
+@@ -680,22 +609,16 @@
+ 
+     u32 realInSize;
+ 
+-    int decSize = gunzip((u8*)inData+img_off-loadAddr, 0xE0000, decBuf, sizeof(decBuf), &realInSize);
++    int decSize = gunzip((u8*)inData + (img_off - loadAddr), img_size, decBuf, sizeof(decBuf), &realInSize);
+     if (decSize < 0) {
+-        printf("Failed unscrambling or decompressing stage2!\n");
+         return 1;
+     }
+-    if (g_debug) {
+-        printf("decompressed %d bytes\n", decSize);
+-    }
+-    if (keepAll) {
+-        szDataPath = outdir + "/stage2_" + std::string(filename) + ".gz";
+-        WriteFile(szDataPath.c_str(), (u8*)inData+img_off-loadAddr, realInSize);
+-    }
++    
++    
+ 
+     szDataPath = outdir + "/stage2_" + std::string(filename);
+-    WriteFile(szDataPath.c_str(), decBuf, decSize);
+-    logStr += ",stage2 unscrambled & decompressed";
++    if (!sink.file(szDataPath.c_str(), decBuf, decSize)) return 1;
++    
+     
+     // New: Added handling for xor syscon step for keys
+     // Super fun happy time
+@@ -703,9 +626,13 @@
+     u8 scidx[0x10];
+     u8 stage2xor[0x10];
+     u8 scxor[0x10];
+-    int model = ((filename[8] - 0x30) * 10) + (filename[9] - 0x30);
+     int xkeyoff =findStage2Keys(decBuf,decSize);
+     if(xkeyoff>0) {
++        // Legacy names select the upstream zero-key fallback (model >= 13).
++        if (strlen(filename) < 10) return 1;
++        int model = ((filename[8] - 0x30) * 10) + (filename[9] - 0x30);
++        if (model < 0) return 1;
++        if (xkeyoff > decSize || decSize - xkeyoff < ((version > 505 && model > 1) ? 32 : 16)) return 1;
+         memcpy(scidx,&decBuf[xkeyoff], 0x10);
+         if((version>505) && (model > 1)) {
+             memcpy(stage2xor,&decBuf[xkeyoff+0x10], 0x10);
+@@ -721,13 +648,15 @@
+     // Find keys used for stage3 unscrambling (they're in stage2)
+     /////////////////////////
+ 
++    const u32 stage2_size = decSize;
++    if (stage2_size < 0x44) return 1;
+     u32 key3_addr, key4_addr, img2_size;
+     if (version < 280) {
+-        u32 load1_hi = *(u32*)(decBuf + 0x000C); // lui $v0, x
+-        u32 load1_lo = *(u32*)(decBuf + 0x0018); // addiu $a2, $v0, x
+-        u32 load2_hi = *(u32*)(decBuf + 0x001C); // lui $v0, x
+-        u32 load2_lo = *(u32*)(decBuf + 0x0040); // addiu $a3, $v0, x
+-        u32 load_size = *(u32*)(decBuf + 0x0028); // li $t1, x
++        u32 load1_hi = read_le32(decBuf + 0x000C); // lui $v0, x
++        u32 load1_lo = read_le32(decBuf + 0x0018); // addiu $a2, $v0, x
++        u32 load2_hi = read_le32(decBuf + 0x001C); // lui $v0, x
++        u32 load2_lo = read_le32(decBuf + 0x0040); // addiu $a3, $v0, x
++        u32 load_size = read_le32(decBuf + 0x0028); // li $t1, x
+         if (load1_hi >> 16 == 0x3C02 && load1_lo >> 16 == 0x2446 &&
+             load2_hi >> 16 == 0x3C02 && load2_lo >> 16 == 0x2447 &&
+             load_size >> 16 == 0x3409) {
+@@ -735,17 +664,16 @@
+             key4_addr = (load2_hi << 16) + (s16)(load2_lo & 0xFFFF);
+             img2_size = load_size & 0xFFFF;
+         } else {
+-            printf("Key2 not found!?\n");
+             return 1;
+         }
+     } else {
+         bool found = false;
+-        for (u32 off = 0; off < 0x400; off += 4) {
+-            u32 load1_hi = *(u32*)(decBuf + off + 0x0C); // lui $v0, x
+-            u32 load1_lo = *(u32*)(decBuf + off + 0x1C); // addiu $s0, $v0, x
+-            u32 load2_hi = *(u32*)(decBuf + off + 0x08); // lui $v1, x
+-            u32 load2_lo = *(u32*)(decBuf + off + 0x14); // addiu $s1, $v1, x
+-            u32 load_size = *(u32*)(decBuf + off + 0x28); // li $t1, x
++        for (u32 off = 0; off < 0x400 && off + 0x2c <= stage2_size; off += 4) {
++            u32 load1_hi = read_le32(decBuf + off + 0x0C); // lui $v0, x
++            u32 load1_lo = read_le32(decBuf + off + 0x1C); // addiu $s0, $v0, x
++            u32 load2_hi = read_le32(decBuf + off + 0x08); // lui $v1, x
++            u32 load2_lo = read_le32(decBuf + off + 0x14); // addiu $s1, $v1, x
++            u32 load_size = read_le32(decBuf + off + 0x28); // li $t1, x
+             if (load1_hi >> 16 == 0x3C02 && load1_lo >> 16 == 0x2450 &&
+                 load2_hi >> 16 == 0x3C03 && load2_lo >> 16 == 0x2471 &&
+                 load_size >> 16 == 0x3409) {
+@@ -755,11 +683,11 @@
+                 found = true;
+                 break;
+             }
+-            load1_hi = *(u32*)(decBuf + off + 0x10);
+-            load1_lo = *(u32*)(decBuf + off + 0x18);
+-            load2_hi = *(u32*)(decBuf + off + 0x04);
+-            load2_lo = *(u32*)(decBuf + off + 0x0C);
+-            load_size = *(u32*)(decBuf + off + 0x24);
++            load1_hi = read_le32(decBuf + off + 0x10);
++            load1_lo = read_le32(decBuf + off + 0x18);
++            load2_hi = read_le32(decBuf + off + 0x04);
++            load2_lo = read_le32(decBuf + off + 0x0C);
++            load_size = read_le32(decBuf + off + 0x24);
+             if (load1_hi >> 16 == 0x3C02 && load1_lo >> 16 == 0x2450 &&
+                 load2_hi >> 16 == 0x3C02 && load2_lo >> 16 == 0x2451 &&
+                 load_size >> 16 == 0x3409) {
+@@ -771,13 +699,10 @@
+             }
+         }
+         if (!found) {
+-            printf("Unsupported version!\n");
+             return 1;
+         }
+     }
+-    if (g_debug) {
+-        printf("part2 key offs %08x, %08x, size %08x, img2 at %08x\n", key3_addr, key4_addr, img2_size, img2_addr);
+-    }
++    
+ 
+     /////////////////////////
+     // Find the keys used for kernel keys decryption (used by memlmd)
+@@ -785,10 +710,10 @@
+ 
+     u32 key5_addr = 0, key6_addr = 0;
+     if (version >= 330) {
+-        u32 load1_hi = *(u32*)(decBuf + 0x18);
+-        u32 load1_lo = *(u32*)(decBuf + 0x20);
+-        u32 load2_hi = *(u32*)(decBuf + 0x0c);
+-        u32 load2_lo = *(u32*)(decBuf + 0x14);
++        u32 load1_hi = read_le32(decBuf + 0x18);
++        u32 load1_lo = read_le32(decBuf + 0x20);
++        u32 load2_hi = read_le32(decBuf + 0x0c);
++        u32 load2_lo = read_le32(decBuf + 0x14);
+         if (load1_hi >> 16 == 0x3C02 && load1_lo >> 16 == 0x2450 &&
+             load2_hi >> 16 == 0x3C02 && load2_lo >> 16 == 0x2451) {
+             key5_addr = (load1_hi << 16) + (s16)(load1_lo & 0xFFFF);
+@@ -805,58 +730,57 @@
+         g_useSfmt = 1;
+     }
+     if (key5_addr != 0 && key6_addr != 0) {
+-        if (g_debug) {
+-            printf("decrypting kernel key at %08x using keys at %08x, %08x\n", kernelKeys_addr, key5_addr, key6_addr);
+-        }
+-        decrypt(NULL, 0, decBuf+key5_addr-part2LoadAddr, decBuf+key6_addr-part2LoadAddr, inData+kernelKeys_addr-loadAddr, 256);
+-        decSize = pspDecryptIPL3((u8*)inData+kernelKeys_addr-loadAddr, outBuf, 256);
++        if (!address_range(key5_addr, part2LoadAddr, stage2_size, 64) ||
++            !address_range(key6_addr, part2LoadAddr, stage2_size, 64) ||
++            !address_range(kernelKeys_addr, loadAddr, inDataSize, 256)) return 1;
++        
++        decrypt(NULL, 0, decBuf + (key5_addr - part2LoadAddr), decBuf + (key6_addr - part2LoadAddr), inData + (kernelKeys_addr - loadAddr), 256);
++        decSize = pspDecryptIPL3((u8*)inData + (kernelKeys_addr - loadAddr), outBuf, 256);
+         if (!decSize) {
+-            printf("Failed decrypting kernel keys!\n");
++            return 1;
+         } else {
+-            logStr += ",kernel keys decrypted";
++            
+             szDataPath = outdir + "/kkeys_" + std::string(filename);
+             // Added the final xor to create to correct second key
++            if (decSize < 32) return 1;
+             for(int j=0;j<0x10;j++) outBuf[j+0x10] ^= scxor[j];
+-            WriteFile(szDataPath.c_str(), outBuf, decSize);
++            if (!sink.file(szDataPath.c_str(), outBuf, decSize)) return 1;
+         }
+     }
+ 
+     /////////////////////////
+     // Decrypt, and possibly decompress stage3
+     /////////////////////////
+-    decrypt(NULL, 0, decBuf+key3_addr-part2LoadAddr, decBuf+key4_addr-part2LoadAddr, inData+img2_addr-loadAddr, img2_size);
+-    decSize = pspDecryptIPL3((u8*)inData+img2_addr-loadAddr, outBuf, inDataSize - (img2_addr-loadAddr));
++    if (!address_range(key3_addr, part2LoadAddr, stage2_size, 64) ||
++        !address_range(key4_addr, part2LoadAddr, stage2_size, 64) ||
++        !address_range(img2_addr, loadAddr, inDataSize, img2_size) || img2_size == 0) return 1;
++    decrypt(NULL, 0, decBuf + (key3_addr - part2LoadAddr), decBuf + (key4_addr - part2LoadAddr), inData + (img2_addr - loadAddr), img2_size);
++    decSize = pspDecryptIPL3((u8*)inData + (img2_addr - loadAddr), outBuf, inDataSize - (img2_addr-loadAddr));
+     if (!decSize) {
+-        printf("Failed decrypting stage3!\n");
++        return 1;
+     } else {
+-        if (g_debug) {
+-            printf("decrypted %d bytes\n", decSize);
+-        }
+-        if (outBuf[0] == 0x1f && outBuf[1] == 0x8b) {
++        
++        if (decSize >= 2 && outBuf[0] == 0x1f && outBuf[1] == 0x8b) {
+             u32 realInSize;
+             int decompSize = gunzip(outBuf, decSize, decBuf, sizeof(decBuf), &realInSize);
+             if (decompSize < 0) {
+-                printf("Failed decompressing stage3!\n");
+                 return 1;
+             }
+-            if (g_debug) {
+-                printf("decompressed %d bytes\n", decompSize);
+-            }
+-            if (keepAll) {
+-                szDataPath = outdir + "/stage3_" + std::string(filename)+ ".gz";
+-                WriteFile(szDataPath.c_str(), outBuf, realInSize);
+-            }
++            
++            
+ 
+             szDataPath = outdir + "/stage3_" + std::string(filename);
+-            WriteFile(szDataPath.c_str(), decBuf, decompSize);
+-            logStr += ",stage3 decrypted & decompressed";
++            if (!sink.file(szDataPath.c_str(), decBuf, decompSize)) return 1;
++            
+         } else {
+-            logStr += ",stage3 decrypted";
++            
+             szDataPath = outdir + "/stage3_" + std::string(filename);
+-            WriteFile(szDataPath.c_str(), outBuf, decSize);
++            if (!sink.file(szDataPath.c_str(), outBuf, decSize)) return 1;
+         }
+     }
+ 
+     return 0;
+ }
+ 
++
++};
+--- a/kl4e.c
++++ b/kl4e.c
+@@ -149,8 +149,10 @@
+     *curOut = *curByte & 0xff;
+ }
+ 
+-int decompress_kle_bounded(u8 *outBuf, int outSize, const u8 *inBuf, int inSize, int isKl4e)
+-{
++int decompress_kle_bounded_member(u8 *outBuf, int outSize, const u8 *inBuf, int inSize, int isKl4e, size_t *consumed)
++{
++    const u8 *begin = inBuf;
++    if (consumed) *consumed = 0;
+     if (inSize < 5) return 0x80000108;
+     if (outSize <= 0) return 0x80000104;
+     InputBounds inputBounds = { inBuf + inSize, 0 };
+@@ -173,6 +175,7 @@
+         if (inputVal > bounds->end - inBuf) return 0x80000108;
+         if (inputVal > (u32)outSize) return 0x80000104;
+         memcpy(outBuf, inBuf, inputVal);
++        if (consumed) *consumed = 5 + inputVal - (inputVal != 0);
+         return (int)inputVal;
+     }
+     // Initialize probabilities from the header value.
+@@ -251,6 +254,7 @@
+                     if (read_bit(&inputVal, &range, probs + 16, &inBuf, 3, 31, bounds)) {
+                         copyCount = copyCount + 1;
+                         if (copyCount == 0xFF) {
++                            if (consumed && !bounds->failed) *consumed = (size_t)(inBuf - begin);
+                             return bounds->failed ? (int)0x80000108 : (int)(curOut - outBuf);
+                         }
+                     }
+@@ -350,3 +354,7 @@
+         curCopyCountBitsProbs = &copyCountBitsProbs[6 + ((size_t)(curOut - outBuf) & 1)];
+     }
+ }
++
++int decompress_kle_bounded(u8 *out, int capacity, const u8 *input, int size, int kl4e) {
++    return decompress_kle_bounded_member(out, capacity, input, size, kl4e, NULL);
++}

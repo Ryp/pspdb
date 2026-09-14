@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -18,6 +19,7 @@ import pycdlib
 
 
 GAME_UMD = b"UMDT-99872|8D53CBDF6A4FC495|0001|G" + b"\0" * 13 + b"|"
+DOCUMENT_HEADER = b'\0PGD\x01\0\0\0\x01\0\0\0\0\0\0\0\x67\x68\xbd\x14\xca\x5d\x47\x4a'
 
 
 def iso_bytes(umd=GAME_UMD, nested=False):
@@ -599,7 +601,7 @@ class IngestCliTests(unittest.TestCase):
             self.assertIn('CatalogConflict', output)
             self.assertEqual(snapshot(catalog), before)
 
-    def test_psar_header_dispatches_python_adapter_for_iso_and_zip(self):
+    def test_legacy_psar_helper_cannot_accept_invalid_iso_or_zip_containers(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'inputs'; root.mkdir()
             catalog = Path(tmp) / 'catalog'
@@ -614,35 +616,59 @@ class IngestCliTests(unittest.TestCase):
             with zipfile.ZipFile(root / 'sample.zip', 'w') as archive:
                 archive.writestr('sample.iso', image)
             tool = Path(tmp) / 'pspdecrypt'
-            tool.write_text('#!/bin/sh\necho "$2" >> "$PSPDB_TEST_OUTPUTS"\nmkdir -p "$2/F0"\nprintf decoded > "$2/F0/module.prx"\necho Done!\n')
+            tool.write_text('#!/bin/sh\nmkdir -p "$2/F0"\nprintf decoded > "$2/F0/module.prx"\necho Done!\n')
             tool.chmod(0o755)
             args = ('--catalog', str(catalog), '--threads', '2', '--no-progress')
-            with patch.dict(os.environ, {'PSPDECRYPT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
-                code, output = self.run_cli(root, *args)
-            self.assertEqual(code, 0, output)
-            h = hashlib.sha256(payload).hexdigest()
-            self.assertEqual([source_hash(p) for p in (catalog / 'psar' / ('v' + VERSIONS['psar'])).glob('*-ingest.json')], [h])
-            tree = json.loads(tree_path(catalog, h).read_text())
-            entry = next(e for e in tree['entries'] if e['type'] == 'file')
-            self.assertEqual(entry['path'], 'F0/module.prx')
-            self.assertEqual(entry['sha256'], hashlib.sha256(b'decoded').hexdigest())
-            self.assertEqual(output.count('psar '), 2)
-            self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
-            # A child failure must be visible, even if pspdecrypt exits zero.
-            tool.write_text('#!/bin/sh\necho "$2" >> "$PSPDB_TEST_OUTPUTS"\necho "error decoding"\necho Done!\n')
-            with patch.dict(os.environ, {'PSPDECRYPT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
+            with patch.dict(os.environ, {'PSPDECRYPT': str(tool)}):
                 code, output = self.run_cli(root, *args)
             self.assertEqual(code, 1, output)
-            self.assertIn('ExtractionFailed', output)
-            self.assertIn('error decoding', output)
-            self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
-            self.assertEqual(json.loads(tree_path(catalog, h).read_text()), tree)
+            self.assertEqual(self.records(output), [])
+            self.assertFalse((catalog / 'iso').exists())
+            self.assertFalse(result_path(catalog, 'psar', hashlib.sha256(payload).hexdigest()).exists())
 
-    def test_nested_psar_trees_are_walked_and_cycles_stop(self):
+    def test_psar_replay_only_walks_final_overwrites(self):
+        import zlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+            catalog = root / 'catalog'
+            records = [
+                ('flash0:/one.bin', b'\x1f\x8b\x08' + b'A' * (3_000_000 - 3)),
+                ('flash0:/two.bin', b'B' * 3_000_000),
+                ('flash0:/three.bin', b'C' * 3_000_000),
+                ('flash0:/one.bin', b'final replacement'),
+            ]
+            payload = bytearray(0x121)
+            payload[:5] = b'PSAR\x01'
+            payload[0x20:0x29] = b'333,6.61\0'
+            struct.pack_into('<I', payload, 0xa0, 1)
+            expected = {}
+            for name, data in records:
+                compressed = zlib.compress(data)
+                header = bytearray(0x110)
+                header[4:4 + len(name)] = name.encode()
+                struct.pack_into('<II', header, 0x104, len(compressed), len(data))
+                payload.extend(header); payload.extend(compressed)
+                expected['F0/' + name.removeprefix('flash0:/')] = {
+                    'size_bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+                }
+            iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
+            for name, data in [('UMD_DATA.BIN', GAME_UMD), ('UPDATE.DAT', bytes(payload))]:
+                iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
+            iso.write(str(inputs / 'test.iso')); iso.close()
+            code, output = self.run_cli(inputs, '--catalog', str(catalog), '--threads', '1', '--no-progress')
+            self.assertEqual(code, 0, output)
+            self.assertEqual(len(self.records(output)), 1)
+            tree = json.loads(tree_path(catalog, hashlib.sha256(payload).hexdigest()).read_text())
+            files = {entry['path']: {key: entry[key] for key in ('size_bytes', 'sha256')}
+                     for entry in tree['entries'] if entry['type'] == 'file'}
+            self.assertEqual(files, expected)
+            # The superseded gzip is invalid; scheduling it would reject the root.
+
+    def test_nested_external_trees_keep_inputs_alive_and_stop_cycles(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / 'inputs'; root.mkdir()
             store = Path(tmp) / 'store'; catalog = Path(tmp) / 'catalog'
-            parent = b'PSARparent'; child = b'PSARchild'
+            parent = DOCUMENT_HEADER + b'parent'; child = DOCUMENT_HEADER + b'child'
             parent_hash = hashlib.sha256(parent).hexdigest()
             child_hash = hashlib.sha256(child).hexdigest()
             iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
@@ -652,28 +678,42 @@ class IngestCliTests(unittest.TestCase):
             (root / 'sample.iso').write_bytes(output.getvalue())
             # With one worker, the parent temporary directory must already be gone
             # before the child runs; the child owns its in-memory input.
-            # Both extractions emit the same nested PSAR: its own output therefore
-            # contains a cycle. Zig must extract it once and still visit the PRX.
-            tool = Path(tmp) / 'pspdecrypt'
-            tool.write_text('#!/bin/sh\nif [ -f "$PSPDB_TEST_OUTPUTS" ]; then while IFS= read -r parent; do [ ! -d "$parent" ] || exit 1; done < "$PSPDB_TEST_OUTPUTS"; fi\necho "$2" >> "$PSPDB_TEST_OUTPUTS"\nmkdir -p "$2/F0"\nprintf PSARchild > "$2/F0/child.dat"\nprintf decoded > "$2/F0/module.prx"\necho Done!\n')
+            # Both extractions emit the same nested DOCUMENT: its own output
+            # contains a cycle. This exercises scheduling, not a fake decoder.
+            tool = Path(tmp) / 'document-helper'
+            tool.write_text(f'''#!{sys.executable}
+import json, os, sys
+from pathlib import Path
+if sys.argv[1:] == ['--provenance']:
+    print(json.dumps({{'name': 'PSP-DOCUMENT.DAT', 'options': ['page-files-only:1']}}))
+    raise SystemExit
+output = Path(sys.argv[sys.argv.index('--output') + 1])
+log = Path(os.environ['PSPDB_TEST_OUTPUTS'])
+previous = log.read_text().splitlines() if log.exists() else []
+assert all(not Path(path).exists() for path in previous)
+with log.open('a') as stream:
+    stream.write(str(output) + '\\n')
+(output / 'child.dat').write_bytes(bytes.fromhex('{child.hex()}'))
+(output / 'module.prx').write_bytes(b'decoded')
+if os.environ.get('PSPDB_TEST_FAIL_CHILD') == '1' and previous:
+    (output / 'link').symlink_to('module.prx')
+''')
             tool.chmod(0o755)
-            with patch.dict(os.environ, {'PSPDECRYPT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
+            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
                 code, output = self.run_cli(root, '--catalog', str(catalog), '--store', str(store),
                     '--threads', '1', '--no-progress')
             self.assertEqual(code, 0, output)
-            self.assertEqual(output.count('psar '), 2)
             self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
-            self.assertEqual({source_hash(p) for p in (catalog / 'psar' / ('v' + VERSIONS['psar'])).glob('*-ingest.json')}, {parent_hash, child_hash})
+            self.assertEqual({source_hash(p) for p in (catalog / 'document' / ('v' + VERSIONS['document'])).glob('*-ingest.json')}, {parent_hash, child_hash})
             for h in (parent_hash, child_hash):
                 tree = json.loads(tree_path(catalog, h).read_text())
-                self.assertEqual(next(e['sha256'] for e in tree['entries'] if e['path'] == 'F0/child.dat'), child_hash)
+                self.assertEqual(next(e['sha256'] for e in tree['entries'] if e['path'] == 'child.dat'), child_hash)
             iso_record = json.loads(next((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json')).read_text())
             iso_tree = json.loads(tree_path(catalog, iso_record['sha256']).read_text())
             self.assertEqual({e['path'] for e in iso_tree['entries']}, {'UMD_DATA.BIN', 'UPDATE.DAT'})
             # A failure while Zig walks a child must also clean both temp trees.
             (Path(tmp) / 'outputs').unlink()
-            tool.write_text(tool.read_text().replace('echo Done!', 'if [ "$(wc -l < "$PSPDB_TEST_OUTPUTS")" -eq 2 ]; then ln -s module.prx "$2/F0/link"; fi\necho Done!'))
-            with patch.dict(os.environ, {'PSPDECRYPT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
+            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs'), 'PSPDB_TEST_FAIL_CHILD': '1'}):
                 code, output = self.run_cli(root, '--catalog', str(catalog / 'failed'), '--store', str(store),
                     '--threads', '1', '--no-progress')
             self.assertEqual(code, 1, output)
@@ -692,7 +732,7 @@ class IngestCliTests(unittest.TestCase):
                 iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
                 files = [('UMD_DATA.BIN', GAME_UMD)]
                 for child in range(2):
-                    payload = f'PSAR{index}/{child}'.encode()
+                    payload = DOCUMENT_HEADER + f'{index}/{child}'.encode()
                     hashes.add(hashlib.sha256(payload).hexdigest())
                     files.append((f'CHILD{child}.BIN', payload))
                 for name, payload in files:
@@ -705,23 +745,28 @@ class IngestCliTests(unittest.TestCase):
                         archive.writestr('two.iso', image.getvalue())
             # Four extractors rendezvous. Serial recursive processing deadlocks
             # here; premature ISO publication is rejected before joining.
-            tool = root / 'pspdecrypt'
-            tool.write_text('''#!/bin/sh
-set -eu
-[ ! -d "$PSPDB_TEST_CATALOG/iso" ] || exit 1
-touch "$PSPDB_TEST_STARTED/$(sha256sum "$3" | cut -d ' ' -f 1)"
-n=0
-while [ "$(ls "$PSPDB_TEST_STARTED" | wc -l)" -lt 4 ]; do
-    n=$((n + 1)); [ "$n" -lt 500 ] || exit 1
-    sleep 0.01
-done
-echo "$2" >> "$PSPDB_TEST_OUTPUTS"
-printf decoded > "$2/module.prx"
-echo Done!
+            tool = root / 'document-helper'
+            tool.write_text(f'''#!{sys.executable}
+import hashlib, json, os, sys, time
+from pathlib import Path
+if sys.argv[1:] == ['--provenance']:
+    print(json.dumps({{'name': 'PSP-DOCUMENT.DAT', 'options': ['page-files-only:1']}}))
+    raise SystemExit
+assert not (Path(os.environ['PSPDB_TEST_CATALOG']) / 'iso').exists()
+markers = Path(os.environ['PSPDB_TEST_STARTED'])
+(markers / hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest()).touch()
+deadline = time.monotonic() + 5
+while len(list(markers.iterdir())) < 4:
+    assert time.monotonic() < deadline
+    time.sleep(0.01)
+output = Path(sys.argv[sys.argv.index('--output') + 1])
+with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
+    stream.write(str(output) + '\\n')
+(output / 'module.prx').write_bytes(b'decoded')
 ''')
             tool.chmod(0o755)
             with patch.dict(os.environ, {
-                'PSPDECRYPT': str(tool), 'PSPDB_TEST_STARTED': str(markers),
+                'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_STARTED': str(markers),
                 'PSPDB_TEST_CATALOG': str(catalog), 'PSPDB_TEST_OUTPUTS': str(root / 'outputs'),
             }):
                 code, output = self.run_cli(inputs, '--catalog', str(catalog),
@@ -729,11 +774,11 @@ echo Done!
             self.assertEqual(code, 0, output)
             self.assertEqual({p.name for p in markers.iterdir()}, hashes)
             self.assertEqual(len(list((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json'))), 2)
-            self.assertEqual({source_hash(p) for p in (catalog / 'psar' / ('v' + VERSIONS['psar'])).glob('*-ingest.json')}, hashes)
+            self.assertEqual({source_hash(p) for p in (catalog / 'document' / ('v' + VERSIONS['document'])).glob('*-ingest.json')}, hashes)
             self.assertEqual(len(self.records(output)), 2)
             self.assertTrue(all(not Path(p).exists() for p in (root / 'outputs').read_text().splitlines()))
 
-    def test_rco_is_automatically_extracted(self):
+    def test_legacy_rco_helper_cannot_accept_an_invalid_container(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
             payload = b'\0PRF' + bytes(160)
@@ -747,12 +792,47 @@ echo Done!
             config = root / 'config'; config.mkdir(); (config / 'test.ini').write_text('config')
             with patch.dict(os.environ, {'RCOMAGE': str(tool), 'RCOMAGE_DATA': str(config)}):
                 code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
+            self.assertEqual(code, 1, output)
+            self.assertEqual(self.records(output), [])
+            self.assertFalse((root / 'catalog' / 'iso').exists())
+            self.assertFalse(result_path(root / 'catalog', 'rco', hashlib.sha256(payload).hexdigest()).exists())
+
+    def test_rco_final_language_overwrites_ignore_empty_text_offsets(self):
+        import xml.etree.ElementTree as ET
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+            catalog = root / 'catalog'; store = root / 'store'
+            header = [0] * 41
+            header[0] = 0x46525000; header[1] = 0x100
+            for index in (*range(4, 14), 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 39, 40):
+                header[index] = 0xffffffff
+            header[4] = 164; header[6] = 204
+            labels = b'\0entry\0'
+            header[14] = 371; header[15] = 2
+            header[16] = 364; header[17] = len(labels)
+            def entry(kind, size, children):
+                return struct.pack('<10I', kind, 0xffffffff, 40, size, children, 0, 0, 0, 0, 0)
+            entries = entry(0x101, 40, 1) + entry(0x300, 40, 2)
+            # The first English file contains invalid XML. Only its replacement
+            # is visible, and that empty text has no readable source offset.
+            for length, offset in [(2, 0), (0, 0xffffffff)]:
+                entries += entry(0x301, 60, 0) + struct.pack('<HHIIII', 1, 0, 1, 1, length, offset)
+            payload = struct.pack('<41I', *header) + entries + labels + b'\1\0'
+            iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
+            for name, data in [('UMD_DATA.BIN', GAME_UMD), ('RESOURCE.BIN', payload)]:
+                iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
+            iso.write(str(inputs / 'test.iso')); iso.close()
+            with patch.dict(os.environ, {'RCOMAGE': str(root / 'absent-helper')}):
+                code, output = self.run_cli(inputs, '--catalog', str(catalog), '--store', str(store), '--no-progress')
             self.assertEqual(code, 0, output)
-            h = hashlib.sha256(payload).hexdigest()
-            self.assertTrue(result_path(root / 'catalog', 'rco', h).exists())
-            tree = json.loads(tree_path(root / 'catalog', h).read_text())
-            self.assertEqual({e['path'] for e in tree['entries']}, {'resources', 'resources/icon.gim', 'structure.xml'})
-            self.assertEqual(tree['extractor']['name'], 'rcomage')
+            tree = json.loads(tree_path(catalog, hashlib.sha256(payload).hexdigest()).read_text())
+            language = next(entry for entry in tree['entries']
+                            if entry['path'].startswith('resources/') and entry['path'].endswith('.xml'))
+            digest = language['sha256']
+            document = ET.fromstring((store / 'sha256' / digest[:2] / digest[2:4] / digest).read_bytes())
+            self.assertEqual(document.tag, 'TextLang')
+            self.assertEqual([(text.tag, text.attrib, text.text) for text in document],
+                             [('Text', {'name': 'entry'}, None)])
 
     def test_gzip_members_recurse_and_corrupt_streams_never_publish(self):
         import gzip
@@ -880,12 +960,21 @@ echo Done!
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
             catalog, store = root / 'catalog', root / 'store'
-            parent = b'PSARrevision-test'
+            parent = DOCUMENT_HEADER + b'revision-test'
             child = gzip.compress(b'decoded resource', mtime=0)
             compressed = root / 'child.gz'; compressed.write_bytes(child)
             calls = root / 'calls'
-            tool = root / 'pspdecrypt'
-            tool.write_text('#!/bin/sh\necho called >> "$PSPDB_CALLS"\ncp "$PSPDB_CHILD" "$2/child.gz"\necho "Done!"\n')
+            tool = root / 'document-helper'
+            tool.write_text(f'''#!{sys.executable}
+import json, os, shutil, sys
+from pathlib import Path
+if sys.argv[1:] == ['--provenance']:
+    print(json.dumps({{'name': 'PSP-DOCUMENT.DAT', 'options': ['page-files-only:1']}}))
+    raise SystemExit
+with Path(os.environ['PSPDB_CALLS']).open('a') as stream:
+    stream.write('called\\n')
+shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--output') + 1]) / 'child.gz')
+''')
             tool.chmod(0o755)
             iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
             for name, data in [('UMD_DATA.BIN', GAME_UMD), ('UPDATE.DAT', parent)]:
@@ -894,7 +983,7 @@ echo Done!
             iso_hash = hashlib.sha256((inputs / 'sample.iso').read_bytes()).hexdigest()
             child_hash = hashlib.sha256(child).hexdigest()
             args = ['--catalog', str(catalog), '--store', str(store), '--threads', '1', '--no-progress', '--skip-existing']
-            env = {'PSPDECRYPT': str(tool), 'PSPDB_CHILD': str(compressed), 'PSPDB_CALLS': str(calls)}
+            env = {'PSPDB_DOCUMENT': str(tool), 'PSPDB_CHILD': str(compressed), 'PSPDB_CALLS': str(calls)}
             with patch.dict(os.environ, env):
                 code, output = self.run_cli(inputs, *args)
                 self.assertEqual(code, 0, output)
@@ -917,7 +1006,7 @@ echo Done!
                     result = subprocess.run([str(checkout / 'ingest/zig-out/bin/pspdb-ingest'), str(inputs), *args], capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     return result.stdout + result.stderr
-                # ISO and PSAR are current: a stale gzip descendant still prevents skipping.
+                # ISO and DOCUMENT are current: a stale gzip descendant still prevents skipping.
                 revisions['gzip'] = str(int(revisions['gzip']) + 1)
                 output = rebuild()
                 self.assertIn('Already cataloged: 0 sources skipped.', output)

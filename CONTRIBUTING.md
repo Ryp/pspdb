@@ -87,6 +87,7 @@ migration, not a new extraction run. Future extractor changes increment from thi
 baseline and retain previous results.
 Native KL3E and KL4E extraction uses revision 2; PRX revision 4 folds decryption
 and contained gzip/KL/2RLZ decompression into one result, including `PSPsysGP`
-firmware resources. All use `pspdb-ingest` provenance. PSAR revision 2 uses the
-rebuilt helper with shared PRX recipes and corrected encrypted-record/IPL bounds.
+firmware resources. PSAR revision 3 and RCO revision 2 also run natively and use
+`pspdb-ingest` provenance, without an external executable/configuration hash.
+Their prior helper-backed revisions keep their original provenance unchanged.
 Older revisions remain as historical records; no production re-ingest is implied.

@@ -7,6 +7,8 @@ const pops = @import("pops.zig");
 const kle = @import("kle.zig");
 const npumdimg = @import("npumdimg.zig");
 const edat = @import("edat.zig");
+const psar = @import("psar.zig");
+const rco = @import("rco.zig");
 const catalog_io = @import("catalog.zig");
 const pkg = @import("pkg.zig");
 const data_psp = @import("data_psp.zig");
@@ -375,6 +377,14 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             };
             break :blk .{ .name = "pspdb-ingest", .version = revision };
         },
+        .psar => blk: {
+            try psar.walk(allocator, task.input, &inventory, Inventory.emit_view);
+            break :blk .{ .name = "pspdb-ingest", .version = revisions.psar };
+        },
+        .rco => blk: {
+            try rco.walk(allocator, task.input, &inventory, Inventory.emit_view);
+            break :blk .{ .name = "pspdb-ingest", .version = revisions.rco };
+        },
         .iso9660 => blk: {
             try iso.walk(allocator, task.input.bytes, &inventory, Inventory.emit_view);
             try inventory.extract_documents();
@@ -394,8 +404,8 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
         },
         .pbp => blk: {
             const pbp = try containers.parse_pbp(task.input.bytes);
-            if (pbp.get("DATA.BIN")) |psar| {
-                if (extractor.detect(psar) == .npumdimg) {
+            if (pbp.get("DATA.BIN")) |psar_bytes| {
+                if (extractor.detect(psar_bytes) == .npumdimg) {
                     const data = try data_psp.Header.parse(pbp.get("DATA.PSP") orelse return error.MissingDataPsp);
                     const param = pbp.get("PARAM.SFO") orelse return error.MissingPbpMetadata;
                     const valid = try data.verify(param);

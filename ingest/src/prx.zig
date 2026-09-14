@@ -60,7 +60,7 @@ fn expand_payload(allocator: std.mem.Allocator, payload: []const u8, declared_si
         else if (kl)
             kle.decodeInto(payload, output)
         else
-            lzr_decoder.decodeInto(payload, output)) catch |err| return switch (err) {
+            lzr_decoder.decode_into(payload, output)) catch |err| return switch (err) {
             error.GzipOutputTooSmall, error.KleOutputTooSmall, error.LzrOutputTooSmall => error.PrxSizeMismatch,
             else => err,
         };
