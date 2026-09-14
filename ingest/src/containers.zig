@@ -39,11 +39,7 @@ pub fn parse_pbp(bytes: []const u8) !zig_psp_pbp.Pbp {
     return zig_psp_pbp.Pbp.parse(bytes) catch return error.InvalidPbp;
 }
 
-pub fn walk_pbp(bytes: []const u8, context: anytype, comptime emit: anytype) !void {
-    try (try parse_pbp(bytes)).walk(context, emit);
-}
-
-test "PBP rejects reversed offsets before emitting" {
+test "container offsets reject invalid input before walking" {
     var bytes: [40]u8 = @splat(0);
     @memcpy(bytes[0..4], "\x00PBP");
     std.mem.writeInt(u32, bytes[4..8], 0x10000, .little);
@@ -54,7 +50,7 @@ test "PBP rejects reversed offsets before emitting" {
             return error.UnexpectedEmit;
         }
     };
-    try std.testing.expectError(error.InvalidPbp, walk_pbp(&bytes, {}, Callback.emit));
+    try std.testing.expectError(error.InvalidPbp, parse_pbp(&bytes));
     try std.testing.expectError(error.InvalidSce, walk_sce("~SCE\xFF\xFF\xFF\xFF", {}, Callback.emit));
 }
 

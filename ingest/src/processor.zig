@@ -429,7 +429,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             const data_bin = pbp.get("DATA.BIN") orelse &.{};
             const is_pops = std.mem.startsWith(u8, data_bin, "PSISOIMG0000") or std.mem.startsWith(u8, data_bin, "PSTITLEIMG0000");
             if (is_pops) inventory.suppress_dispatch = "DATA.PSP";
-            try containers.walk_pbp(task.input.bytes, &inventory, Inventory.emit);
+            try pbp.walk(&inventory, Inventory.emit);
             if (is_pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
                 // Sibling/container context stays attached to its source section.
                 var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.store, .dispatch = dispatch, .paths = .init(allocator) };
