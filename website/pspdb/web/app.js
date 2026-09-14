@@ -111,7 +111,7 @@ function renderWindow() {
     row.setAttribute("aria-level", filterNodes ? 1 : node.depth + 1);
     if (node.note) highlight(node.noteElement, node.note);
     if (node.hashElement) highlight(node.hashElement, node.hash.slice(0, 12));
-    if (node.error) highlight(node.errorElement, `Extraction failed: ${node.error}`);
+    if (node.error) highlight(node.errorElement, `error: ${node.error}`);
     row.setAttribute("aria-rowindex", index + 2);
     fragment.append(row);
   }
@@ -301,7 +301,7 @@ function attachExtraction(node, extractions, ancestors = new Set(), contextual =
   node.extractionVersion = extraction.extractor.version;
   if (extraction.error) {
     node.error = extraction.error;
-    node.errorSearchText = `extraction failed: ${extraction.error}`.toLowerCase();
+    node.errorSearchText = `error: ${extraction.error}`.toLowerCase();
   }
   if (extraction.stale_extraction) node.stale_extraction = extraction.stale_extraction;
   addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
@@ -380,17 +380,18 @@ function build(data) {
     }
   }
   for (const iso of isos) {
-    const category = mediaGroup(iso.metadata.media_code);
-    const id = (iso.metadata.disc_id || iso.metadata.identifier).trim().replace(/^([A-Z]{4})-?([0-9]{5})$/, "$1-$2");
-    const identity = [id, iso.metadata.disc_version].filter(Boolean).join("/");
-    const displayName = iso.metadata.media_code === "V"
-      ? iso.metadata.title?.trim() || identity
-      : [identity, iso.metadata.title?.trim()].filter(Boolean).join(" ");
+    const metadata = iso.metadata || {};
+    const category = mediaGroup(metadata.media_code);
+    const id = (metadata.disc_id || metadata.identifier || "").trim().replace(/^([A-Z]{4})-?([0-9]{5})$/, "$1-$2");
+    const identity = [id, metadata.disc_version].filter(Boolean).join("/");
+    const displayName = metadata.media_code === "V"
+      ? metadata.title?.trim() || identity
+      : [identity, metadata.title?.trim()].filter(Boolean).join(" ");
     const node = add(category, `${iso.sha256}.iso`, {
       type: "file",
       redump: iso.redump || [], umdatabase: iso.umdatabase || [], hash: iso.sha256, size: iso.size_bytes,
       displayName,
-      gamePrefix: iso.metadata.media_code === "G" ? identity : null,
+      gamePrefix: metadata.media_code === "G" ? identity : null,
     });
     attachExtraction(node, extractions, new Set(), null, data.trees.iso || {});
   }
@@ -443,7 +444,7 @@ function select(node, scroll = true, updateURL = true) {
   $("tree").setAttribute("aria-activedescendant", node.id);
   $("selected-path").textContent = node.path || label(node);
   $("selected-error").hidden = !node.error;
-  $("selected-error-message").textContent = node.error ? `Extraction failed for ${node.path}: ${node.error}` : "";
+  $("selected-error-message").textContent = node.error ? `error: ${node.error}` : "";
   $("notice").textContent = "";
   if (scroll || node.error) {
     // Scroll only vertically, preserving the user's horizontal column position.
@@ -543,13 +544,13 @@ function render() {
       node.titleElement = element("span", "", label(node).slice(node.gamePrefix.length));
       name.replaceChildren(node.pathElement, node.prefixElement, node.titleElement);
     }
-    name.title = node.extraction ? `${node.path} — ${node.error ? "extraction failed with" : "extracted with"} ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
+    name.title = node.error ? `error: ${node.error}` : node.extraction ? `${node.path} — extracted with ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
     content.append(name);
     if (node.error) {
       const error = element("span", "extraction-error");
       const icon = element("span", "error-icon", "!");
       icon.setAttribute("aria-hidden", "true");
-      node.errorElement = element("span", "error-message", `Extraction failed: ${node.error}`);
+      node.errorElement = element("span", "error-message", `error: ${node.error}`);
       node.errorElement.id = `${node.id}-error`;
       row.setAttribute("aria-describedby", node.errorElement.id);
       error.append(icon, node.errorElement);

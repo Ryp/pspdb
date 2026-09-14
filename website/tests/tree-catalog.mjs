@@ -50,6 +50,24 @@ const untitledVideo = JSON.parse(vm.runInContext(`JSON.stringify((()=> {
 assert.deepEqual(untitledVideo, {label:'UMDV-00001',path:'umd/video/'+'d'.repeat(64)+'.iso',child:'UMD_DATA.BIN'});
 console.log('PASS: video without optional SFO title retains its identifier and navigable inventory.');
 
+context.failedIsoFixture = catalog([
+  {sha256:'1'.repeat(64),size_bytes:2048,entries:[]},
+  {sha256:'2'.repeat(64),size_bytes:2048,metadata:{title:'Known title'},entries:[]},
+  {sha256:'3'.repeat(64),size_bytes:2048,metadata,entries},
+]);
+context.failedIsoFixture.trees.iso['1'.repeat(64)].error = 'MissingUmdData';
+vm.runInContext('build(failedIsoFixture)', context);
+const failedIsos = JSON.parse(vm.runInContext(`JSON.stringify([...nodes.values()]
+  .filter(n=>n.type==='file'&&n.name.endsWith('.iso'))
+  .map(n=>({label:label(n),hash:n.hash,path:n.path,error:n.error})))`, context));
+assert.deepEqual(failedIsos.find(n=>n.hash==='1'.repeat(64)), {
+  label:'1'.repeat(64)+'.iso', hash:'1'.repeat(64),
+  path:'umd/other/'+'1'.repeat(64)+'.iso', error:'MissingUmdData',
+});
+assert.equal(failedIsos.find(n=>n.hash==='2'.repeat(64)).label, 'Known title');
+assert.equal(failedIsos.find(n=>n.hash==='3'.repeat(64)).label, 'ULJS-00009/1.00 AI Shogi');
+console.log('PASS: metadata-free failed ISO retains hash/error, optional identifiers work, healthy siblings remain browsable.');
+
 // A single hash-keyed extraction attaches to both occurrences, without replacing
 // the original file's identity or counting expanded bytes in its parent's size.
 context.fixture.trees.prx = {
