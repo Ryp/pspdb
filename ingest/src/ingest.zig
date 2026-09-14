@@ -1,9 +1,11 @@
 const std = @import("std");
+
 const processor = @import("processor.zig");
 const zip = @import("zip.zig");
 const inventory = @import("inventory.zig");
 const memory = @import("bytes.zig");
 const CatalogState = @import("catalog_state.zig").State;
+const catalog_io = @import("catalog.zig");
 
 pub const Stats = struct {
     directories: usize = 0,
@@ -35,24 +37,45 @@ const SharedZip = struct {
     }
 };
 
-const Member = struct { source: *SharedZip, entry: std.zip.Iterator.Entry, name: []const u8 };
-const Extraction = struct { group: *Group, task: processor.Task };
-const JobKind = enum { directory, iso, zip, member, extraction };
-const Job = struct {
+const Member = struct {
     path: []const u8,
-    kind: JobKind,
-    member: ?Member = null,
-    extraction: ?Extraction = null,
+    source: *SharedZip,
+    entry: std.zip.Iterator.Entry,
+    name: []const u8,
+};
+const Extraction = struct { group: *Group, task: processor.Task };
+const JobKind = std.meta.Tag(Job);
+const Job = union(enum) {
+    directory: []const u8,
+    iso: []const u8,
+    zip: []const u8,
+    member: Member,
+    extraction: Extraction,
+
+    fn path(self: Job) []const u8 {
+        return switch (self) {
+            .directory, .iso, .zip => |name| name,
+            .member => |member| member.path,
+            .extraction => |extraction| extraction.task.name,
+        };
+    }
 
     fn is_intake(self: Job) bool {
-        return self.kind == .iso or self.kind == .member;
+        return switch (self) {
+            .iso, .member => true,
+            else => false,
+        };
     }
 
     fn deinit(self: Job, allocator: std.mem.Allocator) void {
-        if (self.extraction) |extraction| {
-            extraction.task.deinit(allocator);
-        } else allocator.free(self.path);
-        if (self.member) |member| member.source.release();
+        switch (self) {
+            .directory, .iso, .zip => |name| allocator.free(name),
+            .member => |member| {
+                allocator.free(member.path);
+                member.source.release();
+            },
+            .extraction => |extraction| extraction.task.deinit(allocator),
+        }
     }
 };
 
@@ -93,13 +116,13 @@ const Pool = struct {
     iso_progress: std.Progress.Node,
     extraction_progress: std.Progress.Node,
 
-    fn enqueue(self: *Pool, path: []const u8, kind: JobKind) !void {
+    fn enqueue(self: *Pool, job: Job) !void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        try self.jobs.append(self.allocator, .{ .path = path, .kind = kind });
+        try self.jobs.append(self.allocator, job);
         self.outstanding += 1;
-        if (kind == .directory) self.directories_pending += 1 else self.stats.candidates += 1;
-        if (kind == .iso) self.add_intake_candidate();
+        if (job == .directory) self.directories_pending += 1 else self.stats.candidates += 1;
+        if (job.is_intake()) self.add_intake_candidate();
         self.changed.signal(self.io);
     }
 
@@ -126,7 +149,7 @@ const Pool = struct {
         var best: usize = 3;
         for (self.jobs.items, 0..) |job, i| {
             if (job.is_intake() and self.intake_active >= self.intake_limit) continue;
-            const priority: usize = if (job.kind == .extraction) 0 else if (job.is_intake()) 2 else 1;
+            const priority: usize = if (job == .extraction) 0 else if (job.is_intake()) 2 else 1;
             if (priority <= best) {
                 selected = i;
                 best = priority;
@@ -177,7 +200,13 @@ const Pool = struct {
             } else entry.kind;
             if (kind == .directory or (kind == .file and (is_iso(entry.name) or is_pkg(entry.name) or is_zip(entry.name)))) {
                 const child = try std.Io.Dir.path.join(self.allocator, &.{ path, entry.name });
-                self.enqueue(child, if (kind == .directory) .directory else if (is_zip(entry.name)) .zip else .iso) catch |err| {
+                const job: Job = if (kind == .directory)
+                    .{ .directory = child }
+                else if (is_zip(entry.name))
+                    .{ .zip = child }
+                else
+                    .{ .iso = child };
+                self.enqueue(job) catch |err| {
                     self.allocator.free(child);
                     return err;
                 };
@@ -220,8 +249,6 @@ const Pool = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         try self.jobs.append(self.allocator, .{
-            .path = task.name,
-            .kind = .extraction,
             .extraction = .{ .group = group, .task = task },
         });
         group.pending += 1;
@@ -264,24 +291,26 @@ const Pool = struct {
         }
     }
 
-    fn skip_cache(self: *const Pool) ?@import("catalog.zig").Cache {
+    fn skip_cache(self: *const Pool) ?catalog_io.Cache {
         if (!self.skip_existing) return null;
         return .{ .root = self.catalog.?, .state = self.state.? };
     }
 
     fn process(self: *Pool, job: Job) !void {
-        const progress = self.iso_progress.start(std.Io.Dir.path.basename(job.path), 0);
+        const path = job.path();
+        const progress = self.iso_progress.start(std.Io.Dir.path.basename(path), 0);
         defer progress.end();
-        const group = try self.create_group(job.path);
+        const group = try self.create_group(path);
         const dispatch = if (group.dispatch) |*value| value else null;
-        group.result = (if (job.member) |member|
-            self.process_zip_member(member, dispatch)
-        else
-            processor.process_file(self.allocator, self.io, job.path, self.store, self.skip_cache(), dispatch)) catch |err| {
+        group.result = (switch (job) {
+            .member => |member| self.process_zip_member(member, dispatch),
+            .iso => processor.process_file(self.allocator, self.io, path, self.store, self.skip_cache(), dispatch),
+            else => unreachable,
+        }) catch |err| {
             self.complete(group, .{}, err);
             return;
         };
-        if (group.result == null) self.skip(job.path);
+        if (group.result == null) self.skip(path);
         self.complete(group, .{}, null);
     }
 
@@ -307,9 +336,7 @@ const Pool = struct {
             self.mutex.lockUncancelable(self.io);
             defer self.mutex.unlock(self.io);
             try self.jobs.append(self.allocator, .{
-                .path = label,
-                .kind = .member,
-                .member = .{ .source = source, .entry = entry, .name = name },
+                .member = .{ .path = label, .source = source, .entry = entry, .name = name },
             });
             source.retain();
             found += 1;
@@ -395,12 +422,12 @@ const Pool = struct {
     fn worker(self: *Pool) void {
         while (self.take()) |job| {
             defer job.deinit(self.allocator);
-            defer self.finish(job.kind);
-            switch (job.kind) {
-                .directory => self.scan(job.path) catch |err| self.fail(job.path, err),
-                .iso, .member => self.process(job) catch |err| self.fail(job.path, err),
-                .extraction => self.extract(job.extraction.?),
-                .zip => self.process_zip(job.path) catch |err| self.fail(job.path, err),
+            defer self.finish(std.meta.activeTag(job));
+            switch (job) {
+                .directory => |path| self.scan(path) catch |err| self.fail(path, err),
+                .iso, .member => self.process(job) catch |err| self.fail(job.path(), err),
+                .extraction => |extraction| self.extract(extraction),
+                .zip => |path| self.process_zip(path) catch |err| self.fail(path, err),
             }
         }
     }
@@ -438,7 +465,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8
     }
     for (folders) |folder| {
         const initial = try allocator.dupe(u8, folder);
-        pool.enqueue(initial, .directory) catch |err| {
+        pool.enqueue(.{ .directory = initial }) catch |err| {
             allocator.free(initial);
             return err;
         };
@@ -488,20 +515,21 @@ test "intake gate leaves workers free for discovery and child extraction" {
         .extraction_progress = .none,
     };
     defer pool.jobs.deinit(pool.allocator);
-    try pool.jobs.append(pool.allocator, .{ .path = "one.iso", .kind = .iso });
-    try pool.jobs.append(pool.allocator, .{ .path = "archive.zip!two.iso", .kind = .member });
-    try pool.jobs.append(pool.allocator, .{ .path = "three.pkg", .kind = .iso });
+    try pool.jobs.append(pool.allocator, .{ .iso = "one.iso" });
+    // Selection inspects only tags; these payloads are never executed or destroyed.
+    try pool.jobs.append(pool.allocator, .{ .member = undefined });
+    try pool.jobs.append(pool.allocator, .{ .iso = "three.pkg" });
     pool.outstanding = 3;
     const first = pool.take_ready().?;
     try std.testing.expect(first.is_intake());
     try std.testing.expect(pool.take_ready().?.is_intake());
     try std.testing.expectEqual(null, pool.take_ready());
-    try pool.jobs.append(pool.allocator, .{ .path = "folder", .kind = .directory });
-    try pool.jobs.append(pool.allocator, .{ .path = "module.psp", .kind = .extraction });
-    try std.testing.expectEqual(JobKind.extraction, pool.take_ready().?.kind);
-    try std.testing.expectEqual(JobKind.directory, pool.take_ready().?.kind);
+    try pool.jobs.append(pool.allocator, .{ .directory = "folder" });
+    try pool.jobs.append(pool.allocator, .{ .extraction = undefined });
+    try std.testing.expectEqual(JobKind.extraction, std.meta.activeTag(pool.take_ready().?));
+    try std.testing.expectEqual(JobKind.directory, std.meta.activeTag(pool.take_ready().?));
     try std.testing.expectEqual(null, pool.take_ready());
-    pool.finish(first.kind);
+    pool.finish(std.meta.activeTag(first));
     try std.testing.expect(pool.take_ready().?.is_intake());
 }
 
