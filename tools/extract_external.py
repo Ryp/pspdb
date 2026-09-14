@@ -95,7 +95,7 @@ def extract_psx(source, output, tool):
                      'ISO_MAP.BIN', 'STARTDAT.BIN', 'SPECIAL_DATA.BIN', 'TRASH.BIN', 'OVERDUMP.BIN'):
             path = work / 'TEMP' / name
             if path.is_file() and path.stat().st_size:
-                shutil.copyfile(path, output / name)
+                shutil.move(path, output / name)
     return provenance
 
 
