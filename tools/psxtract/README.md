@@ -59,6 +59,10 @@ refused rather than overwritten. Ambiguous embedded CUE choices require an
 interactive terminal; unattended ambiguity fails. Decoder failures, including
 audio failures, are not successful partial conversions. Failed standalone runs
 can leave diagnostic files in their private output directory.
+Preexisting output entries, including dangling symlinks, FIFOs and directories,
+are refused without opening them. Lookup errors also reject extraction. This is
+not a guarantee against concurrent directory mutation by another process with
+the same filesystem permissions; the ingestion adapter uses a private directory.
 PBP headers and the complete section table are validated before section output;
 copying uses one bounded buffer. Audio reads and authenticated PGD table/payload
 ranges are checked before use. Auxiliary partitioning follows the released

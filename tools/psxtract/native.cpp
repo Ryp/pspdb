@@ -39,7 +39,8 @@ int build_output_path(const char* filename, char* output, int size) {
 }
 
 int utf8_file_exists(const char* filename) {
-    return access(filename, F_OK);
+    struct stat entry;
+    return lstat(filename, &entry);
 }
 
 FILE* utf8_fopen(const char* filename, const char* mode) {

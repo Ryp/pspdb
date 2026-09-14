@@ -25,7 +25,7 @@ FFMPEG_UPSTREAM = 'https://git.ffmpeg.org/ffmpeg.git'
 ROOT = Path(__file__).resolve().parents[1]
 PREPARER = ROOT / 'tools/prepare_native.py'
 SUPPORT = ('native.h', 'native.cpp', 'atrac3.cpp', 'test_lz.cpp', 'test_auxiliary.cpp',
-           'test_pbp.cpp', 'test_audio.cpp', 'test_container.cpp', 'test_pgd.cpp')
+           'test_pbp.cpp', 'test_audio.cpp', 'test_container.cpp', 'test_pgd.cpp', 'test_output.cpp')
 # The x87 arithmetic and explicit float stores in the patch are an output contract.
 EXACT_CFLAGS = ('-mfpmath=387', '-fexcess-precision=fast', '-fno-fast-math',
                 '-fno-associative-math', '-ffp-contract=off')
@@ -169,6 +169,7 @@ def main():
                 ('audio', ('test_audio.cpp', 'utils.cpp', 'native.cpp')),
                 ('container', ('test_container.cpp', 'crypto.cpp', 'utils.cpp', 'native.cpp')),
                 ('pgd', ('test_pgd.cpp', 'utils.cpp', 'native.cpp')),
+                ('output', ('test_output.cpp', 'native.cpp')),
             ):
                 test_binary = work / ('test_' + name)
                 subprocess.run([

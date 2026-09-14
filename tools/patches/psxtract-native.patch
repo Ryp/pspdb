@@ -1,6 +1,6 @@
 --- a/src/psxtract.cpp
 +++ b/src/psxtract.cpp
-@@ -1,14 +1,14 @@
+@@ -1,14 +1,15 @@
 +#include "native.h"
  // Copyright (C) 2014       Hykem <hykem@hotmail.com>
  // Licensed under the terms of the GNU GPL, version 3
@@ -14,12 +14,40 @@
 -
 -extern void openLogFileForWriting(const char* pbpPath);
 +#include <new>
++#include <cerrno>
 +
 +
  
  
  
-@@ -53,43 +53,8 @@
+@@ -34,15 +35,17 @@
+         return false;
+     }
+     
+-    // Check if either file exists
+-    FILE* test_cue = fopen(cue_path, "r");
+-    FILE* test_bin = fopen(bin_path, "r");
+-    
+-    bool cue_exists = (test_cue != NULL);
+-    bool bin_exists = (test_bin != NULL);
+-    
+-    if (test_cue) fclose(test_cue);
+-    if (test_bin) fclose(test_bin);
++    // Inspect entries without opening FIFOs or following dangling symlinks.
++    bool cue_exists = utf8_file_exists(cue_path) == 0;
++    if (!cue_exists && errno != ENOENT) {
++        perror("ERROR: Cannot inspect CUE output");
++        return false;
++    }
++    bool bin_exists = utf8_file_exists(bin_path) == 0;
++    if (!bin_exists && errno != ENOENT) {
++        perror("ERROR: Cannot inspect BIN output");
++        return false;
++    }
+     
+     if (!cue_exists && !bin_exists) {
+         return true; // No files exist, proceed
+@@ -53,43 +56,8 @@
      if (cue_exists) printf("  %s\n", cue_path);
      if (bin_exists) printf("  %s\n", bin_path);
      
@@ -65,7 +93,7 @@
  }
  
  // Helper function to read lines from string buffer (replaces fgets for embedded CUE files)
-@@ -135,117 +100,65 @@
+@@ -135,117 +103,65 @@
  // Dynamic pregap override storage
  static PREGAP_OVERRIDE* g_dynamic_pregap_override = NULL;
  
@@ -241,7 +269,7 @@
  	return startdat_offset;
  }
  
-@@ -299,174 +212,180 @@
+@@ -299,174 +215,180 @@
  
  int decrypt_special_data(FILE *psar, long long psar_size, int special_data_offset)
  {
@@ -560,7 +588,7 @@
  	return 0;
  }
  
-@@ -499,9 +418,11 @@
+@@ -499,9 +421,11 @@
  	FILE* overdump = fopen("OVERDUMP.BIN", "wb");
  	// Open a new file to write the ISO image.
  	FILE* iso = fopen(iso_filename, "wb");
@@ -573,7 +601,7 @@
  		return -1;
  	}
  
-@@ -513,7 +434,7 @@
+@@ -513,7 +437,7 @@
  	memset(entry, 0, sizeof(entry));
  
  	// Read the first entry.
@@ -582,7 +610,7 @@
  
  	// Keep reading entries until we reach the end of the table.
  	while (entry->size > 0)
-@@ -521,47 +442,50 @@
+@@ -521,47 +445,50 @@
  		read_size += entry->size;
  		if (block_count % 100 == 0) printf(".");
  		// Locate the block offset in the DATA.PSAR.
@@ -658,7 +686,7 @@
  		block_count++;
  					
  		// Clear buffers.
-@@ -571,13 +495,14 @@
+@@ -571,13 +498,14 @@
  		// Go to next entry.
  		table_offset += sizeof(ISO_ENTRY);
  		fseek(iso_table, table_offset, SEEK_SET);
@@ -677,7 +705,7 @@
  }
  						             
  unsigned int ROTR32(unsigned int v, int n)
-@@ -699,23 +624,45 @@
+@@ -699,23 +627,45 @@
  
  int get_track_size_from_cue(FILE *iso_table, int cue_offset)
  {
@@ -740,7 +768,7 @@
  }
  
  int data_track_sectors(FILE *iso_table)
-@@ -736,164 +683,171 @@
+@@ -736,164 +686,171 @@
  }
  
  int build_audio_at3(FILE *psar, FILE *iso_table, int base_audio_offset, unsigned char *pgd_key, int disc_num, const PREGAP_OVERRIDE* pregap_override)
@@ -1044,7 +1072,7 @@
  	}
  	return num_tracks;
  }
-@@ -928,145 +882,157 @@
+@@ -928,145 +885,157 @@
  // length.
  int convert_wav_to_bin(int data_gap, int disc_num, int num_tracks, const PREGAP_OVERRIDE* pregap_override)
  {
@@ -1312,7 +1340,7 @@
  		}
  	}
  	return num_tracks;
-@@ -1136,7 +1102,7 @@
+@@ -1136,7 +1105,7 @@
  	return gap;
  }
  
@@ -1321,7 +1349,7 @@
  )
  {
  	char cdrom_file_path[256];
-@@ -1195,27 +1161,17 @@
+@@ -1195,27 +1164,17 @@
  	fseek(iso_table, cue_offset, SEEK_SET);
  	fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
  	int track_num = 2;
@@ -1354,7 +1382,7 @@
  		}
  
  		int ff1, ss1, mm1, mm0, ss0, ff0;
-@@ -1260,10 +1216,10 @@
+@@ -1260,10 +1219,10 @@
  		track_num++;
  	}
  
@@ -1369,7 +1397,7 @@
  }
  
  int extract_and_convert_audio(FILE *psar, FILE *iso_table, int base_audio_offset, unsigned char *pgd_key, int disc_num, int data_gap, const PREGAP_OVERRIDE* pregap_override)
-@@ -1277,30 +1233,9 @@
+@@ -1277,30 +1236,9 @@
  	else if (num_tracks > 0)
  		printf("%d audio tracks extracted to ATRAC3\n", num_tracks);
  
@@ -1403,7 +1431,7 @@
  	}
  
  	if (num_tracks > 0) {
-@@ -1745,7 +1680,7 @@
+@@ -1745,7 +1683,7 @@
      }
      
      // Open destination CUE file
@@ -1412,7 +1440,7 @@
      if (dest_cue == NULL)
      {
          printf("ERROR: Could not create output CUE file %s\n", output_cue_path);
-@@ -1772,17 +1707,19 @@
+@@ -1772,17 +1710,19 @@
          if (strncmp(trimmed, "FILE ", 5) == 0)
          {
              // Replace with our BIN filename (lowercase .bin extension)
@@ -1435,7 +1463,7 @@
      
      printf("Copied prebaked CUE file to %s\n", output_cue_path);
      return 0;
-@@ -1866,27 +1803,46 @@
+@@ -1866,27 +1806,46 @@
  
  	// Seek inside the ISO table to find the special data offset.
  	int special_data_offset;
@@ -1489,7 +1517,7 @@
  	else
  		printf("Data track successfully reconstructed!\n");
  
-@@ -1913,7 +1869,8 @@
+@@ -1913,7 +1872,8 @@
      }
  
  	// Handle audio tracks
@@ -1499,7 +1527,7 @@
  	{
  		printf("ERROR: extract and convert audio failed, aborting...\n");
  		fclose(iso_table);
-@@ -1982,26 +1939,17 @@
+@@ -1982,26 +1942,17 @@
  		fseek(iso_table, cue_offset, SEEK_SET);
  		fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
  		
@@ -1531,7 +1559,7 @@
  			}
  			
  			cue_offset += sizeof(CUE_ENTRY);
-@@ -2011,7 +1959,7 @@
+@@ -2011,7 +1962,7 @@
  			track_num++;
  		}
  		
@@ -1540,7 +1568,7 @@
  		
  		// Copy the prebaked CUE file
  		if (copy_prebaked_cue_file(iso_disc_name, game_title, game_title) < 0)
-@@ -2031,7 +1979,7 @@
+@@ -2031,7 +1982,7 @@
  	else
  	{
  		// Generate CUE file normally
@@ -1549,7 +1577,7 @@
  		{
  			printf("ERROR: Failed to convert to BIN/CUE!\n");
  			fclose(iso_table);
-@@ -2055,8 +2003,8 @@
+@@ -2055,8 +2006,8 @@
  	// Decrypt the multidisc ISO map header and get the disc map.
  	// NOTE: The ISO map header is located at offset 0x200 and 
  	// has a length of 0x2A0 (0x200 of real size + 0xA0 for the PGD header).
@@ -1560,7 +1588,7 @@
  
  	// Re-open in read mode (just to be safe).
  	FILE* iso_map = fopen("ISO_MAP.BIN", "rb");
-@@ -2076,8 +2024,11 @@
+@@ -2076,8 +2027,11 @@
  
  	// Get the discs' offsets.
  	unsigned int disc_offset[5];
@@ -1574,7 +1602,7 @@
  
  	// Get the disc collection ID and title (UTF-8).
  	char iso_title[0x80];
-@@ -2095,12 +2046,20 @@
+@@ -2095,12 +2049,20 @@
  
  	// Seek inside the ISO map to find the special data offset.
  	int special_data_offset;
@@ -1598,7 +1626,7 @@
  
  	// Build each valid ISO image.
  	int disc_count = 0;
-@@ -2111,7 +2070,7 @@
+@@ -2111,7 +2073,7 @@
  		{
  			// Decrypt the ISO header and get the block table.
  			// NOTE: In multidisc, the ISO header is located at the disc offset + 0x400 bytes. 
@@ -1607,7 +1635,7 @@
  			{
  				fclose(iso_map);
  				return -1;
-@@ -2123,6 +2082,7 @@
+@@ -2123,6 +2085,7 @@
  			if (iso_table == NULL)
  			{
  				printf("ERROR: No decrypted ISO header found!\n");
@@ -1615,7 +1643,7 @@
  				return -1;
  			}
  
-@@ -2190,13 +2150,17 @@
+@@ -2190,13 +2153,17 @@
  			if (!check_output_files_overwrite(disc_game_title, use_prebaked_cue)) {
  				printf("Operation cancelled by user for disc %d.\n", i + 1);
  				fclose(iso_table);
@@ -1634,7 +1662,7 @@
  			else
  				printf("Data track successfully reconstructed for disc %d!\n", i + 1);
  			printf("\n");
-@@ -2216,7 +2180,8 @@
+@@ -2216,7 +2183,8 @@
  
  
  			// Attempt to extact and convert audio tracks
@@ -1644,7 +1672,7 @@
  			{
  				printf("ERROR: extract and convert audio failed, aborting...\n");
  				fclose(iso_table);
-@@ -2261,7 +2226,7 @@
+@@ -2261,7 +2229,7 @@
  				{
  					printf("ERROR: Can't open %s!\n", bin_file_path);
  					fclose(iso_table);
@@ -1653,7 +1681,7 @@
  				}
  				
  				// Copy data track
-@@ -2271,7 +2236,7 @@
+@@ -2271,7 +2239,7 @@
  					printf("Error copying data track to %s, aborting disc %d...\n", output_bin_name, i + 1);
  					fclose(bin_file);
  					fclose(iso_table);
@@ -1662,7 +1690,7 @@
  				}
  				
  				// Handle audio tracks if present
-@@ -2285,26 +2250,17 @@
+@@ -2285,26 +2253,17 @@
  				fseek(iso_table, cue_offset, SEEK_SET);
  				fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
  				
@@ -1694,7 +1722,7 @@
  					}
  					
  					cue_offset += sizeof(CUE_ENTRY);
-@@ -2314,14 +2270,14 @@
+@@ -2314,14 +2273,14 @@
  					track_num++;
  				}
  				
@@ -1711,7 +1739,7 @@
  				}
  				
  				printf("Disc %d successfully converted using prebaked CUE file!\n\n", i + 1);
-@@ -2329,14 +2285,17 @@
+@@ -2329,14 +2288,17 @@
  			else
  			{
  				// Generate CUE file normally
@@ -1731,7 +1759,7 @@
  			fclose(iso_table);
  		}
  	}
-@@ -2375,129 +2334,14 @@
+@@ -2375,129 +2337,14 @@
  
  int main(int argc, char **argv)
  {
@@ -1869,7 +1897,7 @@
  }
  
  static bool g_verbose = false;
-@@ -2510,11 +2354,6 @@
+@@ -2510,11 +2357,6 @@
  {
  	// Set global verbose flag
  	g_verbose = verbose;
@@ -1881,7 +1909,7 @@
  	
  	// Change to output directory if specified
  	char original_dir[MAX_PATH];
-@@ -2567,56 +2406,21 @@
+@@ -2567,56 +2409,21 @@
  			printf("%02X", pgd_key[i]);
  		printf("\n\n");
  	}
@@ -1948,7 +1976,7 @@
  
  	// Unpack the EBOOT.PBP file.
  	if (unpack_pbp(input))
-@@ -2636,13 +2440,24 @@
+@@ -2636,13 +2443,24 @@
  	if (psar == NULL)
  	{
  		printf("ERROR: No DATA.PSAR found!\n");
@@ -1975,7 +2003,7 @@
  
  	// Check PSISOIMG0000 or PSTITLEIMG0000 magic.
  	// NOTE: If the file represents a single disc, then PSISOIMG0000 is used.
-@@ -2650,13 +2465,21 @@
+@@ -2650,13 +2468,21 @@
  	// is used to hold data relative to the different discs.
  	unsigned char magic[0x10];
  	bool isMultidisc;
@@ -1998,7 +2026,7 @@
  			return -1;
  		}
  		else
-@@ -2673,14 +2496,17 @@
+@@ -2673,14 +2499,17 @@
  
  	// Extract the STARTDAT sector.
  	// NOTE: STARTDAT data is normally a PNG file with an intro screen of the game.
@@ -2022,7 +2050,7 @@
  	
  	if (decrypt_result < 0) {
  		fclose(psar);
-@@ -2710,16 +2536,6 @@
+@@ -2710,16 +2539,6 @@
  	fclose(input);
  
  
