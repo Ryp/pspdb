@@ -21,7 +21,7 @@ recursive metadata and hashes without a content store. Add `--store /path/to/sto
 only when you also want to persist extracted bytes locally.
 For supported manuals, rebuild and configure the
 [DOCUMENT helper](README.md#legacy-document-manuals) before ingestion and
-freshness checks. Revision 2 uses byte-input readers but still requires the
+freshness checks. Revision 3 uses byte-input readers but still requires the
 external helper and Pillow. Missing helpers are not successful extraction.
 
 PSMF/PMF movies and raw MPEG program streams remain opaque source files.
@@ -31,11 +31,11 @@ Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v2/<source-sha256>-ingest.json
-catalog/iso/v2/<source-sha256>-tree.json
+catalog/iso/v5/<source-sha256>-ingest.json
+catalog/iso/v5/<source-sha256>-tree.json
 ```
 
-PKG inputs use `catalog/pkg/v2/<source-sha256>-ingest.json` and the adjacent
+PKG inputs use `catalog/pkg/v5/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
 Include new nested pairs too, such as `prx/v4/`, `kl3e/v2/`, `kl4e/v2/` and `gzip/v1/`.

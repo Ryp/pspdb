@@ -269,6 +269,28 @@ if(extractedDownload){
  assert.equal(createHash('sha256').update(bytes).digest('hex'),extractedDownload.hash);
  console.log('PASS: extraction styling, exact source size, keyboard folding, hash search and verified child download; occurrences='+extractedDownload.occurrences);
 }
+const availabilityTimeout=await evaluate(`(async()=>{
+ if(!downloadsEnabled)return 'SKIP: store not configured';
+ const file=[...nodes.values()].find(n=>n.type==='file'&&n.hash);
+ const originalFetch=window.fetch;
+ window.fetch=(url,options)=>String(url).startsWith('api/availability?')
+  ? new Promise((resolve,reject)=>options?.signal?.addEventListener('abort',()=>reject(options.signal.reason),{once:true}))
+  : originalFetch(url,options);
+ try {
+  availability.delete(file.hash);
+  jump(file);
+  refreshDownloads();
+  for(let i=0;i<400&&file.downloadCell.textContent!=='Check failed';i++)await new Promise(r=>setTimeout(r,50));
+  if(file.downloadCell.textContent!=='Check failed')throw new Error('Stalled store check never settled');
+ } finally {
+  window.fetch=originalFetch;
+ }
+ availability.delete(file.hash);
+ await refreshDownloads();
+ if(!['Download','Missing'].includes(file.downloadCell.textContent))throw new Error('Store checks did not resume after timeout');
+ return 'PASS: stalled store checks report failure and subsequent real checks complete';
+})()`);
+console.log(availabilityTimeout);
 const extractionErrors=await evaluate(`(()=>{
  const check=(value,message)=>{if(!value)throw new Error(message)};
  const packageHash='a'.repeat(64), edatHash='b'.repeat(64), inlineHash='c'.repeat(64), childHash='d'.repeat(64);

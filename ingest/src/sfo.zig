@@ -32,25 +32,26 @@ fn parseImpl(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u
             if (std.mem.eql(u8, key, field[0])) {
                 const data = parsed.data(entry);
                 if (entry.data_fmt != .UTF8 or data.len == 0 or @field(result, field[1]) != null) return error.InvalidSfo;
-                if (data[data.len - 1] != 0) return error.InvalidSfo;
-                if (!std.unicode.utf8ValidateSlice(data[0 .. data.len - 1])) {
+                const end = std.mem.indexOfScalar(u8, data, 0) orelse return error.InvalidSfo;
+                const text = data[0..end];
+                if (!std.unicode.utf8ValidateSlice(text)) {
                     // Some retail PS1 SFOs use CP1252 trademark in otherwise ASCII TITLE.
                     // Normalize catalog text only; the original SFO object is untouched.
                     if (!std.mem.eql(u8, key, "TITLE") or title_owner == null) return error.InvalidSfo;
                     var length: usize = 0;
-                    for (data[0 .. data.len - 1]) |c| {
+                    for (text) |c| {
                         if (c >= 128 and c != 0x99) return error.InvalidSfo;
                         length += if (c == 0x99) @as(usize, 3) else 1;
                     }
                     const normalized = try allocator.alloc(u8, length);
                     var pos: usize = 0;
-                    for (data[0 .. data.len - 1]) |c| {
+                    for (text) |c| {
                         if (c == 0x99) { @memcpy(normalized[pos..][0..3], "™"); pos += 3; }
                         else { normalized[pos] = c; pos += 1; }
                     }
                     title_owner.?.* = normalized;
                     result.title = normalized;
-                } else @field(result, field[1]) = data[0 .. data.len - 1];
+                } else @field(result, field[1]) = text;
             }
         }
     }
@@ -92,6 +93,19 @@ test "Zig-PSP SFO fields borrow the original input and ignore unrelated types" {
     // Unknown formats in unrelated fields are retained by the dependency.
     std.mem.writeInt(u16, bytes[38..40], 0xffff, .little);
     try std.testing.expectEqualStrings("Demo", (try parse(std.testing.allocator, &bytes)).title.?);
+}
+
+test "SFO strings end at the first NUL within their declared data" {
+    var bytes = fixture();
+    @memcpy(bytes[65..70], "Hi\x00\x04\xff");
+    try std.testing.expectEqualStrings("Hi", (try parse(std.testing.allocator, &bytes)).title.?);
+    var owner: []u8 = &.{};
+    defer std.testing.allocator.free(owner);
+    try std.testing.expectEqualStrings("Hi", (try parsePkg(std.testing.allocator, &bytes, &owner)).title.?);
+
+    // A terminator in the allocated slot but outside data_len is not valid.
+    std.mem.writeInt(u32, bytes[24..28], 2, .little);
+    try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, &bytes));
 }
 
 test "Zig-PSP SFO rejects malformed tables, keys, values and duplicate metadata" {

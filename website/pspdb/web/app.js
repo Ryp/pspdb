@@ -72,7 +72,7 @@ async function refreshDownloads() {
   checkingDownloads = true;
   try {
     const query = new URLSearchParams(hashes.map(hash => ["hash", hash]));
-    const response = await fetch(`api/availability?${query}`);
+    const response = await fetch(`api/availability?${query}`, { signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
     for (const hash of hashes) availability.set(hash, result[hash] === true);
@@ -546,16 +546,6 @@ function render() {
     }
     name.title = node.error ? `error: ${node.error}` : node.extraction ? `${node.path} — extracted with ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
     content.append(name);
-    if (node.error) {
-      const error = element("span", "extraction-error");
-      const icon = element("span", "error-icon", "!");
-      icon.setAttribute("aria-hidden", "true");
-      node.errorElement = element("span", "error-message", `error: ${node.error}`);
-      node.errorElement.id = `${node.id}-error`;
-      row.setAttribute("aria-describedby", node.errorElement.id);
-      error.append(icon, node.errorElement);
-      content.append(error);
-    }
     for (const [source, matches] of [["Redump", node.redump || []], ["UMDatabase", node.umdatabase || []]]) {
       for (const match of matches) {
         const redump = source === "Redump";
@@ -576,6 +566,16 @@ function render() {
       }
     }
     if (node.note) { node.noteElement = element("span", "note", node.note); content.append(node.noteElement); }
+    if (node.error) {
+      const error = element("span", "extraction-error");
+      const icon = element("span", "error-icon", "!");
+      icon.setAttribute("aria-hidden", "true");
+      node.errorElement = element("span", "error-message", `error: ${node.error}`);
+      node.errorElement.id = `${node.id}-error`;
+      row.setAttribute("aria-describedby", node.errorElement.id);
+      error.append(icon, node.errorElement);
+      content.append(error);
+    }
     if (container && node.extractionKind) {
       const tags = element("span", "extraction-tags");
       const kind = node.extractionKind.toUpperCase();

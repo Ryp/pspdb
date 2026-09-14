@@ -77,8 +77,14 @@ Failed extractors publish a nonempty `error` string on their extraction tree
 The original file's path, size and hash remain cataloged, as do successful siblings.
 An error is not a claim of successful decoding; failed authentication never
 publishes unauthenticated plaintext. The website shows an error icon and message
-on the affected file. Error-bearing results are never fresh for `--skip-existing`,
+on the affected file. External links stay beside the filename; errors and extractor
+badges align at the right edge. Error-bearing results are never fresh for `--skip-existing`,
 so supplying a missing helper or license allows a later run to retry them.
+
+ISO/PKG revision 5 and PBP revision 4 read SFO strings through the first NUL within
+the declared data length, allowing nonzero bytes after the terminator found in
+retail metadata. Unterminated strings, invalid text before the terminator, and
+structural bounds violations remain errors. Earlier revisions stay unchanged.
 
 SFO metadata is parsed in memory with the pinned Zig-PSP zSFOTool code. A
 [dependency patch](tools/patches/zig-psp-sfo-memory.md) exposes its reader and
@@ -264,6 +270,9 @@ Open **http://localhost:8000**, or the host's LAN address. Omit `--store` to hid
 downloads; omit `--host` to bind only to localhost. Add `--redump /path/to/dat.zip`
 (or an XML DAT) to link exact ISO SHA-1 + size matches to Redump. The DAT is
 loaded at startup; ingest records hashes without depending on Redump.
+Store availability checks have a 15-second deadline per batch. A stalled request
+shows **Check failed**, not **Missing**, and does not block later batches. Reload
+the page to retry failed checks after restoring access to the store.
 Add `--umdatabase /path/to/pages` for exact SHA-1 links from saved UMDatabase
 entry pages named `ID.html` (for example, `E39CFE68.html`).
 UMD video labels use the SFO title when available, otherwise the observed disc
@@ -275,18 +284,25 @@ derived extractor inventory. Inline contextual extractions retain occurrence pre
 ## Static hosting / GitHub Pages
 
 ```sh
-uv run --locked pspdb-web export --catalog catalog --output dist/site
+uv run --locked pspdb-web export --catalog catalog --output dist/site \
+  --redump /path/to/redump.dat.zip \
+  --umdatabase /path/to/umdatabase/pages
 uv run --locked python -m http.server --directory dist 8001
 ```
 
-Open `http://localhost:8001/site/`. The output directory must be empty. Export
-accepts the same `--redump` and `--umdatabase` sources and embeds their matches.
-It contains only the browser assets and metadata; Store/downloads are disabled.
-Relative asset URLs support repository paths such as `/pspdb/`.
+Open `http://localhost:8001/site/`. The output directory must be empty. Supply the
+reference inputs on **every publication**: export does not discover or fetch them
+automatically, and omitting a flag omits that source's UMD associations. Redump
+matches require exact SHA-1 and size; UMDatabase matches require exact disc SHA-1.
+Coverage depends on the supplied snapshots. Bundled PSX Redump associations are
+included separately. Export leaves ingested records unchanged and publishes only
+browser assets and metadata; Store/downloads are disabled. Relative asset URLs
+support repository paths such as `/pspdb/`.
 
 Keep source code on `main` and exported snapshots at the root of a separate
 `pages` branch (`index.html`, assets, and `catalog.json`, without a `site/` wrapper).
-Export into an empty staging directory, then copy its contents into that branch.
+Export into an empty staging directory, then copy its contents into a separate
+clone of that branch. Never switch branches in a checkout used by active ingestion.
 Pages can publish directly from **pages / (root)**, or use **GitHub Actions** and
 the manual **Deploy GitHub Pages snapshot** workflow on `main`. Neither approach
 needs access to source images or ingestion in Actions. Refresh the snapshot with a new export
@@ -556,9 +572,14 @@ snapshots, reconstruct unused DAT buffers or write intermediate PNG trees.
 DOCUMENT remains an external Python helper: the ingestion adapter still stages
 its explicit inputs and consumes the published page files.
 
-DOCUMENT revision 2 records this byte-input/callback implementation. ISO/PKG
-revision 3 and nested ISO9660 revision 2 preserve earlier inline manual provenance
-as immutable history. Rebuild the helper before using these revisions.
+DOCUMENT revision 3 records this byte-input/callback implementation separately
+from earlier revision 2 helper provenance. ISO/PKG revision 4 and nested ISO9660
+revision 3 provide new namespaces for inventories embedding paired manual results.
+Keep historical records intact: different helper hashes/options must not overwrite
+successful results at the same revision. Rebuild the ingester after updating
+`tools/extractor_versions.json`; build/configure the helper above before ingesting.
+The first run at these new revisions reprocesses affected source kinds even with
+`--skip-existing`; it adds new pairs without replacing the older revisions.
 
 Fixed-key recognition uses the encrypted DOC magic/version block, not filenames
 or generic PGD magic. The reader checks supported header/table/page protection;
