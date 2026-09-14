@@ -267,22 +267,18 @@ const Inventory = struct {
             const entry = &self.entries.items[index];
             const prefix = entry.path[0 .. entry.path.len - "DOCUMENT.DAT".len];
             const companion_path = try std.fmt.allocPrint(self.allocator, "{s}DOCINFO.EDAT", .{prefix});
-            var attached = false;
-            defer if (!attached) self.allocator.free(companion_path);
-            const companion_index = self.paths.get(companion_path) orelse continue;
+            errdefer self.allocator.free(companion_path);
+            const companion_index = self.paths.get(companion_path) orelse {
+                self.allocator.free(companion_path);
+                continue;
+            };
             const companion = self.entries.items[companion_index];
             if (companion.type != .file or companion.size_bytes.? != 304) return error.InvalidDocinfo;
             if (entry.size_bytes.? > 64 * 1024 * 1024) return error.InvalidDocument;
             const source_input = self.document_inputs.get(index) orelse return error.InvalidDocument;
             const companion_input = self.document_inputs.get(companion_index) orelse return error.InvalidDocinfo;
-            const output = try external_extractor.extract(self.allocator, self.io, entry.sha256.?, source_input.bytes, .document, companion_input.bytes);
-            // The inline tree takes the parsed provenance; temporary output
-            // files still disappear after their immediate inventory walk.
-            defer {
-                std.Io.Dir.cwd().deleteTree(self.io, output.path) catch {};
-                self.allocator.free(output.path);
-                if (!attached) output.provenance.deinit();
-            }
+            var output = try external_extractor.extract(self.allocator, self.io, entry.sha256.?, source_input.bytes, .document, companion_input.bytes);
+            defer output.deinit(self.allocator, self.io);
             var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = dispatch.store, .dispatch = dispatch, .paths = .init(self.allocator) };
             defer child.deinit();
             try output.walk(self.allocator, self.io, &child, Inventory.emit_view);
@@ -298,14 +294,13 @@ const Inventory = struct {
             tree.* = .{
                 .sha256 = hash,
                 .size_bytes = entry.size_bytes.?,
-                .extractor = output.provenance.value,
+                .extractor = output.provenance.?.value,
                 .name_rule = "identity",
                 .entries = try child.finish(),
                 .dependencies = dependencies,
-                .owned_provenance = output.provenance,
+                .owned_provenance = output.take_provenance(),
             };
             entry.extraction = tree;
-            attached = true;
             self.counts.stored += child.counts.stored;
             self.counts.reused += child.counts.reused;
         }
@@ -449,7 +444,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                 } else external: {
                     output = try external_extractor.extract(allocator, io, task.hash, task.input.bytes, .psx, null);
                     try output.?.walk(allocator, io, &child, Inventory.emit_view);
-                    break :external output.?.provenance.value;
+                    break :external output.?.provenance.?.value;
                 };
                 const index = inventory.paths.get(section[1]) orelse return error.MissingDataPsp;
                 const entry = &inventory.entries.items[index];
@@ -457,7 +452,14 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                 errdefer allocator.destroy(tree);
                 const hash = try allocator.dupe(u8, &entry.sha256.?);
                 errdefer allocator.free(hash);
-                tree.* = .{ .sha256 = hash, .size_bytes = entry.size_bytes.?, .extractor = section_provenance, .name_rule = if (section[0] == .psx) "identity" else "source_stem", .entries = try child.finish() };
+                tree.* = .{
+                    .sha256 = hash,
+                    .size_bytes = entry.size_bytes.?,
+                    .extractor = section_provenance,
+                    .name_rule = if (section[0] == .psx) "identity" else "source_stem",
+                    .entries = try child.finish(),
+                    .owned_provenance = if (section[0] == .psx) output.?.take_provenance() else null,
+                };
                 entry.extraction = tree;
                 inventory.counts.stored += child.counts.stored;
                 inventory.counts.reused += child.counts.reused;
@@ -467,7 +469,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
         else => blk: {
             output = try external_extractor.extract(allocator, io, task.hash, task.input.bytes, task.kind, null);
             try output.?.walk(allocator, io, &inventory, Inventory.emit_view);
-            break :blk output.?.provenance.value;
+            break :blk output.?.provenance.?.value;
         },
     };
     const entries = try inventory.finish();

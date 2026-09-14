@@ -1,16 +1,24 @@
 const std = @import("std");
+
 const extractor = @import("extractor.zig");
 const memory = @import("bytes.zig");
 
 /// Zig owns temporary output until its immediate files have been read into memory.
 pub const Output = struct {
     path: []const u8,
-    provenance: std.json.Parsed(extractor.Provenance),
+    provenance: ?std.json.Parsed(extractor.Provenance),
 
     pub fn deinit(self: Output, allocator: std.mem.Allocator, io: std.Io) void {
         std.Io.Dir.cwd().deleteTree(io, self.path) catch {};
         allocator.free(self.path);
-        self.provenance.deinit();
+        if (self.provenance) |provenance| provenance.deinit();
+    }
+
+    /// Transfers the parsed metadata; deinit still removes temporary files.
+    pub fn take_provenance(self: *Output) std.json.Parsed(extractor.Provenance) {
+        const provenance = self.provenance.?;
+        self.provenance = null;
+        return provenance;
     }
 
     pub fn walk(self: Output, allocator: std.mem.Allocator, io: std.Io, context: anytype, comptime emit: anytype) !void {
@@ -80,4 +88,32 @@ pub fn extract(allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, input: []
     }
     const provenance = try std.json.parseFromSlice(extractor.Provenance, allocator, result.stdout, .{ .allocate = .alloc_always });
     return .{ .path = work_path, .provenance = provenance };
+}
+
+test "transferred provenance survives temporary output cleanup" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(io, "output", .default_dir);
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    var output: ?Output = create: {
+        const path = try std.Io.Dir.path.join(allocator, &.{ root, "output" });
+        errdefer allocator.free(path);
+        const provenance = try std.json.parseFromSlice(extractor.Provenance, allocator,
+            \\{"name":"PSP-DOCUMENT.DAT","version":"2","options":["page-files-only:1"]}
+        , .{ .allocate = .alloc_always });
+        break :create .{ .path = path, .provenance = provenance };
+    };
+    defer if (output) |value| value.deinit(allocator, io);
+
+    const provenance = output.?.take_provenance();
+    defer provenance.deinit();
+    output.?.deinit(allocator, io);
+    output = null;
+
+    try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(io, "output", .{}));
+    try std.testing.expectEqualStrings("PSP-DOCUMENT.DAT", provenance.value.name);
+    try std.testing.expectEqualStrings("page-files-only:1", provenance.value.options[0]);
 }
