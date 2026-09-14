@@ -20,17 +20,20 @@ static int authenticate(const unsigned char *data, size_t size,
                              (unsigned char *)tag);
 }
 
-/* Private FFI: edat.zig validates the complete source layout and owns output.
- * Inputs must not overlap output. No plaintext is returned by Zig on failure. */
+/* Private FFI: edat.zig validates the complete source layout and license type,
+ * and owns output. Inputs must not overlap output. No plaintext is returned by Zig on failure. */
 int pspdb_edat_decode(const unsigned char *source, unsigned char *output,
                      size_t length, uint32_t version, uint32_t flags,
-                     const unsigned char *rap)
+                     uint32_t license_type, const unsigned char *license)
 {
     size_t blocks = (length + BLOCK_SIZE - 1) / BLOCK_SIZE;
     size_t metadata_size = blocks * 16;
     size_t data_offset = 0x100 + metadata_size;
     unsigned char key[16];
-    get_rif_key((unsigned char *)rap, key);
+    if (license_type == 3)
+        memset(key, 0, sizeof(key));
+    else
+        get_rif_key((unsigned char *)license, key);
     int mode = (flags & EDAT_ENCRYPTED_KEY_FLAG) ? 0x10000002 : 0x02;
 
     /* The keyed header MAC covers every NPD byte, including title_hash.

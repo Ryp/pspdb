@@ -477,22 +477,27 @@ The Zig build links pinned make-npdata commit
 AES-table patches. Its GPLv3 crypto code is linked into the executable.
 No EDAT subprocess, input reread, temporary plaintext file or `PSPDB_EDAT` helper is used.
 
-The key boundary selects a regular, nonsymlink, exactly 16-byte
+License-2 EDATs select a regular, nonsymlink, exactly 16-byte
 `<NPD-content-id>.rap` from the shared license directory described above.
 Override that directory with `PSPDB_RAP_DIR`; otherwise `XDG_DATA_HOME` or
 `~/.local/share/pspdb/licenses` supplies the default. License bytes never enter
 catalog JSON or provenance. Missing/invalid licenses and failed authentication
 produce an EDAT extraction error, without rejecting the parent inventory or
-publishing plaintext. EDAT revision 2 records native `pspdb-ingest` provenance;
-ISO/PKG revision 2 enables complete recursive inventories without a store.
+publishing plaintext.
 
-EDAT extraction supports license-2 NPD v1/flags-0 and v2/flags-0-or-0x0c files,
-with 16 KiB blocks and at most 64 MiB plaintext. Keyed header, metadata-table and
-every ciphertext-block MAC must pass before publication. The original EDAT,
-including signatures and any optional 16-byte footer, stays unchanged; the decoder
-does not verify filename-dependent hashes or ECDSA signatures. Its sole child is
-`payload.DAT`, displayed and downloaded using the EDAT source stem:
-`ISO.BIN.EDAT` yields `ISO.BIN.DAT`, and `MINIS.EDAT` yields `MINIS.DAT`.
+EDAT revision 3 also recognizes the authenticated empty `ISO.BIN.EDAT` markers
+shipped beside `PBOOT.PBP` in PSP update packages. These NPD v2/license-3/flags-0x0c
+files use an all-zero developer klicensee, require no RAP, and decrypt to an empty
+payload. Their keyed filename, content-ID, developer, metadata and header fields
+still authenticate; arbitrary license-3 payloads remain unsupported.
+
+EDAT extraction otherwise supports license-2 NPD v1/flags-0 and
+v2/flags-0-or-0x0c files, with 16 KiB blocks and at most 64 MiB plaintext. Keyed
+header, metadata-table and every ciphertext-block MAC must pass before publication.
+The original EDAT, including signatures and any optional 16-byte footer, stays
+unchanged; the decoder does not verify filename-dependent hashes or ECDSA signatures.
+Its sole child is `payload.DAT`, displayed and downloaded using the EDAT source
+stem: `ISO.BIN.EDAT` yields `ISO.BIN.DAT`, and `MINIS.EDAT` yields `MINIS.DAT`.
 Recognized payload formats still recurse through their registered extractors.
 
 Big-endian NPUMDIMG metadata does not contain an identified filesystem.

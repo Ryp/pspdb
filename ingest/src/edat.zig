@@ -1,6 +1,6 @@
 const std = @import("std");
 
-extern fn pspdb_edat_decode(source: [*]const u8, output: [*]u8, length: usize, version: u32, flags: u32, rap: *const [16]u8) c_int;
+extern fn pspdb_edat_decode(source: [*]const u8, output: [*]u8, length: usize, version: u32, flags: u32, license_type: u32, license: *const [16]u8) c_int;
 
 const block_size = 16384;
 const max_plaintext = 64 << 20;
@@ -8,6 +8,7 @@ const max_source = max_plaintext + max_plaintext / block_size * 16 + 0x110;
 
 const Header = struct {
     version: u32,
+    license_type: u32,
     flags: u32,
     length: usize,
     identifier: []const u8,
@@ -28,10 +29,13 @@ pub fn content_id(bytes: []const u8) ![]const u8 {
 /// are not separately authenticated, matching the former bounded helper.
 pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, rap: ?[16]u8) ![]u8 {
     const header = try parse_header(bytes);
-    const license = rap orelse return error.MissingEdatRap;
+    const license: [16]u8 = if (header.license_type == 3)
+        @splat(0)
+    else
+        rap orelse return error.MissingEdatRap;
     const output = try allocator.alloc(u8, header.length);
     errdefer allocator.free(output);
-    if (pspdb_edat_decode(bytes.ptr, output.ptr, output.len, header.version, header.flags, &license) != 1)
+    if (pspdb_edat_decode(bytes.ptr, output.ptr, output.len, header.version, header.flags, header.license_type, &license) != 1)
         return error.EdatAuthenticationFailed;
     return output;
 }
@@ -43,12 +47,15 @@ fn parse_header(bytes: []const u8) !Header {
     const license_type = std.mem.readInt(u32, bytes[8..12], .big);
     const flags = std.mem.readInt(u32, bytes[0x80..0x84], .big);
     const declared_block_size = std.mem.readInt(u32, bytes[0x84..0x88], .big);
-    if ((version != 1 and version != 2) or license_type != 2 or
+    if ((version != 1 and version != 2) or
         (flags != 0 and flags != 0x0c) or (version == 1 and flags != 0) or
         declared_block_size != block_size) return error.UnsupportedEdat;
 
     const declared_length = std.mem.readInt(u64, bytes[0x88..0x90], .big);
     if (declared_length > max_plaintext) return error.InvalidEdatSize;
+    if (license_type != 2 and
+        !(license_type == 3 and version == 2 and flags == 0x0c and declared_length == 0))
+        return error.UnsupportedEdat;
     const length: usize = @intCast(declared_length);
     const blocks = (length + block_size - 1) / block_size;
     const padded_size = (length + 15) & ~@as(usize, 15);
@@ -70,7 +77,7 @@ fn parse_header(bytes: []const u8) !Header {
         if (!valid) return error.InvalidEdatContentId;
     }
     if (!std.mem.allEqual(u8, bytes[0x34..0x40], 0)) return error.InvalidEdatContentId;
-    return .{ .version = version, .flags = flags, .length = length, .identifier = identifier };
+    return .{ .version = version, .flags = flags, .license_type = license_type, .length = length, .identifier = identifier };
 }
 
 fn empty_fixture() [0x100]u8 {
@@ -121,7 +128,7 @@ const FixtureCrypto = struct {
     extern fn cmac_hash_forge(key: *const [16]u8, key_len: c_int, input: [*]const u8, input_len: c_int, hash: *[16]u8) void;
 };
 
-fn signed_fixture(allocator: std.mem.Allocator, payload: []const u8, version: u32, flags: u32) ![]u8 {
+fn signed_fixture(allocator: std.mem.Allocator, payload: []const u8, version: u32, flags: u32, license_type: u32) ![]u8 {
     const blocks = (payload.len + block_size - 1) / block_size;
     const data_offset = 0x100 + blocks * 16;
     const padded_size = (payload.len + 15) & ~@as(usize, 15);
@@ -129,6 +136,7 @@ fn signed_fixture(allocator: std.mem.Allocator, payload: []const u8, version: u3
     @memset(bytes, 0);
     @memcpy(bytes[0..0x100], &empty_fixture());
     std.mem.writeInt(u32, bytes[4..8], version, .big);
+    std.mem.writeInt(u32, bytes[8..12], license_type, .big);
     std.mem.writeInt(u32, bytes[0x80..0x84], flags, .big);
     std.mem.writeInt(u64, bytes[0x88..0x90], payload.len, .big);
     @memset(bytes[0x40..0x50], 0x41);
@@ -136,8 +144,8 @@ fn signed_fixture(allocator: std.mem.Allocator, payload: []const u8, version: u3
     @memcpy(bytes[data_offset..][0..payload.len], payload);
     const mode: c_int = if (flags & 8 != 0) 0x10000002 else 2;
     const rap: [16]u8 = @splat(0);
-    var key: [16]u8 = undefined;
-    FixtureCrypto.get_rif_key(&rap, &key);
+    var key: [16]u8 = @splat(0);
+    if (license_type == 2) FixtureCrypto.get_rif_key(&rap, &key);
     var hash_key: [16]u8 = undefined;
     FixtureCrypto.generate_hash(mode, 0, &hash_key, &key);
     for (0..blocks) |block| {
@@ -168,7 +176,7 @@ fn signed_fixture(allocator: std.mem.Allocator, payload: []const u8, version: u3
 test "EDAT authenticates every block before returning immutable unaligned plaintext" {
     const allocator = std.testing.allocator;
     const payload = [_]u8{0x31} ** (block_size + 1);
-    const fixture = try signed_fixture(allocator, &payload, 2, 0x0c);
+    const fixture = try signed_fixture(allocator, &payload, 2, 0x0c, 2);
     defer allocator.free(fixture);
     const storage = try allocator.alloc(u8, fixture.len + 1);
     defer allocator.free(storage);
@@ -193,10 +201,27 @@ test "EDAT authenticates every block before returning immutable unaligned plaint
 test "EDAT supports unencrypted keys and authenticated empty payloads" {
     const allocator = std.testing.allocator;
     for ([_]u32{ 1, 2 }) |version| {
-        const fixture = try signed_fixture(allocator, "", version, 0);
+        const fixture = try signed_fixture(allocator, "", version, 0, 2);
         defer allocator.free(fixture);
         const plaintext = try decode(allocator, fixture, @splat(0));
         defer allocator.free(plaintext);
         try std.testing.expectEqualSlices(u8, "", plaintext);
     }
+}
+
+test "EDAT authenticates empty type-3 update markers without a RAP" {
+    const allocator = std.testing.allocator;
+    const fixture = try signed_fixture(allocator, "", 2, 0x0c, 3);
+    defer allocator.free(fixture);
+    const plaintext = try decode(allocator, fixture, null);
+    defer allocator.free(plaintext);
+    try std.testing.expectEqualSlices(u8, "", plaintext);
+
+    fixture[0x40] ^= 1;
+    try std.testing.expectError(error.EdatAuthenticationFailed, decode(allocator, fixture, null));
+    fixture[0x40] ^= 1;
+
+    const unsupported = try signed_fixture(allocator, "not a marker", 2, 0x0c, 3);
+    defer allocator.free(unsupported);
+    try std.testing.expectError(error.UnsupportedEdat, decode(allocator, unsupported, null));
 }

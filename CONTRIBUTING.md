@@ -39,8 +39,8 @@ PKG inputs use `catalog/pkg/v5/<source-sha256>-ingest.json` and the adjacent
 `-tree.json`; the website shows them under `psn/`.
 
 Include new nested pairs too, such as `prx/v4/`, `kl3e/v2/`, `kl4e/v2/` and `gzip/v1/`.
-Native licensed NPD EDAT extraction produces `edat/v2/` pairs containing decrypted DAT payloads.
-Keep RAP files and all decrypted byte objects local; submit only catalog JSON.
+Native NPD EDAT extraction produces `edat/v3/` pairs containing authenticated
+DAT payloads, including empty payloads from license-3 PSP update markers.
 A source already present at that revision does not need another contribution.
 If your generated inventory differs from an existing inventory at the same
 revision, report the discrepancy instead of replacing it. Tool executable hashes
