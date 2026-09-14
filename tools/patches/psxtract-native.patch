@@ -1,0 +1,2567 @@
+--- a/src/psxtract.cpp
++++ b/src/psxtract.cpp
+@@ -1,14 +1,14 @@
++#include "native.h"
+ // Copyright (C) 2014       Hykem <hykem@hotmail.com>
+ // Licensed under the terms of the GNU GPL, version 3
+ // http://www.gnu.org/licenses/gpl-3.0.txt
+ 
+ #include "psxtract.h"
+ #include "md5_verify.h"
+-#include "at3acm.h"
+-#include "gui.h"
+ #include "cue_resources.h"
+-
+-extern void openLogFileForWriting(const char* pbpPath);
++#include <new>
++
++
+ 
+ 
+ 
+@@ -53,43 +53,8 @@
+     if (cue_exists) printf("  %s\n", cue_path);
+     if (bin_exists) printf("  %s\n", bin_path);
+     
+-    if (isGUIMode()) {
+-        // For GUI mode, use GUI prompt
+-        char message[1024];
+-        sprintf(message, "Output files already exist:\n");
+-        if (cue_exists) {
+-            strcat(message, "  ");
+-            strcat(message, cue_path);
+-            strcat(message, "\n");
+-        }
+-        if (bin_exists) {
+-            strcat(message, "  ");
+-            strcat(message, bin_path);
+-            strcat(message, "\n");
+-        }
+-        strcat(message, "\nOverwrite existing files?");
+-        
+-        if (gui_prompt(message, "Output Files Exist")) {
+-            printf("User chose to overwrite existing files.\n");
+-            return true; // Overwrite
+-        } else {
+-            printf("User cancelled operation.\n");
+-            return false; // Cancel
+-        }
+-    } else {
+-        // For console mode, ask user for action
+-        char input[10];
+-        printf("Do you want to overwrite existing files? (y/N): ");
+-        if (fgets(input, sizeof(input), stdin) != NULL) {
+-            char response = input[0];
+-            if (response == 'y' || response == 'Y') {
+-                printf("Overwriting existing files.\n");
+-                return true; // Overwrite
+-            }
+-        }
+-        printf("Operation cancelled.\n");
+-        return false; // Cancel
+-    }
++    printf("ERROR: Refusing to overwrite existing output files\n");
++    return false;
+ }
+ 
+ // Helper function to read lines from string buffer (replaces fgets for embedded CUE files)
+@@ -135,117 +100,65 @@
+ // Dynamic pregap override storage
+ static PREGAP_OVERRIDE* g_dynamic_pregap_override = NULL;
+ 
+-char* exec(const char* cmd) {
+-    HANDLE hRead, hWrite;
+-    SECURITY_ATTRIBUTES saAttr;
+-    char* output = NULL;
+-    DWORD outputSize = 0;
+-
+-    ZeroMemory(&saAttr, sizeof(saAttr));
+-    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+-    saAttr.bInheritHandle = TRUE;
+-    saAttr.lpSecurityDescriptor = NULL;
+-
+-    // Create a pipe to capture the output
+-    if (!CreatePipe(&hRead, &hWrite, &saAttr, 0))
+-        return NULL;
+-
+-    STARTUPINFOW si;
+-    PROCESS_INFORMATION pi;
+-    ZeroMemory(&si, sizeof(si));
+-    ZeroMemory(&pi, sizeof(pi));
+-
+-    si.cb = sizeof(STARTUPINFOW);
+-    si.hStdError = hWrite;
+-    si.hStdOutput = hWrite;
+-    si.dwFlags |= STARTF_USESTDHANDLES;
+-
+-    // Create the process - convert command to wide char for Unicode support
+-    int wlen = MultiByteToWideChar(CP_UTF8, 0, cmd, -1, NULL, 0);
+-    wchar_t* wcmd = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+-    if (!wcmd) {
+-        CloseHandle(hWrite);
+-        CloseHandle(hRead);
+-        return NULL;
+-    }
+-    MultiByteToWideChar(CP_UTF8, 0, cmd, -1, wcmd, wlen);
+-    
+-    BOOL bSuccess = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi);
+-    free(wcmd);
+-    if (!bSuccess) {
+-        CloseHandle(hWrite);
+-        CloseHandle(hRead);
+-        return NULL;
+-    }
+-
+-    CloseHandle(hWrite); // Close write end of pipe
+-
+-    // Read the output from the pipe
+-    DWORD dwRead;
+-    CHAR chBuf[4096];
+-    while (ReadFile(hRead, chBuf, 4096, &dwRead, NULL) && dwRead > 0) {
+-        output = (char*)realloc(output, outputSize + dwRead + 1);
+-        memcpy(output + outputSize, chBuf, dwRead);
+-        outputSize += dwRead;
+-        output[outputSize] = '\0';
+-    }
+-
+-    CloseHandle(hRead);
+-    CloseHandle(pi.hProcess);
+-    CloseHandle(pi.hThread);
+-
+-    return output;
+-}
+-
+-unsigned long extract_startdat(FILE *psar, bool isMultidisc)
+-{
+-	if (psar == NULL)
+-	{
+-		printf("ERROR: Can't open input file for STARTDAT!\n");
+-		return -1;
+-	}
+-
+-	// Get the STARTDAT offset (0xC for single disc and 0x10 for multidisc due to header magic length).
+-	unsigned long startdat_offset;
+-	if (isMultidisc)
+-		fseek(psar, 0x10, SEEK_SET);
+-	else
+-		fseek(psar, 0xC, SEEK_SET);
+-	fread(&startdat_offset, sizeof(startdat_offset), 1, psar);
+-
+-	if (startdat_offset)
+-	{
+-		printf("Found STARTDAT offset: 0x%08lx\n", startdat_offset);
+-
+-		// Read the STARTDAT header.
+-		STARTDAT_HEADER startdat_header[sizeof(STARTDAT_HEADER)];
+-		memset(startdat_header, 0, sizeof(startdat_header));
+-
+-		// Save the header as well.
+-		_fseeki64(psar, startdat_offset, SEEK_SET);
+-		fread(startdat_header, sizeof(STARTDAT_HEADER), 1, psar);
+-		_fseeki64(psar, startdat_offset, SEEK_SET);
+-
+-		// Read the STARTDAT data.
+-		int startdat_size = startdat_header->header_size + startdat_header->data_size;
+-		unsigned char *startdat_data = new unsigned char[startdat_size];   
+-		fread(startdat_data, 1, startdat_size, psar);
+-
+-		// Store the STARTDAT.
+-		FILE* startdat = fopen("STARTDAT.BIN", "wb");
+-		fwrite(startdat_data, startdat_size, 1, startdat);
+-		fclose(startdat);
+-
+-		// Store the STARTDAT.PNG
+-		FILE* startdatpng = fopen("STARTDAT.PNG", "wb");
+-		fwrite(startdat_data + startdat_header->header_size, startdat_header->data_size, 1, startdatpng);
+-		fclose(startdatpng);
+-
++int64_t extract_startdat(FILE *psar, bool isMultidisc)
++{
++	if (psar == NULL || _fseeki64(psar, 0, SEEK_END) != 0)
++		return -1;
++	const int64_t psar_size = _ftelli64(psar);
++	const int64_t offset_field = isMultidisc ? 0x10 : 0xC;
++	uint32_t startdat_offset;
++	if (psar_size < offset_field + (int64_t)sizeof(startdat_offset) ||
++	    _fseeki64(psar, offset_field, SEEK_SET) != 0 ||
++	    fread(&startdat_offset, sizeof(startdat_offset), 1, psar) != 1)
++	{
++		printf("ERROR: Truncated STARTDAT offset!\n");
++		return -1;
++	}
++	if (!startdat_offset)
++		return 0;
++
++	printf("Found STARTDAT offset: 0x%08x\n", startdat_offset);
++	STARTDAT_HEADER startdat_header;
++	if (startdat_offset > psar_size ||
++	    psar_size - startdat_offset < (int64_t)sizeof(startdat_header) ||
++	    _fseeki64(psar, startdat_offset, SEEK_SET) != 0 ||
++	    fread(&startdat_header, sizeof(startdat_header), 1, psar) != 1)
++	{
++		printf("ERROR: Truncated STARTDAT header!\n");
++		return -1;
++	}
++	const uint64_t startdat_size = (uint64_t)startdat_header.header_size + startdat_header.data_size;
++	if (startdat_header.header_size < sizeof(startdat_header) ||
++	    startdat_size > (uint64_t)(psar_size - startdat_offset) ||
++	    startdat_size > SIZE_MAX ||
++	    _fseeki64(psar, startdat_offset, SEEK_SET) != 0)
++	{
++		printf("ERROR: Invalid STARTDAT span!\n");
++		return -1;
++	}
++	unsigned char *startdat_data = new (std::nothrow) unsigned char[(size_t)startdat_size];
++	if (!startdat_data)
++		return -1;
++	if (fread(startdat_data, 1, (size_t)startdat_size, psar) != startdat_size)
++	{
+ 		delete[] startdat_data;
+-
+-		printf("Saving STARTDAT as STARTDAT.BIN...\n\n");
+-	}
+-
++		return -1;
++	}
++
++	FILE* startdat = fopen("STARTDAT.BIN", "wb");
++	if (!startdat) { delete[] startdat_data; return -1; }
++	bool failed = fwrite(startdat_data, 1, (size_t)startdat_size, startdat) != startdat_size;
++	if (fclose(startdat)) failed = true;
++	if (failed) { delete[] startdat_data; return -1; }
++
++	FILE* startdatpng = fopen("STARTDAT.PNG", "wb");
++	if (!startdatpng) { delete[] startdat_data; return -1; }
++	failed = fwrite(startdat_data + startdat_header.header_size, 1, startdat_header.data_size, startdatpng) != startdat_header.data_size;
++	if (fclose(startdatpng)) failed = true;
++	delete[] startdat_data;
++	if (failed) return -1;
++
++	printf("Saving STARTDAT as STARTDAT.BIN...\n\n");
+ 	return startdat_offset;
+ }
+ 
+@@ -299,174 +212,180 @@
+ 
+ int decrypt_special_data(FILE *psar, long long psar_size, int special_data_offset)
+ {
+-	if ((psar == NULL))
+-	{
+-		printf("ERROR: Can't open input file for special data!\n");
+-		return -1;
+-	}
+-
+-	if (special_data_offset)
+-	{
+-		printf("Found special data offset: 0x%08x\n", special_data_offset);
+-
+-		// Seek to the special data.
+-		fseek(psar, special_data_offset, SEEK_SET);
+-
+-		// Read the data.
+-		int special_data_size = psar_size - special_data_offset;  // Always the last portion of the DATA.PSAR.
+-		unsigned char *special_data = new unsigned char[static_cast<unsigned int>(special_data_size)];
+-		fread(special_data, special_data_size, 1, psar);
+-
+-		printf("Decrypting special data...\n");
+-
+-		// Decrypt the PGD and save the data.
+-		int pgd_size = decrypt_pgd(special_data, special_data_size, 2, NULL);
+-
+-		if (pgd_size > 0)
+-			printf("Special data successfully decrypted! Saving as SPECIAL_DATA.BIN...\n\n");
+-		else
+-		{
+-			printf("ERROR: Special data decryption failed!\n\n");
+-			return -1;
+-		}
+-
+-		// Store the decrypted special data.
+-		FILE* dec_special_data = fopen("SPECIAL_DATA.BIN", "wb");
+-		fwrite(special_data + 0x90, pgd_size, 1, dec_special_data);
+-		fclose(dec_special_data);
+-
+-		// Store the decrypted special data png.
+-		FILE* dec_special_data_png = fopen("SPECIAL_DATA.PNG", "wb");
+-		fwrite(special_data + 0xAC, pgd_size - 0x1C, 1, dec_special_data_png);
+-		fclose(dec_special_data_png);
+-
++	if (psar == NULL)
++		return -1;
++	if (!special_data_offset)
++		return 0;
++
++	// Special data is always the last portion of DATA.PSAR.
++	if (special_data_offset < 0 || psar_size < special_data_offset ||
++	    psar_size - special_data_offset < 0x90 ||
++	    psar_size - special_data_offset > INT_MAX ||
++	    _fseeki64(psar, 0, SEEK_END) != 0)
++		return -1;
++	const int64_t source_size = _ftelli64(psar);
++	if (source_size < psar_size || _fseeki64(psar, special_data_offset, SEEK_SET) != 0)
++		return -1;
++	const int special_data_size = (int)(psar_size - special_data_offset);
++	unsigned char *special_data = new (std::nothrow) unsigned char[special_data_size];
++	if (!special_data) return -1;
++	if (fread(special_data, 1, special_data_size, psar) != (size_t)special_data_size)
++	{
+ 		delete[] special_data;
+-	}
++		return -1;
++	}
++
++	printf("Found special data offset: 0x%08x\n", special_data_offset);
++	printf("Decrypting special data...\n");
++	const int pgd_size = decrypt_pgd(special_data, special_data_size, 2, NULL);
++	if (pgd_size < 0x1C || pgd_size > special_data_size - 0x90)
++	{
++		printf("ERROR: Special data decryption failed!\n\n");
++		delete[] special_data;
++		return -1;
++	}
++
++	FILE* dec_special_data = fopen("SPECIAL_DATA.BIN", "wb");
++	if (!dec_special_data) { delete[] special_data; return -1; }
++	bool failed = fwrite(special_data + 0x90, 1, pgd_size, dec_special_data) != (size_t)pgd_size;
++	if (fclose(dec_special_data)) failed = true;
++	if (failed) { delete[] special_data; return -1; }
++
++	FILE* dec_special_data_png = fopen("SPECIAL_DATA.PNG", "wb");
++	if (!dec_special_data_png) { delete[] special_data; return -1; }
++	failed = fwrite(special_data + 0xAC, 1, pgd_size - 0x1C, dec_special_data_png) != (size_t)(pgd_size - 0x1C);
++	if (fclose(dec_special_data_png)) failed = true;
++	delete[] special_data;
++	if (failed) return -1;
++	printf("Special data successfully decrypted! Saving as SPECIAL_DATA.BIN...\n\n");
+ 	return 0;
+ }
+ 
+-int decrypt_unknown_data(FILE *psar, int unknown_data_offset, int startdat_offset)
+-{
+-	if ((psar == NULL))
+-	{
+-		printf("ERROR: Can't open input file for unknown data!\n");
+-		return -1;
+-	}
+-
+-	if (unknown_data_offset)
+-	{
+-		printf("Found unknown data offset: 0x%08x\n", unknown_data_offset);
+-
+-		// Seek to the unknown data.
+-		fseek(psar, unknown_data_offset, SEEK_SET);
+-
+-		// Read the data.
+-		int unknown_data_size = startdat_offset - unknown_data_offset;   // Always located before the STARDAT and after the ISO.
+-		unsigned char *unknown_data = new unsigned char[unknown_data_size];
+-		fread(unknown_data, unknown_data_size, 1, psar);
+-
+-		printf("Decrypting unknown data...\n");
+-
+-		// Decrypt the PGD and save the data.
+-		int pgd_size = decrypt_pgd(unknown_data, unknown_data_size, 2, NULL);
+-
+-		if (pgd_size > 0)
+-			printf("Unknown data successfully decrypted! Saving as UNKNOWN_DATA.BIN...\n\n");
+-		else
+-		{
+-			printf("ERROR: Unknown data decryption failed!\n\n");
+-			return -1;
+-		}
+-
+-		// Store the decrypted unknown data.
+-		FILE* dec_unknown_data = fopen("UNKNOWN_DATA.BIN", "wb");
+-		fwrite(unknown_data + 0x90, pgd_size, 1, dec_unknown_data);
+-		fclose(dec_unknown_data);
++int decrypt_unknown_data(FILE *psar, int unknown_data_offset, int64_t startdat_offset)
++{
++	if (psar == NULL)
++		return -1;
++	if (!unknown_data_offset)
++		return 0;
++
++	// Unknown data is located before STARTDAT and after the ISO.
++	if (unknown_data_offset < 0 || startdat_offset < unknown_data_offset ||
++	    startdat_offset - unknown_data_offset < 0x90 ||
++	    startdat_offset - unknown_data_offset > INT_MAX ||
++	    _fseeki64(psar, 0, SEEK_END) != 0)
++		return -1;
++	const int64_t source_size = _ftelli64(psar);
++	if (source_size < startdat_offset || _fseeki64(psar, unknown_data_offset, SEEK_SET) != 0)
++		return -1;
++	const int unknown_data_size = (int)(startdat_offset - unknown_data_offset);
++	unsigned char *unknown_data = new (std::nothrow) unsigned char[unknown_data_size];
++	if (!unknown_data) return -1;
++	if (fread(unknown_data, 1, unknown_data_size, psar) != (size_t)unknown_data_size)
++	{
+ 		delete[] unknown_data;
+-	}
+-
++		return -1;
++	}
++
++	printf("Found unknown data offset: 0x%08x\n", unknown_data_offset);
++	printf("Decrypting unknown data...\n");
++	const int pgd_size = decrypt_pgd(unknown_data, unknown_data_size, 2, NULL);
++	if (pgd_size <= 0 || pgd_size > unknown_data_size - 0x90)
++	{
++		printf("ERROR: Unknown data decryption failed!\n\n");
++		delete[] unknown_data;
++		return -1;
++	}
++
++	FILE* dec_unknown_data = fopen("UNKNOWN_DATA.BIN", "wb");
++	if (!dec_unknown_data) { delete[] unknown_data; return -1; }
++	bool failed = fwrite(unknown_data + 0x90, 1, pgd_size, dec_unknown_data) != (size_t)pgd_size;
++	if (fclose(dec_unknown_data)) failed = true;
++	delete[] unknown_data;
++	if (failed) return -1;
++	printf("Unknown data successfully decrypted! Saving as UNKNOWN_DATA.BIN...\n\n");
+ 	return 0;
+ }
+ 
+-int decrypt_iso_header(FILE *psar, unsigned int header_offset, unsigned char *pgd_key, int disc_num)
+-{
+-	if (psar == NULL)
+-	{
+-		printf("ERROR: Can't open input file for ISO header!\n");
+-		return -1;
+-	}
+-
+-	// Seek to the ISO header.
+-	_fseeki64(psar, header_offset, SEEK_SET);
+-
+-	// Read the ISO header.
+-	unsigned char *iso_header = new unsigned char[ISO_HEADER_SIZE];
+-	fread(iso_header, ISO_HEADER_SIZE, 1, psar);
++int decrypt_iso_header(FILE *psar, int64_t header_offset, unsigned char *pgd_key, int disc_num)
++{
++	if (psar == NULL || header_offset < 0 || _fseeki64(psar, 0, SEEK_END) != 0)
++		return -1;
++	const int64_t source_size = _ftelli64(psar);
++	if (source_size < header_offset || source_size - header_offset < ISO_HEADER_SIZE ||
++	    _fseeki64(psar, header_offset, SEEK_SET) != 0)
++	{
++		printf("ERROR: Truncated ISO header!\n");
++		return -1;
++	}
++	unsigned char *iso_header = new (std::nothrow) unsigned char[ISO_HEADER_SIZE];
++	if (!iso_header) return -1;
++	if (fread(iso_header, ISO_HEADER_SIZE, 1, psar) != 1)
++	{
++		delete[] iso_header;
++		return -1;
++	}
+ 
+ 	printf("Decrypting ISO header...\n");
+-
+-	// Decrypt the PGD and get the block table.
+-	int pgd_size = decrypt_pgd(iso_header, ISO_HEADER_SIZE, 2, pgd_key);
+-
+-	if (pgd_size > 0)
+-		printf("ISO header successfully decrypted! Saving as ISO_HEADER_%d.BIN...\n\n", disc_num);
+-	else
++	const int pgd_size = decrypt_pgd(iso_header, ISO_HEADER_SIZE, 2, pgd_key);
++	if (pgd_size <= 0 || pgd_size > ISO_HEADER_SIZE - 0x90)
+ 	{
+ 		printf("ERROR: ISO header decryption failed!\n\n");
+-		return -1;
+-	}
+-
+-	// Choose the output ISO header file name based on the disc number.
+-	char iso_header_filename[0x14];
++		delete[] iso_header;
++		return -1;
++	}
++
++	char iso_header_filename[0x20];
+ 	if (disc_num > 0)
+ 		sprintf(iso_header_filename, "ISO_HEADER_%d.BIN", disc_num);
+ 	else
+ 		sprintf(iso_header_filename, "ISO_HEADER.BIN");
+ 
+-	// Store the decrypted ISO header.
+ 	FILE* dec_iso_header = fopen(iso_header_filename, "wb");
+-	fwrite(iso_header + 0x90, pgd_size, 1, dec_iso_header);
+-
+-	fclose(dec_iso_header);
++	if (!dec_iso_header) { delete[] iso_header; return -1; }
++	bool failed = fwrite(iso_header + 0x90, 1, pgd_size, dec_iso_header) != (size_t)pgd_size;
++	if (fclose(dec_iso_header)) failed = true;
+ 	delete[] iso_header;
+-
++	if (failed) return -1;
++	printf("ISO header successfully decrypted! Saving as ISO_HEADER_%d.BIN...\n\n", disc_num);
+ 	return 0;
+ }
+ 
+ int decrypt_iso_map(FILE *psar, int map_offset, int map_size, unsigned char *pgd_key)
+ {
+-	if (psar == NULL)
+-	{
+-		printf("ERROR: Can't open input file for ISO disc map!\n");
+-		return -1;
+-	}
+-
+-	// Seek to the ISO map.
+-	fseek(psar, map_offset, SEEK_SET);
+-
+-	// Read the ISO map.
+-	unsigned char *iso_map = new unsigned char[map_size];
+-	fread(iso_map, map_size, 1, psar);
++	if (psar == NULL || map_offset < 0 || map_size < 0x90 ||
++	    _fseeki64(psar, 0, SEEK_END) != 0)
++		return -1;
++	const int64_t source_size = _ftelli64(psar);
++	if (source_size < map_offset || source_size - map_offset < map_size ||
++	    _fseeki64(psar, map_offset, SEEK_SET) != 0)
++	{
++		printf("ERROR: Truncated ISO disc map!\n");
++		return -1;
++	}
++	unsigned char *iso_map = new (std::nothrow) unsigned char[map_size];
++	if (!iso_map) return -1;
++	if (fread(iso_map, 1, map_size, psar) != (size_t)map_size)
++	{
++		delete[] iso_map;
++		return -1;
++	}
+ 
+ 	printf("Decrypting ISO disc map...\n");
+-
+-	// Decrypt the PGD and get the block table.
+-	int pgd_size = decrypt_pgd(iso_map, map_size, 2, pgd_key);
+-
+-	if (pgd_size > 0)
+-		printf("ISO disc map successfully decrypted! Saving as ISO_MAP.BIN...\n\n");
+-	else
++	const int pgd_size = decrypt_pgd(iso_map, map_size, 2, pgd_key);
++	if (pgd_size <= 0 || pgd_size > map_size - 0x90)
+ 	{
+ 		printf("ERROR: ISO disc map decryption failed!\n\n");
+-		return -1;
+-	}
+-
+-	// Store the decrypted ISO disc map.
++		delete[] iso_map;
++		return -1;
++	}
++
+ 	FILE* dec_iso_map = fopen("ISO_MAP.BIN", "wb");
+-	fwrite(iso_map + 0x90, pgd_size, 1, dec_iso_map);
+-	fclose(dec_iso_map);
++	if (!dec_iso_map) { delete[] iso_map; return -1; }
++	bool failed = fwrite(iso_map + 0x90, 1, pgd_size, dec_iso_map) != (size_t)pgd_size;
++	if (fclose(dec_iso_map)) failed = true;
+ 	delete[] iso_map;
+-
++	if (failed) return -1;
++	printf("ISO disc map successfully decrypted! Saving as ISO_MAP.BIN...\n\n");
+ 	return 0;
+ }
+ 
+@@ -499,9 +418,11 @@
+ 	FILE* overdump = fopen("OVERDUMP.BIN", "wb");
+ 	// Open a new file to write the ISO image.
+ 	FILE* iso = fopen(iso_filename, "wb");
+-	if (iso == NULL)
++	if (iso == NULL || overdump == NULL)
+ 	{
+ 		printf("ERROR: Can't open output file for ISO!\n");
++		if (iso) fclose(iso);
++		if (overdump) fclose(overdump);
+ 		return -1;
+ 	}
+ 
+@@ -513,7 +434,7 @@
+ 	memset(entry, 0, sizeof(entry));
+ 
+ 	// Read the first entry.
+-	fread(entry, sizeof(ISO_ENTRY), 1, iso_table);
++	if (fread(entry, sizeof(ISO_ENTRY), 1, iso_table) != 1) { fclose(iso); fclose(overdump); return -1; }
+ 
+ 	// Keep reading entries until we reach the end of the table.
+ 	while (entry->size > 0)
+@@ -521,47 +442,50 @@
+ 		read_size += entry->size;
+ 		if (block_count % 100 == 0) printf(".");
+ 		// Locate the block offset in the DATA.PSAR.
+-		_fseeki64(psar, iso_offset + entry->offset, SEEK_SET);
+-		fread(iso_block_comp, entry->size, 1, psar);
++		if (entry->size > ISO_BLOCK_SIZE || _fseeki64(psar, iso_offset + entry->offset, SEEK_SET) ||
++			fread(iso_block_comp, entry->size, 1, psar) != 1) { fclose(iso); fclose(overdump); return -1; }
+ 
+ 		// Decompress if necessary.
+ 		if (entry->size < ISO_BLOCK_SIZE)   // Compressed.
+-			decompress(iso_block_decomp, iso_block_comp, ISO_BLOCK_SIZE);
++		{
++			if (decompress(iso_block_decomp, iso_block_comp, ISO_BLOCK_SIZE) != ISO_BLOCK_SIZE) { fclose(iso); fclose(overdump); return -1; }
++		}
+ 		else								// Not compressed.
+ 			memcpy(iso_block_decomp, iso_block_comp, ISO_BLOCK_SIZE);
+ 
+-		// trash and overdump generating
++		// Preserve the release executable's block-start scan (0x402af9).
++		// The source's sector-prefix arithmetic has signed-overflow UB;
++		// that search is absent from the release, not part of its output contract.
+ 		if (entry->marker == 0)
+ 		{
+-			int trash_start = 0, trash_size = 0;
+-			unsigned int sector;			
+-			do
++			size_t trash_size = 0;
++			while (trash_size + 4 <= ISO_BLOCK_SIZE &&
++			       memcmp(iso_block_decomp + trash_size, "\0\0\0\0", 4) != 0)
++				trash_size += 4;
++			if (trash_size == ISO_BLOCK_SIZE)
+ 			{
+-				// search for first non 00 FF FF FF
+-				sector = iso_block_decomp[trash_start] + 256 * (iso_block_decomp[trash_start + 1] + 256 * (iso_block_decomp[trash_start + 2] + 256 * iso_block_decomp[trash_start + 3]));
+-				trash_start = trash_start + SECTOR_SIZE;
+-			} while (sector == 0xFFFFFF00);
+-			trash_start = trash_start - SECTOR_SIZE;
+-			do
+-			{
+-				// search for first zero padding (4 bytes length)
+-				sector = iso_block_decomp[trash_start + trash_size] + 256 * (iso_block_decomp[trash_start + trash_size + 1] + 256 * (iso_block_decomp[trash_start + trash_size + 2] + 256 * iso_block_decomp[trash_start + trash_size + 3]));
+-				trash_size = trash_size + 4;
+-			} while (sector != 0);
+-			trash_size = trash_size - 4;
++				fprintf(stderr, "ERROR: Auxiliary block has no in-block zero terminator\n");
++				fclose(iso);
++				fclose(overdump);
++				return -1;
++			}
+ 			if (trash_size != 0)
+ 			{
++				// Keep the last nonempty prefix, matching release overwrite behavior.
+ 				FILE* trash = fopen("TRASH.BIN", "wb");
+-				fwrite(iso_block_decomp + trash_start, trash_size, 1, trash);
+-				fclose(trash);
+-				fwrite(iso_block_decomp + trash_start + trash_size, ISO_BLOCK_SIZE - trash_start - trash_size, 1, overdump);
++				if (!trash) { fclose(iso); fclose(overdump); return -1; }
++				bool failed = fwrite(iso_block_decomp, 1, trash_size, trash) != trash_size;
++				if (fclose(trash)) failed = true;
++				if (failed) { fclose(iso); fclose(overdump); return -1; }
+ 			}
+-			else
+-				fwrite(iso_block_decomp, ISO_BLOCK_SIZE, 1, overdump);
++			// Include the terminating zero word; an immediate zero appends the whole block.
++			const size_t overdump_size = ISO_BLOCK_SIZE - trash_size;
++			if (fwrite(iso_block_decomp + trash_size, 1, overdump_size, overdump) != overdump_size)
++			{ fclose(iso); fclose(overdump); return -1; }
+ 		}
+ 
+ 		// Write it to the output file.
+-		fwrite(iso_block_decomp, ISO_BLOCK_SIZE, 1, iso);
++		if (fwrite(iso_block_decomp, ISO_BLOCK_SIZE, 1, iso) != 1) { fclose(iso); fclose(overdump); return -1; }
+ 		block_count++;
+ 					
+ 		// Clear buffers.
+@@ -571,13 +495,14 @@
+ 		// Go to next entry.
+ 		table_offset += sizeof(ISO_ENTRY);
+ 		fseek(iso_table, table_offset, SEEK_SET);
+-		fread(entry, sizeof(ISO_ENTRY), 1, iso_table);
++		if (fread(entry, sizeof(ISO_ENTRY), 1, iso_table) != 1) { fclose(iso); fclose(overdump); return -1; }
+ 	}
+ 	printf("\n");
+ 	printf("Raw data track written to %s\n", iso_filename);
+-	fclose(overdump);
+-	fclose(iso);
+-	return 0;
++	bool failed = ferror(overdump) || ferror(iso);
++	if (fclose(overdump)) failed = true;
++	if (fclose(iso)) failed = true;
++	return failed ? -1 : 0;
+ }
+ 						             
+ unsigned int ROTR32(unsigned int v, int n)
+@@ -699,23 +624,45 @@
+ 
+ int get_track_size_from_cue(FILE *iso_table, int cue_offset)
+ {
+-	int cur_track_offset = extract_frames_from_cue(iso_table, cue_offset, 2);
+-	if (cur_track_offset < 0) {
+-		printf("ERROR: unable to get current track offset, aborting...\n");
+-		return -1;
+-	}
+-	int next_track_offset = extract_frames_from_cue(iso_table, cue_offset + sizeof(CUE_ENTRY), 2);
+-	if (next_track_offset < 0)
+-	{
+-		// get disc size to calculate last track, no gap after last track
+-		next_track_offset = extract_frames_from_cue(iso_table, CUE_LEADOUT_OFFSET, 0);
+-		if (next_track_offset < 0)
+-		{
+-			printf("ERROR: last track size calculation failed, aborting...\n");
+-			return -1;
+-		}
+-	}
+-	return next_track_offset - cur_track_offset;
++	// CUE records end where the CDDA table begins; track 99 has no next record.
++	if (iso_table == NULL || cue_offset < 0x41E ||
++		(cue_offset - 0x41E) % sizeof(CUE_ENTRY) != 0 ||
++		cue_offset > 0x800 - (int)sizeof(CUE_ENTRY))
++		return -1;
++	int offsets[3] = {cue_offset, cue_offset + (int)sizeof(CUE_ENTRY), CUE_LEADOUT_OFFSET};
++	int frames[3] = {-1, -1, -1};
++	for (int i = 0; i < 3; i++)
++	{
++		if (i == 1 && offsets[i] > 0x800 - (int)sizeof(CUE_ENTRY))
++			continue;
++		if (i == 2 && frames[1] >= 0)
++			break;
++		CUE_ENTRY entry;
++		if (fseek(iso_table, offsets[i], SEEK_SET) != 0 ||
++			fread(&entry, sizeof(entry), 1, iso_table) != 1)
++		{
++			printf("ERROR: Incomplete CUE record at %04x, aborting...\n", offsets[i]);
++			return -1;
++		}
++		if (entry.type == 0x01 || entry.type == 0x21 ||
++			entry.type == 0x41 || entry.type == 0x61)
++		{
++			int mm = 10 * (entry.I1m / 16) + entry.I1m % 16;
++			int ss = 10 * (entry.I1s / 16) + entry.I1s % 16 - (i == 2 ? 0 : 2);
++			int ff = 10 * (entry.I1f / 16) + entry.I1f % 16;
++			printf("Offset %dm:%ds:%df at %04x\n", mm, ss, ff, offsets[i]);
++			frames[i] = mm * 60 * 75 + ss * 75 + ff;
++		}
++		if (i == 0 && frames[i] < 0)
++			return -1;
++	}
++	int next_track_offset = frames[1] >= 0 ? frames[1] : frames[2];
++	if (next_track_offset < frames[0])
++	{
++		printf("ERROR: Invalid track length, aborting...\n");
++		return -1;
++	}
++	return next_track_offset - frames[0];
+ }
+ 
+ int data_track_sectors(FILE *iso_table)
+@@ -736,164 +683,171 @@
+ }
+ 
+ int build_audio_at3(FILE *psar, FILE *iso_table, int base_audio_offset, unsigned char *pgd_key, int disc_num, const PREGAP_OVERRIDE* pregap_override)
+-{	
+-	if ((psar == NULL) || (iso_table == NULL))
+-	{
+-		printf("ERROR: Can't open input files for extracting audio tracks!\n");
+-		return -1;
+-	}
++{
++	if (psar == NULL || iso_table == NULL || base_audio_offset < 0 ||
++		disc_num < 0 || disc_num > 99 ||
++		(pregap_override != NULL && pregap_override->num_tracks >
++			sizeof(pregap_override->timestamps) / sizeof(pregap_override->timestamps[0])))
++	{
++		printf("ERROR: Invalid input for extracting audio tracks!\n");
++		return -1;
++	}
++	if (_fseeki64(psar, 0, SEEK_END) != 0)
++		return -1;
++	const auto psar_size = _ftelli64(psar);
++	if (psar_size < 0)
++		return -1;
+ 	char track_filename[0x10];
+ 	int track_num = 1;
+-	
+-	AT3_HEADER at3_header[sizeof(AT3_HEADER)];
+-	CDDA_ENTRY audio_entry[sizeof(CDDA_ENTRY)];
+-	memset(audio_entry, 0, sizeof(audio_entry));
+-
+-	CUE_ENTRY cue_entry_cur[sizeof(CUE_ENTRY)];
+-	memset(cue_entry_cur, 0, sizeof(cue_entry_cur));
+-
+-	CUE_ENTRY cue_entry_next[sizeof(CUE_ENTRY)];
+-	memset(cue_entry_next, 0, sizeof(cue_entry_next));
+-
+-	// Read track 02
+ 	int cue_offset = 0x428;  // track 02 offset
+ 	int audio_offset = 0x800;  // Fixed audio table offset.
+-	
+-	fseek(iso_table, audio_offset, SEEK_SET);
+-	fread(audio_entry, sizeof(CDDA_ENTRY), 1, iso_table);
+-	if (audio_entry->offset == 0)
+-	{
+-		printf("There are no CDDA audio tracks, continuing...\n");
+-		return 0;
+-	}
+-	while (audio_entry->offset)
+-	{
++	for (;;)
++	{
++		CDDA_ENTRY audio_entry;
++		if (fseek(iso_table, audio_offset, SEEK_SET) != 0 ||
++			fread(&audio_entry, sizeof(audio_entry), 1, iso_table) != 1)
++		{
++			printf("ERROR: Incomplete CDDA table, aborting...\n");
++			return -1;
++		}
++		if (audio_entry.offset == 0)
++		{
++			if (track_num == 1)
++				printf("There are no CDDA audio tracks, continuing...\n");
++			return track_num - 1;
++		}
++		if (track_num >= 99)
++		{
++			printf("ERROR: Too many CDDA tracks, aborting...\n");
++			return -1;
++		}
+ 		track_num++;
+ 		int track_size = get_track_size_from_cue(iso_table, cue_offset);
+-
+-        if (pregap_override != NULL)
+-        {
+-            const TIMESTAMP* curr_t = &pregap_override->timestamps[track_num - 2];
+-            int curr_pregap = (curr_t->mm * 60 + curr_t->ss) * 75 + curr_t->ff;
+-            if ((size_t)(track_num - 1) < pregap_override->num_tracks)
+-            {
+-                printf("checking pregap override\n");
+-                // check if the pregap of the next track is less than 2
+-                const TIMESTAMP* next_t = &pregap_override->timestamps[track_num - 1];
+-                int next_pregap = (next_t->mm * 60 + next_t->ss) * 75 + next_t->ff;
+-                if (next_pregap < GAP_FRAMES && curr_pregap >= GAP_FRAMES)
+-                {
+-                    printf("Track needs additional padding due to short pregap on following track\n");
+-                    track_size += (GAP_FRAMES - next_pregap);
+-                }
+-            }
+-            else  // last track
+-            {
+-                if (curr_pregap < GAP_FRAMES)
+-                {
+-                    printf("Truncating last track by %d frames\n", (GAP_FRAMES - curr_pregap));
+-                    track_size -= (GAP_FRAMES - curr_pregap);
+-                }
+-            }
+-        }
+ 		if (track_size < 0)
+-		{
+-			printf("ERROR: retrieving offset for track %d, aborting...\n", track_num);
+-			return -1;
+-		}
+-		
+-		// Locate the block offset in the DATA.PSAR.
+-		printf("seeking to %x + %x (%x)\n", base_audio_offset, audio_entry->offset, base_audio_offset + audio_entry->offset);
+-		fseek(psar, base_audio_offset + audio_entry->offset, SEEK_SET);
+-
+-		// Read the data.
+-		unsigned char *track_data = new unsigned char[audio_entry->size + NBYTES];
+-		fread(track_data, audio_entry->size + NBYTES, 1, psar);
+-		
+-		
+-		// Store the decrypted track data.
+-		// Open a new file to write the track image with AT3 header
++			return -1;
++		if (pregap_override != NULL)
++		{
++			if ((size_t)(track_num - 2) >= pregap_override->num_tracks)
++			{
++				printf("ERROR: Missing pregap override for track %d\n", track_num);
++				return -1;
++			}
++			const TIMESTAMP* curr_t = &pregap_override->timestamps[track_num - 2];
++			int64_t curr_pregap = ((int64_t)curr_t->mm * 60 + curr_t->ss) * 75 + curr_t->ff;
++			if (curr_pregap < 0 || curr_pregap > INT_MAX / SECTOR_SIZE)
++				return -1;
++			if ((size_t)(track_num - 1) < pregap_override->num_tracks)
++			{
++				const TIMESTAMP* next_t = &pregap_override->timestamps[track_num - 1];
++				int64_t next_pregap = ((int64_t)next_t->mm * 60 + next_t->ss) * 75 + next_t->ff;
++				if (next_pregap < 0 || next_pregap > INT_MAX / SECTOR_SIZE)
++					return -1;
++				if (next_pregap < GAP_FRAMES && curr_pregap >= GAP_FRAMES)
++				{
++					printf("Track needs additional padding due to short pregap on following track\n");
++					track_size += (GAP_FRAMES - next_pregap);
++				}
++			}
++			else if (curr_pregap < GAP_FRAMES)
++			{
++				printf("Truncating last track by %d frames\n", (int)(GAP_FRAMES - curr_pregap));
++				track_size -= (GAP_FRAMES - curr_pregap);
++			}
++		}
++		if (track_size < 0 || track_size > INT_MAX / SECTOR_SIZE)
++		{
++			printf("ERROR: Invalid size for track %d, aborting...\n", track_num);
++			return -1;
++		}
++		const uint64_t source_offset = (uint64_t)base_audio_offset + audio_entry.offset;
++		const uint64_t source_size = (uint64_t)audio_entry.size + NBYTES;
++		if (audio_entry.size > UINT32_MAX - (sizeof(AT3_HEADER) - 8) ||
++			source_size > SIZE_MAX || source_offset > (uint64_t)psar_size ||
++			source_size > (uint64_t)psar_size - source_offset ||
++			_fseeki64(psar, source_offset, SEEK_SET) != 0)
++		{
++			printf("ERROR: Audio track %d exceeds source bounds, aborting...\n", track_num);
++			return -1;
++		}
++		unsigned char* track_data = (unsigned char*)malloc((size_t)source_size);
++		if (track_data == NULL)
++			return -1;
++		if (fread(track_data, 1, (size_t)source_size, psar) != source_size)
++		{
++			printf("ERROR: Incomplete source for audio track %d, aborting...\n", track_num);
++			free(track_data);
++			return -1;
++		}
+ 		audio_file_name(track_filename, disc_num, track_num, (char*)"AT3");
+ 		FILE* track = fopen(track_filename, "wb");
+ 		if (track == NULL)
+ 		{
+ 			printf("ERROR: Can't open output file for audio track %d!\n", track_num);
+-			return -1;
+-		}
+-
+-		printf("Extracting audio track %d (%d sectors, %d bytes)\n", track_num, track_size, audio_entry->size + NBYTES);
+-		
+-		unscramble_atrac_data(track_data, audio_entry);
+-		
+-		fill_at3_header(at3_header, audio_entry, track_size);
+-
+-		fwrite(at3_header, sizeof(AT3_HEADER), 1, track);
+-		fwrite(track_data, audio_entry->size, 1, track);
+-		
+-		fclose(track);
+-		delete[] track_data;
+-		
++			free(track_data);
++			return -1;
++		}
++		printf("Extracting audio track %d (%d sectors, %llu bytes)\n",
++			track_num, track_size, (unsigned long long)source_size);
++		unscramble_atrac_data(track_data, &audio_entry);
++		AT3_HEADER at3_header;
++		fill_at3_header(&at3_header, &audio_entry, track_size);
++		bool complete = fwrite(&at3_header, sizeof(at3_header), 1, track) == 1 &&
++			fwrite(track_data, 1, audio_entry.size, track) == audio_entry.size;
++		if (fclose(track) != 0)
++			complete = false;
++		free(track_data);
++		if (!complete)
++		{
++			printf("ERROR: Failed to write audio track %d, aborting...\n", track_num);
++			remove(track_filename);
++			return -1;
++		}
+ 		audio_offset += sizeof(CDDA_ENTRY);
+ 		cue_offset += sizeof(CUE_ENTRY);
+-		// Go to next entry.
+-		fseek(iso_table, audio_offset, SEEK_SET);
+-		fread(audio_entry, sizeof(CDDA_ENTRY), 1, iso_table);
+-	}
+-	return track_num - 1;
++	}
+ }
+ 
+ int convert_at3_to_wav(int disc_num, int num_tracks)
+ {
++	if (disc_num < 0 || disc_num > 99 || num_tracks < 0 || num_tracks > 98)
++		return -1;
+ 	if (num_tracks > 0)
+ 		printf("\nAttempting to convert from ATRAC3 to WAV, this may take awhile...\n\n");
+-	
+-	// Find ATRAC3 driver once for all conversions (we know it's available at this point)
+-	HACMDRIVERID at3hadid = nullptr;
+-	findAt3Driver(&at3hadid);
+-	
+ 	for (int i = 2; i <= num_tracks + 1; i++)
+ 	{
+ 		char at3_filename[0x10];
+ 		audio_file_name(at3_filename, disc_num, i, (char*)"AT3");
+-		struct stat st;
+-		if (stat(at3_filename, &st) != 0 || st.st_size == 0)
+-		{
+-			printf("%s doesn't exist or empty, aborting...\n", at3_filename);
+-			return -1;
+-		}
+-
++		FILE* at3_file = fopen(at3_filename, "rb");
++		if (at3_file == NULL)
++		{
++			printf("ERROR: Can't open %s for verification, aborting...\n", at3_filename);
++			return -1;
++		}
++		AT3_HEADER at3_header;
++		bool complete = fread(&at3_header, sizeof(at3_header), 1, at3_file) == 1;
++		if (fclose(at3_file) != 0)
++			complete = false;
++		if (!complete)
++		{
++			printf("ERROR: Incomplete AT3 header in %s, aborting...\n", at3_filename);
++			return -1;
++		}
+ 		char wav_filename[0x10];
+ 		audio_file_name(wav_filename, disc_num, i, (char*)"WAV");
+-
+-		printf("Converting %s to %s using ATRAC3 ACM...\n", at3_filename, wav_filename);
+-		int conversion_result = convertAt3ToWav(at3_filename, wav_filename, at3hadid);
+-		if (conversion_result != 0)
+-		{
+-			printf("ERROR: Failed to convert %s using ATRAC3 ACM\n", at3_filename);
+-			return -1;
+-		}
+-		if (stat(wav_filename, &st) != 0 || st.st_size <= 44)
+-		{
+-			printf("%s failed to convert, ignoring audio tracks...\n", wav_filename);
+-			return -1;
+-		}
+-		if (stat(wav_filename, &st) == 0)
+-		{
+-			FILE* at3_file = fopen(at3_filename, "rb");
+-			if (at3_file == NULL)
+-			{
+-				printf("ERROR: Can't open %s for verification, aborting...\n", at3_filename);
+-				return -1;
+-			}
+-			AT3_HEADER at3_header[sizeof(AT3_HEADER)];
+-			fread(at3_header, sizeof(AT3_HEADER), 1, at3_file);
+-			printf("%s created with size %ld (expected %d)...\n", wav_filename, st.st_size, 44 + at3_header->fact_param1 * 4);
+-			fclose(at3_file);
+-		}
+-		else
+-			printf("Unable to open %s for verification...\n", wav_filename);
+-		printf("\n");
+-
++		printf("Converting %s to %s using native libavcodec ATRAC3...\n", at3_filename, wav_filename);
++		if (decode_atrac3(at3_filename, wav_filename) != 0)
++		{
++			printf("ERROR: Failed to convert %s using native libavcodec ATRAC3\n", at3_filename);
++			return -1;
++		}
++		struct stat st;
++		if (stat(wav_filename, &st) != 0 || st.st_size <= 46)
++		{
++			printf("ERROR: %s failed to convert, aborting...\n", wav_filename);
++			return -1;
++		}
++		printf("%s created with size %lld (expected %llu)...\n\n", wav_filename,
++			(long long)st.st_size, 44ULL + (uint64_t)at3_header.fact_param1 * 4);
+ 	}
+ 	return num_tracks;
+ }
+@@ -928,145 +882,157 @@
+ // length.
+ int convert_wav_to_bin(int data_gap, int disc_num, int num_tracks, const PREGAP_OVERRIDE* pregap_override)
+ {
++	if (disc_num < 0 || disc_num > 99 || num_tracks < 0 || num_tracks > 98 ||
++		(pregap_override != NULL && pregap_override->num_tracks >
++			sizeof(pregap_override->timestamps) / sizeof(pregap_override->timestamps[0])))
++		return -1;
+ 	printf("\nAttempting to convert WAV audio to BIN...\n\n");
+ 	for (int i = 2; i <= num_tracks + 1; i++)
+ 	{
++		char at3_filename[0x10];
++		audio_file_name(at3_filename, disc_num, i, (char*)"AT3");
++		FILE* at3_file = fopen(at3_filename, "rb");
++		if (at3_file == NULL)
++		{
++			printf("ERROR: Can't open %s, aborting...\n", at3_filename);
++			return -1;
++		}
++		AT3_HEADER at3_header;
++		bool complete = fread(&at3_header, sizeof(at3_header), 1, at3_file) == 1;
++		if (fclose(at3_file) != 0)
++			complete = false;
++		if (!complete || at3_header.fact_param1 > INT_MAX / 4)
++		{
++			printf("ERROR: Incomplete or oversized AT3 header in %s, aborting...\n", at3_filename);
++			return -1;
++		}
++		int expected_size = at3_header.fact_param1 * 4;
++		int64_t gap_frames = GAP_FRAMES;
++		if (pregap_override != NULL && (size_t)(i - 2) < pregap_override->num_tracks)
++		{
++			const TIMESTAMP* t = &pregap_override->timestamps[i - 2];
++			printf("Overriding pregap with %02d:%02d:%02d\n", t->mm, t->ss, t->ff);
++			gap_frames = ((int64_t)t->mm * 60 + t->ss) * 75 + t->ff;
++		}
++		int64_t pregap_bytes = (((i == 2) ? data_gap : gap_frames) - 1) * SECTOR_SIZE;
++		if (pregap_bytes <= 0 || pregap_bytes > INT_MAX)
++			return -1;
++		int pregap_size = (int)pregap_bytes;
++		int target_track_size = expected_size;
++		int cue_track_size = 0;
++		if (pregap_override != NULL && (size_t)(i - 2) < pregap_override->num_tracks)
++		{
++			const TIMESTAMP* expected_length = &pregap_override->track_lengths[i - 2];
++			int64_t expected_frames = ((int64_t)expected_length->mm * 60 + expected_length->ss) * 75 + expected_length->ff;
++			if (expected_frames < 0 || expected_frames > INT_MAX / SECTOR_SIZE)
++				return -1;
++			cue_track_size = expected_frames * SECTOR_SIZE;
++			// Only use CUE size if it's reasonable (not 0 or too small).
++			if (cue_track_size > pregap_size)
++				target_track_size = cue_track_size;
++		}
++		if (target_track_size < pregap_size)
++			return -1;
++		int data_size = target_track_size - pregap_size;
+ 		char wav_filename[0x10];
+ 		audio_file_name(wav_filename, disc_num, i, (char*)"WAV");
+-		struct stat st;
+-		if (stat(wav_filename, &st) != 0 || st.st_size == 0)
+-		{
+-			printf("%s doesn't exist or empty, aborting...\n", wav_filename);
+-			return -1;
+-		}
+ 		FILE* wav_file = fopen(wav_filename, "rb");
+ 		if (wav_file == NULL)
+ 		{
+ 			printf("ERROR: Can't open %s, aborting...\n", wav_filename);
+ 			return -1;
+ 		}
+-
+-		fseek(wav_file, 0, SEEK_END);
+-		long wav_size = ftell(wav_file);
+-		fseek(wav_file, wav_size - GAP_SIZE, SEEK_SET);
+-
++		// Native ACM-compatible WAVs have an 18-byte fmt chunk. Check their
++		// complete payload, but retain the original reconstruction offset of 44.
++		unsigned char wav_header[46];
++		complete = fread(wav_header, 1, sizeof(wav_header), wav_file) == sizeof(wav_header) &&
++			_fseeki64(wav_file, 0, SEEK_END) == 0;
++		const auto wav_size = complete ? _ftelli64(wav_file) : -1;
++		uint32_t pcm_size = 0;
++		if (complete)
++			memcpy(&pcm_size, wav_header + 42, sizeof(pcm_size));
++		if (!complete || wav_size <= 46 || wav_size - 44 > INT_MAX ||
++			(uint64_t)wav_size != (uint64_t)pcm_size + sizeof(wav_header) ||
++			memcmp(wav_header, "RIFF", 4) != 0 ||
++			memcmp(wav_header + 8, "WAVEfmt ", 8) != 0 ||
++			memcmp(wav_header + 38, "data", 4) != 0 ||
++			fseek(wav_file, 44, SEEK_SET) != 0)
++		{
++			printf("ERROR: Incomplete native WAV in %s, aborting...\n", wav_filename);
++			fclose(wav_file);
++			return -1;
++		}
++		int max_wav_data = wav_size - 44;
++		int read_size = (data_size > max_wav_data) ? max_wav_data : data_size;
++		if (data_size > max_wav_data)
++			printf("Warning: Need %d bytes but WAV only has %d, will use available data and pad\n", data_size, max_wav_data);
++		unsigned char* audio_data = read_size ? (unsigned char*)malloc(read_size) : NULL;
++		if (read_size && (audio_data == NULL ||
++			fread(audio_data, 1, read_size, wav_file) != (size_t)read_size))
++		{
++			printf("ERROR: Can't read WAV audio data, aborting...\n");
++			free(audio_data);
++			fclose(wav_file);
++			return -1;
++		}
++		if (fclose(wav_file) != 0)
++		{
++			free(audio_data);
++			return -1;
++		}
+ 		char bin_filename[0x10];
+ 		audio_file_name(bin_filename, disc_num, i, (char*)"BIN");
+ 		FILE* bin_file = fopen(bin_filename, "wb");
+ 		if (bin_file == NULL)
+ 		{
+ 			printf("ERROR: Can't open %s, aborting...\n", bin_filename);
+-			fclose(wav_file);
+-			return -1;
+-		}
+-
+-		// grab the expected size from the AT3 header
+-		long expected_size = -1;
+-		char at3_filename[0x10];
+-		audio_file_name(at3_filename, disc_num, i, (char*)"AT3");
+-		FILE* at3_file = fopen(at3_filename, "rb");
+-		if (at3_file != NULL)
+-		{
+-			AT3_HEADER at3_header[sizeof(AT3_HEADER)];
+-			fread(at3_header, sizeof(AT3_HEADER), 1, at3_file);
+-			expected_size = at3_header->fact_param1 * 4;
+-		}
+-		else
+-			printf("WARNING: Can't open %s, skipping padding step...\n", at3_filename);
+-        int gap_frames = GAP_FRAMES;
+-        if (pregap_override != NULL && i >= 2 && i - 2 < pregap_override->num_tracks)
+-        {
+-            // check if the pregap for this track gets an override
+-            const TIMESTAMP* t = &pregap_override->timestamps[i - 2];
+-            printf("Overriding pregap with %02d:%02d:%02d\n", t->mm, t->ss, t->ff);
+-            gap_frames = (t->mm * 60 + t->ss) * 75 + t->ff;
+-        }
+-        
+-		int pregap_size = (((i == 2) ? data_gap : gap_frames) - 1) * SECTOR_SIZE;
+-
++			free(audio_data);
++			return -1;
++		}
+ 		char zero = '\0';
+ 		printf("Adding gap %d bytes...\n", pregap_size);
+-		fseek(bin_file, pregap_size - 1, SEEK_SET);
+-		fwrite(&zero, 1, 1, bin_file);
+-
+-		fseek(wav_file, 44, SEEK_SET);  // skip the WAVE header
+-		
+-		// Calculate target track size from CUE file if available
+-		int target_track_size = expected_size;
+-		if (pregap_override != NULL && i - 2 < pregap_override->num_tracks)
+-		{
+-			const TIMESTAMP* expected_length = &pregap_override->track_lengths[i - 2];
+-			int expected_frames = expected_length->mm * 60 * 75 + expected_length->ss * 75 + expected_length->ff;
+-			int cue_track_size = expected_frames * SECTOR_SIZE;
+-			
+-			// Only use CUE size if it's reasonable (not 0 or too small)
+-			if (cue_track_size > pregap_size) {
+-				target_track_size = cue_track_size;
+-			}
+-		}
+-		
+-		// Calculate audio data size to reach target track size
+-		int data_size = target_track_size - pregap_size;
+-		
+-		// Ensure we don't read more than available in WAV file
+-		int max_wav_data = wav_size - 44;
+-		if (data_size > max_wav_data) {
+-			printf("Warning: Need %d bytes but WAV only has %d, will use available data and pad\n", data_size, max_wav_data);
+-			// We'll read all available data and pad the rest
+-		}
+-
+-		// Read available WAV data
+-		int read_size = (data_size > max_wav_data) ? max_wav_data : data_size;
+-		unsigned char* audio_data = (unsigned char*)malloc(read_size);
+-		if (audio_data == NULL) {
+-			printf("Unable to allocated audio data size %d, aborting...\n", read_size);
+-			if (at3_file != NULL) fclose(at3_file);
+-			fclose(bin_file);
+-			fclose(wav_file);
+-			return -1;
+-		}
+-		
+-		fread(audio_data, read_size, 1, wav_file);
+-		fwrite(audio_data, read_size, 1, bin_file);
++		complete = fseek(bin_file, pregap_size - 1, SEEK_SET) == 0 &&
++			fwrite(&zero, 1, 1, bin_file) == 1;
++		if (complete && read_size)
++			complete = fwrite(audio_data, 1, read_size, bin_file) == (size_t)read_size;
+ 		free(audio_data);
+-		
+-		// Pad the rest if needed
+-		if (data_size > read_size) {
++		if (complete && data_size > read_size)
++		{
+ 			int padding_needed = data_size - read_size;
+ 			printf("Padding track %d with %d bytes to reach expected length\n", i, padding_needed);
+ 			unsigned char* padding = (unsigned char*)calloc(padding_needed, 1);
+-			if (padding != NULL) {
+-				fwrite(padding, padding_needed, 1, bin_file);
+-				free(padding);
+-			}
+-		}
+-
+-		fseek(bin_file, 0, SEEK_END);
+-		long file_size = ftell(bin_file);
+-		if (file_size < expected_size)
++			complete = padding != NULL &&
++				fwrite(padding, 1, padding_needed, bin_file) == (size_t)padding_needed;
++			free(padding);
++		}
++		if (complete)
++			complete = fseek(bin_file, 0, SEEK_END) == 0;
++		long file_size = complete ? ftell(bin_file) : -1;
++		if (file_size < 0)
++			complete = false;
++		if (complete && file_size < expected_size)
+ 		{
+ 			printf("Padding track %d with additional %ld bytes\n", i, expected_size - file_size);
+-			long new_pos = expected_size - 1;
+-			fseek(bin_file, new_pos, SEEK_SET);
+-			(void)fwrite(&zero, 1, 1, bin_file);  // suppress unused variable warning
+-		}
+-
+-		fclose(at3_file);
+-		fclose(wav_file);
+-		fclose(bin_file);
+-		
+-		// Verify track length against CUE file expectation
+-		if (pregap_override != NULL && i - 2 < pregap_override->num_tracks)
++			complete = fseek(bin_file, expected_size - 1, SEEK_SET) == 0 &&
++				fwrite(&zero, 1, 1, bin_file) == 1;
++			file_size = expected_size;
++		}
++		if (fclose(bin_file) != 0)
++			complete = false;
++		if (!complete)
++		{
++			printf("ERROR: Failed to write %s, aborting...\n", bin_filename);
++			remove(bin_filename);
++			return -1;
++		}
++		if (pregap_override != NULL && (size_t)(i - 2) < pregap_override->num_tracks)
+ 		{
+ 			const TIMESTAMP* expected_length = &pregap_override->track_lengths[i - 2];
+-			int expected_frames = expected_length->mm * 60 * 75 + expected_length->ss * 75 + expected_length->ff;
+-			int expected_bytes = expected_frames * SECTOR_SIZE;
+-			
+ 			printf("Track %d length verification:\n", i);
+-			printf("  Expected: %02d:%02d:%02d (%d bytes)\n", 
+-				   expected_length->mm, expected_length->ss, expected_length->ff, expected_bytes);
++			printf("  Expected: %02d:%02d:%02d (%d bytes)\n",
++				expected_length->mm, expected_length->ss, expected_length->ff, cue_track_size);
+ 			printf("  Actual:   %ld bytes\n", file_size);
+-			printf("  Result:   %s\n", (file_size == expected_bytes) ? "PASS" : "FAIL");
++			printf("  Result:   %s\n", (file_size == cue_track_size) ? "PASS" : "FAIL");
+ 		}
+ 	}
+ 	return num_tracks;
+@@ -1136,7 +1102,7 @@
+ 	return gap;
+ }
+ 
+-int build_bin_cue(FILE *iso_table, char *data_fixed_file_path, char *cdrom_file_name, char *cue_file_name, char *iso_disc_name, int disc_num, int data_gap, const PREGAP_OVERRIDE *pregap_override
++int build_bin_cue(FILE *iso_table, char *data_fixed_file_path, char *cdrom_file_name, char *cue_file_name, char *iso_disc_name, int disc_num, int data_gap, const PREGAP_OVERRIDE *pregap_override, int num_audio_tracks
+ )
+ {
+ 	char cdrom_file_path[256];
+@@ -1195,27 +1161,17 @@
+ 	fseek(iso_table, cue_offset, SEEK_SET);
+ 	fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
+ 	int track_num = 2;
+-	while (cue_entry->type)
++	while (cue_entry->type && track_num <= num_audio_tracks + 1)
+ 	{
+ 		char track_filename[0x10];
+ 		audio_file_name(track_filename, disc_num, track_num, (char*)"BIN");
+ 		int audio_track_size = copy_track_to_iso(bin_file, track_filename, track_num);
+ 		if (audio_track_size < 0)
+ 		{
+-			// If audio track copy failed on track 2 just bail and generate valid cue for the data track.
+-			// This is mainly a workaround for RE2 EBOOT having audio track pointers but no audio tracks
+-			if (track_num == 2)
+-			{
+-				printf("Proceeding to generate CUE file without audio tracks\n");
+-				break;
+-			}
+-			else
+-			{
+-				printf("ERROR: failed to copy track %d to CDROM.BIN, aborting...\n", track_num);
+-				fclose(cue_file);
+-				fclose(bin_file);
+-				return -1;
+-			}
++			printf("ERROR: failed to copy track %d to CDROM.BIN, aborting...\n", track_num);
++			fclose(cue_file);
++			fclose(bin_file);
++			return -1;
+ 		}
+ 
+ 		int ff1, ss1, mm1, mm0, ss0, ff0;
+@@ -1260,10 +1216,10 @@
+ 		track_num++;
+ 	}
+ 
+-	fclose(cue_file);
+-	fclose(bin_file);
+-
+-	return 0;
++	bool failed = ferror(cue_file) || ferror(bin_file);
++	if (fclose(cue_file)) failed = true;
++	if (fclose(bin_file)) failed = true;
++	return failed ? -1 : 0;
+ }
+ 
+ int extract_and_convert_audio(FILE *psar, FILE *iso_table, int base_audio_offset, unsigned char *pgd_key, int disc_num, int data_gap, const PREGAP_OVERRIDE* pregap_override)
+@@ -1277,30 +1233,9 @@
+ 	else if (num_tracks > 0)
+ 		printf("%d audio tracks extracted to ATRAC3\n", num_tracks);
+ 
+-	// Check for ATRAC3 driver availability before attempting conversion
+-	if (num_tracks > 0) {
+-		// psxtract_main() is the shared conversion path for every mode - direct
+-		// command-line runs AND the child process the GUI spawns per extraction.
+-		// Register the bundled ATRAC3 codec here so it is available regardless of
+-		// how we were launched (per-process registration does not cross the GUI
+-		// parent -> child boundary, so registering in the GUI alone is not enough).
+-		registerBundledAtrac3Codec();
+-
+-		HACMDRIVERID at3hadid = nullptr;
+-		findAt3Driver(&at3hadid);
+-		if (!at3hadid) {
+-			printf("WARNING: ATRAC3 codec not available - skipping audio conversion\n");
+-			printf("Audio tracks remain as ATRAC3 files (*.AT3)\n\n");
+-			num_tracks = 0; // Set to 0 so we skip WAV to BIN conversion too
+-		} else {
+-			if (convert_at3_to_wav(disc_num, num_tracks) < 0)
+-			{
+-				printf("ATRAC3 to WAV conversion failed!\n\n");
+-				return 0;
+-			}
+-			else
+-				printf("%d audio tracks converted to WAV\n", num_tracks);
+-		}
++	if (num_tracks > 0 && convert_at3_to_wav(disc_num, num_tracks) < 0) {
++		printf("ERROR: ATRAC3 audio conversion failed!\n");
++		return -1;
+ 	}
+ 
+ 	if (num_tracks > 0) {
+@@ -1745,7 +1680,7 @@
+     }
+     
+     // Open destination CUE file
+-    FILE* dest_cue = fopen(output_cue_path, "w");
++    FILE* dest_cue = fopen(output_cue_path, "wb");
+     if (dest_cue == NULL)
+     {
+         printf("ERROR: Could not create output CUE file %s\n", output_cue_path);
+@@ -1772,17 +1707,19 @@
+         if (strncmp(trimmed, "FILE ", 5) == 0)
+         {
+             // Replace with our BIN filename (lowercase .bin extension)
+-            fprintf(dest_cue, "FILE \"%s.bin\" BINARY\n", output_bin_name);
++            fprintf(dest_cue, "FILE \"%s.bin\" BINARY\r\n", output_bin_name);
+         }
+         else
+         {
+             // Copy the line as-is
+-            fprintf(dest_cue, "%s\n", line);
++            fprintf(dest_cue, "%s\r\n", line);
+         }
+     }
+     
+     free_cue_resource(cue_data);
+-    fclose(dest_cue);
++    bool cue_failed = ferror(dest_cue);
++    if (fclose(dest_cue)) cue_failed = true;
++    if (cue_failed) return -1;
+     
+     printf("Copied prebaked CUE file to %s\n", output_cue_path);
+     return 0;
+@@ -1866,27 +1803,46 @@
+ 
+ 	// Seek inside the ISO table to find the special data offset.
+ 	int special_data_offset;
+-	fseek(iso_table, 0xE20, SEEK_SET);  // Always at 0xE20.
+-	fread(&special_data_offset, sizeof(special_data_offset), 1, iso_table);
++	if (fseek(iso_table, 0xE20, SEEK_SET) != 0 ||
++	    fread(&special_data_offset, sizeof(special_data_offset), 1, iso_table) != 1)
++	{
++		fclose(iso_table);
++		return -1;
++	}
+ 
+ 	// Decrypt the special data if it's present.
+ 	// NOTE: Special data is normally a PNG file with an intro screen of the game.
+-	decrypt_special_data(psar, psar_size, special_data_offset);
++	if (decrypt_special_data(psar, psar_size, special_data_offset) < 0)
++	{
++		fclose(iso_table);
++		return -1;
++	}
+ 
+ 	// Seek inside the ISO table to find the unknown data offset.
+ 	int unknown_data_offset;
+-	fseek(iso_table, 0xED4, SEEK_SET);  // Always at 0xED4.
+-	fread(&unknown_data_offset, sizeof(unknown_data_offset), 1, iso_table);
++	if (fseek(iso_table, 0xED4, SEEK_SET) != 0 ||
++	    fread(&unknown_data_offset, sizeof(unknown_data_offset), 1, iso_table) != 1)
++	{
++		fclose(iso_table);
++		return -1;
++	}
+ 
+ 	// Decrypt the unknown data if it's present.
+ 	// NOTE: Unknown data is a binary chunk with unknown purpose (memory snapshot?).
+-	if (startdat_offset > 0)
+-		decrypt_unknown_data(psar, unknown_data_offset, startdat_offset);
++	if (decrypt_unknown_data(psar, unknown_data_offset, startdat_offset) < 0)
++	{
++		fclose(iso_table);
++		return -1;
++	}
+ 
+ 	// Build the data track image.
+ 	printf("Building the data track...\n");
+ 	if (build_data_track(psar, iso_table, 0, 0) < 0)
++	{
+ 		printf("ERROR: Failed to reconstruct the data track!\n");
++		fclose(iso_table);
++		return -1;
++	}
+ 	else
+ 		printf("Data track successfully reconstructed!\n");
+ 
+@@ -1913,7 +1869,8 @@
+     }
+ 
+ 	// Handle audio tracks
+-	if (extract_and_convert_audio(psar, iso_table, ISO_BASE_OFFSET, pgd_key, 1, data_gap, pregap_override) < 0)
++	const int num_audio_tracks = extract_and_convert_audio(psar, iso_table, ISO_BASE_OFFSET, pgd_key, 1, data_gap, pregap_override);
++	if (num_audio_tracks < 0)
+ 	{
+ 		printf("ERROR: extract and convert audio failed, aborting...\n");
+ 		fclose(iso_table);
+@@ -1982,26 +1939,17 @@
+ 		fseek(iso_table, cue_offset, SEEK_SET);
+ 		fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
+ 		
+-		while (cue_entry->type)
++		while (cue_entry->type && track_num <= num_audio_tracks + 1)
+ 		{
+ 			char track_filename[0x10];
+ 			audio_file_name(track_filename, 1, track_num, (char*)"BIN");
+ 			int audio_track_size = copy_track_to_iso(bin_file, track_filename, track_num);
+ 			if (audio_track_size < 0)
+ 			{
+-				// If audio track copy failed on track 2 just bail
+-				if (track_num == 2)
+-				{
+-					printf("Proceeding without audio tracks\n");
+-					break;
+-				}
+-				else
+-				{
+-					printf("ERROR: failed to copy track %d to %s, aborting...\n", track_num, output_bin_name);
+-					fclose(bin_file);
+-					fclose(iso_table);
+-					return -1;
+-				}
++				printf("ERROR: failed to copy track %d to %s, aborting...\n", track_num, output_bin_name);
++				fclose(bin_file);
++				fclose(iso_table);
++				return -1;
+ 			}
+ 			
+ 			cue_offset += sizeof(CUE_ENTRY);
+@@ -2011,7 +1959,7 @@
+ 			track_num++;
+ 		}
+ 		
+-		fclose(bin_file);
++		if (fclose(bin_file)) { fclose(iso_table); return -1; }
+ 		
+ 		// Copy the prebaked CUE file
+ 		if (copy_prebaked_cue_file(iso_disc_name, game_title, game_title) < 0)
+@@ -2031,7 +1979,7 @@
+ 	else
+ 	{
+ 		// Generate CUE file normally
+-		if (build_bin_cue(iso_table, data_bin_fixed, output_bin_name, output_cue_name, iso_disc_name, 1, data_gap, pregap_override))
++		if (build_bin_cue(iso_table, data_bin_fixed, output_bin_name, output_cue_name, iso_disc_name, 1, data_gap, pregap_override, num_audio_tracks))
+ 		{
+ 			printf("ERROR: Failed to convert to BIN/CUE!\n");
+ 			fclose(iso_table);
+@@ -2055,8 +2003,8 @@
+ 	// Decrypt the multidisc ISO map header and get the disc map.
+ 	// NOTE: The ISO map header is located at offset 0x200 and 
+ 	// has a length of 0x2A0 (0x200 of real size + 0xA0 for the PGD header).
+-	if (decrypt_iso_map(psar, 0x200, 0x2A0, pgd_key))
+-		printf("Aborting...\n");
++	if (decrypt_iso_map(psar, 0x200, 0x2A0, pgd_key) < 0)
++		return -1;
+ 
+ 	// Re-open in read mode (just to be safe).
+ 	FILE* iso_map = fopen("ISO_MAP.BIN", "rb");
+@@ -2076,8 +2024,11 @@
+ 
+ 	// Get the discs' offsets.
+ 	unsigned int disc_offset[5];
+-	for (int i = 0; i < 5; i++)
+-		fread(&disc_offset[i], sizeof(int), 1, iso_map);
++	if (fread(disc_offset, sizeof(disc_offset), 1, iso_map) != 1)
++	{
++		fclose(iso_map);
++		return -1;
++	}
+ 
+ 	// Get the disc collection ID and title (UTF-8).
+ 	char iso_title[0x80];
+@@ -2095,12 +2046,20 @@
+ 
+ 	// Seek inside the ISO map to find the special data offset.
+ 	int special_data_offset;
+-	fseek(iso_map, 0x84, SEEK_SET);  // Always at 0x84 (after disc ID space).
+-	fread(&special_data_offset, sizeof(special_data_offset), 1, iso_map);
++	if (fseek(iso_map, 0x84, SEEK_SET) != 0 ||
++	    fread(&special_data_offset, sizeof(special_data_offset), 1, iso_map) != 1)
++	{
++		fclose(iso_map);
++		return -1;
++	}
+ 
+ 	// Decrypt the special data if it's present.
+ 	// NOTE: Special data is normally a PNG file with an intro screen of the game.
+-	decrypt_special_data(psar, psar_size, special_data_offset);
++	if (decrypt_special_data(psar, psar_size, special_data_offset) < 0)
++	{
++		fclose(iso_map);
++		return -1;
++	}
+ 
+ 	// Build each valid ISO image.
+ 	int disc_count = 0;
+@@ -2111,7 +2070,7 @@
+ 		{
+ 			// Decrypt the ISO header and get the block table.
+ 			// NOTE: In multidisc, the ISO header is located at the disc offset + 0x400 bytes. 
+-			if (decrypt_iso_header(psar, disc_offset[i] + ISO_HEADER_OFFSET, pgd_key, i + 1) < 0)
++			if (decrypt_iso_header(psar, (int64_t)disc_offset[i] + ISO_HEADER_OFFSET, pgd_key, i + 1) < 0)
+ 			{
+ 				fclose(iso_map);
+ 				return -1;
+@@ -2123,6 +2082,7 @@
+ 			if (iso_table == NULL)
+ 			{
+ 				printf("ERROR: No decrypted ISO header found!\n");
++				fclose(iso_map);
+ 				return -1;
+ 			}
+ 
+@@ -2190,13 +2150,17 @@
+ 			if (!check_output_files_overwrite(disc_game_title, use_prebaked_cue)) {
+ 				printf("Operation cancelled by user for disc %d.\n", i + 1);
+ 				fclose(iso_table);
+-				goto next_disc;
++				return -1;
+ 			}
+ 
+ 			// Build the data track.
+ 			printf("Building data track for disc %d...\n", i + 1);
+ 			if (build_data_track(psar, iso_table, disc_offset[i], i + 1) < 0)
++			{
+ 				printf("ERROR: Failed to reconstruct data track for disc %d!\n", i + 1);
++				fclose(iso_table);
++				return -1;
++			}
+ 			else
+ 				printf("Data track successfully reconstructed for disc %d!\n", i + 1);
+ 			printf("\n");
+@@ -2216,7 +2180,8 @@
+ 
+ 
+ 			// Attempt to extact and convert audio tracks
+-			if (extract_and_convert_audio(psar, iso_table, disc_offset[i] + ISO_BASE_OFFSET, pgd_key, i + 1, data_gap, NULL) < 0)
++			const int num_audio_tracks = extract_and_convert_audio(psar, iso_table, disc_offset[i] + ISO_BASE_OFFSET, pgd_key, i + 1, data_gap, NULL);
++			if (num_audio_tracks < 0)
+ 			{
+ 				printf("ERROR: extract and convert audio failed, aborting...\n");
+ 				fclose(iso_table);
+@@ -2261,7 +2226,7 @@
+ 				{
+ 					printf("ERROR: Can't open %s!\n", bin_file_path);
+ 					fclose(iso_table);
+-					goto next_disc; // Continue with next disc instead of aborting
++					return -1;
+ 				}
+ 				
+ 				// Copy data track
+@@ -2271,7 +2236,7 @@
+ 					printf("Error copying data track to %s, aborting disc %d...\n", output_bin_name, i + 1);
+ 					fclose(bin_file);
+ 					fclose(iso_table);
+-					goto next_disc;
++					return -1;
+ 				}
+ 				
+ 				// Handle audio tracks if present
+@@ -2285,26 +2250,17 @@
+ 				fseek(iso_table, cue_offset, SEEK_SET);
+ 				fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
+ 				
+-				while (cue_entry->type)
++				while (cue_entry->type && track_num <= num_audio_tracks + 1)
+ 				{
+ 					char track_filename[0x10];
+ 					audio_file_name(track_filename, i + 1, track_num, (char*)"BIN");
+ 					int audio_track_size = copy_track_to_iso(bin_file, track_filename, track_num);
+ 					if (audio_track_size < 0)
+ 					{
+-						// If audio track copy failed on track 2 just bail
+-						if (track_num == 2)
+-						{
+-							printf("Proceeding without audio tracks for disc %d\n", i + 1);
+-							break;
+-						}
+-						else
+-						{
+-							printf("ERROR: failed to copy track %d to %s, aborting disc %d...\n", track_num, output_bin_name, i + 1);
+-							fclose(bin_file);
+-							fclose(iso_table);
+-							goto next_disc;
+-						}
++						printf("ERROR: failed to copy track %d to %s, aborting disc %d...\n", track_num, output_bin_name, i + 1);
++						fclose(bin_file);
++						fclose(iso_table);
++						return -1;
+ 					}
+ 					
+ 					cue_offset += sizeof(CUE_ENTRY);
+@@ -2314,14 +2270,14 @@
+ 					track_num++;
+ 				}
+ 				
+-				fclose(bin_file);
++				if (fclose(bin_file)) { fclose(iso_table); return -1; }
+ 				
+ 				// Copy the prebaked CUE file
+ 				if (copy_prebaked_cue_file(disc_iso_disc_name, disc_game_title, disc_game_title) < 0)
+ 				{
+ 					printf("ERROR: Failed to copy prebaked CUE file for disc %d!\n", i + 1);
+ 					fclose(iso_table);
+-					goto next_disc;
++					return -1;
+ 				}
+ 				
+ 				printf("Disc %d successfully converted using prebaked CUE file!\n\n", i + 1);
+@@ -2329,14 +2285,17 @@
+ 			else
+ 			{
+ 				// Generate CUE file normally
+-				if (build_bin_cue(iso_table, data_x_bin_fixed, output_bin_name, output_cue_name, disc_iso_disc_name, i + 1, data_gap, NULL))
++				if (build_bin_cue(iso_table, data_x_bin_fixed, output_bin_name, output_cue_name, disc_iso_disc_name, i + 1, data_gap, NULL, num_audio_tracks))
++				{
+ 					printf("ERROR: Encountered issues converting disc %d to BIN/CUE!\n\n", i + 1);
++					fclose(iso_table);
++					return -1;
++				}
+ 				else
+ 					printf("Disc %d successfully converted to BIN/CUE format!\n\n", i + 1);
+ 			}
+ 
+ 			disc_count++;
+-		next_disc:
+ 			fclose(iso_table);
+ 		}
+ 	}
+@@ -2375,129 +2334,14 @@
+ 
+ int main(int argc, char **argv)
+ {
+-	// This is a GUI-subsystem app, so no console window pops up when the GUI is
+-	// launched from Explorer. When started from an existing terminal (command-line
+-	// use), attach to that console and point the standard streams at it so printf
+-	// output is still visible. If there is no parent console (GUI launch), this is
+-	// a harmless no-op and the program runs windowless.
+-	if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+-		freopen("CONOUT$", "w", stdout);
+-		freopen("CONOUT$", "w", stderr);
+-		freopen("CONIN$", "r", stdin);
+-	}
+-
+-	SetConsoleOutputCP(CP_UTF8);
+-	
+-	save_original_working_directory();
+-	
+-	// Get Unicode command line and convert arguments to UTF-8
+-	LPWSTR cmdLineW = GetCommandLineW();
+-	int argcW = 0;
+-	LPWSTR* argvW = CommandLineToArgvW(cmdLineW, &argcW);
+-	
+-	if (!argvW) {
+-		printf("ERROR: Failed to parse Unicode command line\n");
+-		return 1;
+-	}
+-	
+-	// Convert wide char arguments to UTF-8 strings
+-	char** utf8_argv = (char**)malloc(argcW * sizeof(char*));
+-	if (!utf8_argv) {
+-		LocalFree(argvW);
+-		printf("ERROR: Failed to allocate memory for arguments\n");
+-		return 1;
+-	}
+-	
+-	for (int i = 0; i < argcW; i++) {
+-		int len = WideCharToMultiByte(CP_UTF8, 0, argvW[i], -1, NULL, 0, NULL, NULL);
+-		utf8_argv[i] = (char*)malloc(len);
+-		if (!utf8_argv[i]) {
+-			// Clean up allocated memory on failure
+-			for (int j = 0; j < i; j++) {
+-				free(utf8_argv[j]);
+-			}
+-			free(utf8_argv);
+-			LocalFree(argvW);
+-			printf("ERROR: Failed to allocate memory for argument %d\n", i);
+-			return 1;
+-		}
+-		WideCharToMultiByte(CP_UTF8, 0, argvW[i], -1, utf8_argv[i], len, NULL, NULL);
+-	}
+-	
+-	LocalFree(argvW);
+-	
+-	// Use the converted UTF-8 arguments
+-	argc = argcW;
+-	argv = utf8_argv;
+-	
+-	// If no arguments provided, launch GUI
+-	if (argc <= 1) {
+-		// Clean up allocated arguments
+-		for (int i = 0; i < argc; i++) {
+-			free(utf8_argv[i]);
+-		}
+-		free(utf8_argv);
+-		return showGUI();
+-	}
+-	
+-	if (argc > 5)
+-	{
+-		printf("*****************************************************\n");
+-		printf("psxtract - Convert your PSOne Classics to BIN/CUE format.\n");
+-		printf("         - Written by Hykem (C).\n");
+-		printf("*****************************************************\n\n");
+-		printf("Usage: psxtract [-c] <EBOOT.PBP> [DOCUMENT.DAT] [KEYS.BIN]\n");
+-		printf("[-c] - Clean up temporary files after finishing.\n");
+-		printf("EBOOT.PBP - Your PSOne Classic main PBP.\n");
+-		printf("DOCUMENT.DAT - Game manual file (optional).\n");
+-		printf("KEYS.BIN - Key file (optional).\n");
+-		
+-		// Clean up allocated arguments
+-		for (int i = 0; i < argc; i++) {
+-			free(utf8_argv[i]);
+-		}
+-		free(utf8_argv);
+-		return 0;
+-	}
+-
+-	// Keep track of the each argument's offset.
+-	int arg_offset = 0;
+-
+-	// Check if we want to clean up temp files before exiting.
+-	bool cleanup = false;
+-	bool verbose = false;
+-	
+-	// Parse command line arguments
+-	for (int i = 1; i < argc; i++) {
+-		if (!strcmp(argv[i], "-c")) {
+-			cleanup = true;
+-			arg_offset++;
+-		} else if (!strcmp(argv[i], "--gui")) {
+-			setGUIMode(true);
+-			arg_offset++;
+-		} else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v")) {
+-			verbose = true;
+-			arg_offset++;
+-		} else {
+-			break; // Stop at first non-flag argument
+-		}
+-	}
+-
+-	// Call the main extraction function
+-	int result = psxtract_main(argv[arg_offset + 1], 
+-	                           (argc - arg_offset) >= 3 ? argv[arg_offset + 2] : NULL,
+-	                           (argc - arg_offset) >= 4 ? argv[arg_offset + 3] : NULL,
+-	                           cleanup,
+-	                           verbose,
+-	                           NULL);
+-	
+-	// Clean up allocated arguments
+-	for (int i = 0; i < argc; i++) {
+-		free(utf8_argv[i]);
+-	}
+-	free(utf8_argv);
+-	
+-	return result;
++    if (argc != 2 || argv[1][0] != '/') {
++        fprintf(stderr, "PSXtract-2 native Linux, upstream 4691fc405698d53927df6e4f59c3e9b113c13706\n"
++                        "Usage: pspdb-psxtract /absolute/path/to/EBOOT.PBP\n"
++                        "Outputs BIN/CUE and TEMP auxiliaries in a fresh current directory.\n");
++        return 1;
++    }
++    save_original_working_directory();
++    return psxtract_main(argv[1], nullptr, nullptr, false, false, nullptr);
+ }
+ 
+ static bool g_verbose = false;
+@@ -2510,11 +2354,6 @@
+ {
+ 	// Set global verbose flag
+ 	g_verbose = verbose;
+-	
+-	// If in GUI mode, open log file for writing
+-	if (isGUIMode()) {
+-		openLogFileForWriting(pbp_file);
+-	}
+ 	
+ 	// Change to output directory if specified
+ 	char original_dir[MAX_PATH];
+@@ -2567,56 +2406,21 @@
+ 			printf("%02X", pgd_key[i]);
+ 		printf("\n\n");
+ 	}
+-	// Check if TEMP directory already exists from a previous run
+-	struct stat temp_stat;
+-	if (stat("TEMP", &temp_stat) == 0 && (temp_stat.st_mode & S_IFDIR)) {
+-		if (cleanup) {
+-			// In cleanup mode, automatically remove TEMP directory
+-			printf("TEMP directory exists from previous run. Removing automatically (cleanup mode)...\n");
+-			system("rmdir /S /Q TEMP");
+-		} else {
+-			if (isGUIMode()) {
+-				// GUI mode - use dialog only
+-				if (gui_prompt("TEMP directory already exists from a previous run.\nThis may contain files that could interfere with the current extraction.\n\nDelete TEMP directory and continue?", "TEMP Directory Exists")) {
+-					printf("Removing existing TEMP directory...\n");
+-					system("rmdir /S /Q TEMP");
+-				} else {
+-					printf("Extraction cancelled. Please manually remove TEMP directory and try again.\n");
+-					return 1;
+-				}
+-			} else {
+-				// Console mode - use text prompt
+-				printf("WARNING: TEMP directory already exists from a previous run.\n");
+-				printf("This may contain files that could interfere with the current extraction.\n");
+-				printf("Do you want to delete TEMP directory and continue? (y/N): ");
+-				
+-				char input[10];
+-				if (fgets(input, sizeof(input), stdin) != NULL) {
+-					char response = input[0];
+-					if (response == 'y' || response == 'Y') {
+-						printf("Removing existing TEMP directory...\n");
+-						system("rmdir /S /Q TEMP");
+-					} else {
+-						printf("Extraction cancelled. Please manually remove TEMP directory and try again.\n");
+-						return 1;
+-					}
+-				} else {
+-					printf("Extraction cancelled. Please manually remove TEMP directory and try again.\n");
+-					return 1;
+-				}
+-			}
+-		}
+-	}
+-	
++	// Never remove or reuse a previous extraction's files.
++    struct stat temp_stat;
++    if (lstat("TEMP", &temp_stat) == 0) {
++        printf("ERROR: TEMP already exists; use a fresh working directory\n");
++        fclose(input);
++        return -1;
++    }
++
+ 	// Make a new directory for intermediate data.
+-	_mkdir("TEMP");
+-	_chdir("TEMP");
++	if (_mkdir("TEMP") || _chdir("TEMP")) return -1;
+ 
+ 	printf("Unpacking PBP %s...\n", pbp_file);
+ 
+ 	// Setup a new directory to output the unpacked contents.
+-	_mkdir("PBP");
+-	_chdir("PBP");
++	if (_mkdir("PBP") || _chdir("PBP")) return -1;
+ 
+ 	// Unpack the EBOOT.PBP file.
+ 	if (unpack_pbp(input))
+@@ -2636,13 +2440,24 @@
+ 	if (psar == NULL)
+ 	{
+ 		printf("ERROR: No DATA.PSAR found!\n");
++		fclose(input);
+ 		return -1;
+ 	}
+ 
+ 	// Get DATA.PSAR size.
+-	_fseeki64(psar, 0, SEEK_END);
++	if (_fseeki64(psar, 0, SEEK_END) != 0)
++	{
++		fclose(psar);
++		fclose(input);
++		return -1;
++	}
+ 	const long long psar_size = _ftelli64(psar);
+-	_fseeki64(psar, 0, SEEK_SET);
++	if (psar_size < 0 || _fseeki64(psar, 0, SEEK_SET) != 0)
++	{
++		fclose(psar);
++		fclose(input);
++		return -1;
++	}
+ 
+ 	// Check PSISOIMG0000 or PSTITLEIMG0000 magic.
+ 	// NOTE: If the file represents a single disc, then PSISOIMG0000 is used.
+@@ -2650,13 +2465,21 @@
+ 	// is used to hold data relative to the different discs.
+ 	unsigned char magic[0x10];
+ 	bool isMultidisc;
+-	fread(magic, sizeof(magic), 1, psar);
++	if (fread(magic, sizeof(magic), 1, psar) != 1)
++	{
++		printf("ERROR: Truncated ISO image magic!\n");
++		fclose(psar);
++		fclose(input);
++		return -1;
++	}
+ 
+ 	if (memcmp(magic, iso_magic, 0xC) != 0)
+ 	{
+ 		if (memcmp(magic, multi_iso_magic, 0x10) != 0)
+ 		{
+ 			printf("ERROR: Not a valid ISO image!\n");
++			fclose(psar);
++			fclose(input);
+ 			return -1;
+ 		}
+ 		else
+@@ -2673,14 +2496,17 @@
+ 
+ 	// Extract the STARTDAT sector.
+ 	// NOTE: STARTDAT data is normally a PNG file with an intro screen of the game.
+-	const unsigned long startdat_offset = extract_startdat(psar, isMultidisc);
++	const int64_t startdat_offset = extract_startdat(psar, isMultidisc);
+ 
+ 	// Decrypt the disc(s).
+-	int decrypt_result;
+-	if (isMultidisc)
+-		decrypt_result = decrypt_multi_disc(psar, psar_size, startdat_offset, pgd_key);
+-	else
+-		decrypt_result = decrypt_single_disc(psar, psar_size, startdat_offset, pgd_key);
++	int decrypt_result = -1;
++	if (startdat_offset >= 0)
++	{
++		if (isMultidisc)
++			decrypt_result = decrypt_multi_disc(psar, psar_size, startdat_offset, pgd_key);
++		else
++			decrypt_result = decrypt_single_disc(psar, psar_size, startdat_offset, pgd_key);
++	}
+ 	
+ 	if (decrypt_result < 0) {
+ 		fclose(psar);
+@@ -2710,16 +2536,6 @@
+ 	fclose(input);
+ 
+ 
+-	if (cleanup)
+-	{
+-		printf("Cleanup requested, removing TEMP folder\n");
+-		if (!isGUIMode()) {
+-			printf("[If you see errors above try running without -c to leave TEMP files in place in order to debug.]\n");
+-		}
+-		system("rmdir /S /Q TEMP");
+-	}
+-	
+-	
+ 	// Clean up dynamic pregap override
+ 	if (g_dynamic_pregap_override != NULL) {
+ 		free((void*)g_dynamic_pregap_override->game_id);
+--- a/src/psxtract.h
++++ b/src/psxtract.h
+@@ -1,3 +1,4 @@
++#include "native.h"
+ // Copyright (C) 2014       Hykem <hykem@hotmail.com>
+ // Licensed under the terms of the GNU GPL, version 3
+ // http://www.gnu.org/licenses/gpl-3.0.txt
+@@ -5,10 +6,7 @@
+ #define _CRT_SECURE_NO_WARNINGS
+ 
+ #include <cstdint>
+-#include <direct.h>
+ #include <sys/stat.h>
+-#include <windows.h>
+-#include <shlwapi.h>
+ #include <cstring>
+ #include <ctype.h>
+ #include <stdio.h>
+--- a/src/crypto.cpp
++++ b/src/crypto.cpp
+@@ -1,3 +1,4 @@
++#include "native.h"
+ // Copyright (C) 2014       Hykem <hykem@hotmail.com>
+ // Licensed under the terms of the GNU GPL, version 3
+ // http://www.gnu.org/licenses/gpl-3.0.txt
+@@ -39,11 +40,11 @@
+ #define _CRT_SECURE_NO_WARNINGS
+ 
+ #include "crypto.h"
+-#include "gui.h"
+ 
+ 
+ int decrypt_pgd(unsigned char* pgd_data, int pgd_size, int flag, unsigned char* key)
+ {
++	if (!pgd_data || pgd_size < 0x90) return -1;
+ 	int result;
+ 	PGD_HEADER PGD[sizeof(PGD_HEADER)];
+ 	MAC_KEY mkey;
+@@ -135,17 +136,22 @@
+ 	PGD->block_size  = *(u32*)(pgd_data + 0x48);
+ 	PGD->data_offset = *(u32*)(pgd_data + 0x4c);
+ 
+-	// Additional size variables.
+-	PGD->align_size = (PGD->data_size + 15) &~ 15;
++	// Bound authenticated offsets before reading the MAC table or payload.
++	if (!PGD->block_size || (PGD->block_size & (PGD->block_size - 1))) {
++		printf("PGD: Invalid block size!\n");
++		return -1;
++	}
++	const uint64_t align_size = ((uint64_t)PGD->data_size + 15) & ~UINT64_C(15);
++	const uint64_t block_nr = (align_size + PGD->block_size - 1) / PGD->block_size;
++	if (PGD->data_offset < 0x90 || PGD->data_offset > (uint64_t)pgd_size ||
++	    align_size > (uint64_t)pgd_size - PGD->data_offset ||
++	    block_nr > ((uint64_t)pgd_size - PGD->data_offset - align_size) / 16) {
++		printf("PGD: Invalid data size!\n");
++		return -1;
++	}
++	PGD->align_size = (u32)align_size;
+ 	PGD->table_offset = PGD->data_offset + PGD->align_size;
+-	PGD->block_nr = (PGD->align_size + PGD->block_size - 1) &~ (PGD->block_size - 1);
+-	PGD->block_nr = PGD->block_nr / PGD->block_size;
+-
+-	if ((PGD->align_size + PGD->block_nr * 16) > pgd_size)
+-	{
+-		printf("PGD: Invalid data size!\n");
+-		return -1;
+-	}
++	PGD->block_nr = (u32)block_nr;
+ 
+ 	// Test MAC hash at 0x60 (table hash).
+ 	sceDrmBBMacInit(&mkey, PGD->mac_type);
+@@ -196,118 +202,59 @@
+ 	}
+ }
+ 
+-int unpack_pbp(FILE *infile) 
++int unpack_pbp(FILE *infile)
+ {
+-	long long maxbuffer = 32 * 1024 * 1024;
++	if (_fseeki64(infile, 0, SEEK_END) != 0) return -1;
++	const long long total_size = _ftelli64(infile);
++	if (total_size < (long long)sizeof(PBP_HEADER) ||
++	    _fseeki64(infile, 0, SEEK_SET) != 0) {
++		fprintf(stderr, "ERROR: Truncated or unreadable PBP header\n");
++		return -1;
++	}
+ 	PBP_HEADER header;
+-	int loop0;
+-	long long total_size;
+-
+-	// Get the size of the PBP
+-	_fseeki64(infile, 0, SEEK_END);
+-	total_size = _ftelli64(infile);
+-	_fseeki64(infile, 0, SEEK_SET);
+-
+-	if (total_size < 0) {
+-		printf("UNPACK_PBP ERROR: Could not get the input file size.\n");
+-		return -1;
+-	}
+-
+-	// Read in the header
+-	if (fread(&header, sizeof(PBP_HEADER), 1, infile) < 0) {
+-		printf("UNPACK_PBP ERROR: Could not read the input file header.\n");
+-		return -1;
+-	}
+-
+-	// Check the signature
+-	for (loop0 = 0; loop0 < (int)sizeof(pbp_sig); loop0++) {
+-		if (header.signature[loop0] != pbp_sig[loop0]) {
+-			printf("UNPACK_PBP ERROR: Input file is not a PBP file.\n");
+-			return -1;
+-		}
+-	}
+-
+-	// For each file in the PBP
+-	for (loop0 = 0; loop0 < 8; loop0++) {
+-		void *buffer;
+-		long long size;
+-
+-		// Get the size of this file
+-		if (loop0 == 7) {
+-			size = total_size - header.offset[loop0];
+-		} else {
+-			size = header.offset[loop0 + 1] - header.offset[loop0];
+-		}
+-
+-		// Print out the file details
+-		printf("[%d] %10lld bytes | %s\n", loop0, size, pbp_filenames[loop0]);
+-
+-		// Skip the file if empty
+-		if (!size) continue;
+-
+-		// Seek to the proper position in the file
+-		if (_fseeki64(infile, header.offset[loop0], SEEK_SET) != 0) {
+-			printf("UNPACK_PBP ERROR: Could not seek in the input file.\n");
+-			return -1;
+-		}
+-
+-		// Open the output file
+-		FILE *outfile = fopen(pbp_filenames[loop0], "wb");
+-		if (outfile == NULL) {
+-			printf("UNPACK_PBP ERROR: Could not open the output file. (%s)\n", pbp_filenames[loop0]);
+-			return -1;
+-		}
+-
+-		do {
+-			long long readsize;
+-
+-			// Make sure we don't exceed the maximum buffer size
+-			if (size > maxbuffer) {
+-				readsize = maxbuffer;
+-			} else {
+-				readsize = size;
+-			}
+-			size -= readsize;
+-
+-			// Create the read buffer
+-			buffer = malloc(readsize);
+-			if (buffer == NULL) {
+-				printf("UNPACK_PBP ERROR: Could not allocate the section data buffer. (%lld)\n", readsize);
++	if (fread(&header, sizeof(header), 1, infile) != 1 ||
++	    memcmp(header.signature, pbp_sig, sizeof(pbp_sig)) != 0) {
++		fprintf(stderr, "ERROR: Invalid PBP header\n");
++		return -1;
++	}
++	// Validate the complete table before creating any section output.
++	for (int i = 0; i < 8; ++i) {
++		if (header.offset[i] < (int)sizeof(header) ||
++		    header.offset[i] > total_size ||
++		    (i && header.offset[i] < header.offset[i - 1])) {
++			fprintf(stderr, "ERROR: Invalid PBP section range\n");
++			return -1;
++		}
++	}
++
++	unsigned char buffer[65536];
++	for (int i = 0; i < 8; ++i) {
++		const long long end = i == 7 ? total_size : header.offset[i + 1];
++		long long remaining = end - header.offset[i];
++		printf("[%d] %10lld bytes | %s\n", i, remaining, pbp_filenames[i]);
++		if (!remaining) continue;
++		if (_fseeki64(infile, header.offset[i], SEEK_SET) != 0) return -1;
++		FILE *outfile = fopen(pbp_filenames[i], "wb");
++		if (!outfile) {
++			fprintf(stderr, "ERROR: Cannot open PBP section output\n");
++			return -1;
++		}
++		while (remaining) {
++			const size_t count = remaining < (long long)sizeof(buffer) ?
++			                    (size_t)remaining : sizeof(buffer);
++			if (fread(buffer, 1, count, infile) != count ||
++			    fwrite(buffer, 1, count, outfile) != count) {
++				fprintf(stderr, "ERROR: Cannot copy complete PBP section\n");
++				fclose(outfile);
+ 				return -1;
+ 			}
+-
+-			// Read in the data from the PBP
+-			if (fread(buffer, readsize, 1, infile) < 0) {
+-				printf("UNPACK_PBP ERROR: Could not read in the section data.\n");
+-				return -1;
+-			}
+-
+-			// Write the contents of the buffer to the output file
+-			if (fwrite(buffer, readsize, 1, outfile) < 0) {
+-				printf("UNPACK_PBP ERROR: Could not write out the section data.\n");
+-				return -1;
+-			}
+-
+-			// Clean up the buffer
+-			free(buffer);
+-
+-			// Repeat if we haven't finished writing the file
+-		} while (size);
+-
+-		// Close the output file
+-		if (fclose(outfile) < 0) {
+-			printf("UNPACK_PBP ERROR: Could not close the output file.\n");
+-			return -1;
+-		}
+-
+-	}
+-
+-	// Close the PBP
+-	if (fclose(infile) < 0) {
+-		printf("UNPACK_PBP ERROR: Could not close the input file.\n");
+-		return -1;
+-	}
+-
+-	// Exit successful
++			remaining -= count;
++		}
++		if (fclose(outfile) != 0) {
++			fprintf(stderr, "ERROR: Cannot close PBP section output\n");
++			return -1;
++		}
++	}
++	// The caller owns infile through contextual extraction.
+ 	return 0;
+ }
+--- a/src/cdrom.cpp
++++ b/src/cdrom.cpp
+@@ -1,3 +1,4 @@
++#include "native.h"
+ // Copyright (C) 2014       Hykem <hykem@hotmail.com>
+ // Licensed under the terms of the GNU GPL, version 3
+ // http://www.gnu.org/licenses/gpl-3.0.txt
+@@ -7,7 +8,6 @@
+ // You may redistribute this program in unaltered form as you deem fit.
+ 
+ #include "cdrom.h"
+-#include "gui.h"
+ 
+ 
+ struct fixImageStatus fixImage(char* inputfilepath, char* outputfilepath, int num_sectors, enum EDCMode form2EDCMode, bool verbose)
+--- a/src/utils.cpp
++++ b/src/utils.cpp
+@@ -1,11 +1,9 @@
++#include "native.h"
+ // Copyright (C) 2014       Hykem <hykem@hotmail.com>
+ // Licensed under the terms of the GNU GPL, version 3
+ // http://www.gnu.org/licenses/gpl-3.0.txt
+ 
+ #include "utils.h"
+-#include <windows.h>
+-#include <shlwapi.h>
+-#include <direct.h>
+ #include <stdio.h>
+ 
+ bool isEmpty(unsigned char* buf, int buf_size)
+@@ -34,112 +32,3 @@
+ 		((i & 0x00ff000000000000) >> 40) | ((i & 0xff00000000000000) >> 56);
+ }
+ 
+-int get_exe_directory(char* buffer, int buffer_size)
+-{
+-	wchar_t wbuffer[_MAX_PATH];
+-	if (GetModuleFileNameW(NULL, wbuffer, _MAX_PATH) == 0)
+-	{
+-		return -1;
+-	}
+-	
+-	// Find the last backslash in the path, and null-terminate there to remove the executable name
+-	wchar_t* last_backslash = wcsrchr(wbuffer, L'\\');
+-	if (last_backslash) {
+-		*last_backslash = L'\0';
+-	}
+-	
+-	// Convert from wide char to multibyte using UTF-8 encoding
+-	int result = WideCharToMultiByte(CP_UTF8, 0, wbuffer, -1, buffer, buffer_size, NULL, NULL);
+-	if (result == 0) {
+-		return -1;
+-	}
+-	
+-	return 0;
+-}
+-
+-// Global variable to store the original working directory
+-static char g_original_working_dir[_MAX_PATH] = {0};
+-
+-// Function to save the original working directory (called once at startup)
+-void save_original_working_directory()
+-{
+-	wchar_t wbuffer[_MAX_PATH];
+-	if (GetCurrentDirectoryW(_MAX_PATH, wbuffer) == 0) {
+-		g_original_working_dir[0] = 0; // Clear on failure
+-		return;
+-	}
+-	
+-	// Convert from wide char to multibyte using UTF-8 encoding
+-	int result = WideCharToMultiByte(CP_UTF8, 0, wbuffer, -1, g_original_working_dir, _MAX_PATH, NULL, NULL);
+-	if (result == 0) {
+-		g_original_working_dir[0] = 0; // Clear on failure
+-		return;
+-	}
+-}
+-
+-// Helper function to build a full path in the original working directory
+-int build_output_path(const char* filename, char* output_path, int output_path_size)
+-{
+-	// Use saved original directory, fallback to current if not set
+-	const char* target_dir = (g_original_working_dir[0] != 0) ? g_original_working_dir : ".";
+-	
+-	// Use PathCombine to properly build the path
+-	char relative_path[_MAX_PATH];
+-	if (PathCombineA(relative_path, target_dir, filename) == NULL) {
+-		return -1; // PathCombine failed
+-	}
+-	
+-	// Convert to full path
+-	if (_fullpath(output_path, relative_path, output_path_size) == NULL) {
+-		// If _fullpath fails, try GetFullPathName
+-		if (GetFullPathName(relative_path, output_path_size, output_path, NULL) == 0) {
+-			// If both fail, just copy the relative path
+-			if (strlen(relative_path) >= output_path_size) {
+-				return -1; // Path too long
+-			}
+-			strcpy(output_path, relative_path);
+-		}
+-	}
+-	
+-	return 0;
+-}
+-
+-int utf8_file_exists(const char* filename)
+-{
+-	int wlen = MultiByteToWideChar(CP_UTF8, 0, filename, -1, NULL, 0);
+-	wchar_t* wfilename = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+-	if (!wfilename) {
+-		return -1;
+-	}
+-	MultiByteToWideChar(CP_UTF8, 0, filename, -1, wfilename, wlen);
+-	
+-	DWORD attrs = GetFileAttributesW(wfilename);
+-	free(wfilename);
+-	
+-	return (attrs != INVALID_FILE_ATTRIBUTES) ? 0 : -1;
+-}
+-
+-FILE* utf8_fopen(const char* filename, const char* mode)
+-{
+-	int wlen = MultiByteToWideChar(CP_UTF8, 0, filename, -1, NULL, 0);
+-	wchar_t* wfilename = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+-	if (!wfilename) {
+-		return NULL;
+-	}
+-	MultiByteToWideChar(CP_UTF8, 0, filename, -1, wfilename, wlen);
+-	
+-	int wmode_len = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
+-	wchar_t* wmode = (wchar_t*)malloc(wmode_len * sizeof(wchar_t));
+-	if (!wmode) {
+-		free(wfilename);
+-		return NULL;
+-	}
+-	MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, wmode_len);
+-	
+-	FILE* file = _wfopen(wfilename, wmode);
+-	
+-	free(wfilename);
+-	free(wmode);
+-	
+-	return file;
+-}
+--- a/src/md5_verify.cpp
++++ b/src/md5_verify.cpp
+@@ -1,79 +1,11 @@
++#include "native.h"
+ #include "md5_verify.h"
+ #include "cue_resources.h"
+-#include "gui.h"
+-#include <windows.h>
+-#include <wincrypt.h>
+ #include <stdio.h>
+ #include <string.h>
+ 
+ 
+-// MD5 hash calculation function
+-bool calculate_md5(const char* filename, char* md5_string)
+-{
+-    HCRYPTPROV hProv = 0;
+-    HCRYPTHASH hHash = 0;
+-    HANDLE hFile = NULL;
+-    BYTE rgbFile[1024];
+-    DWORD cbRead = 0;
+-    BYTE rgbHash[16];
+-    DWORD cbHash = 16;
+-    CHAR rgbDigits[] = "0123456789abcdef";
+-    
+-    hFile = CreateFile(filename, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+-    if (hFile == INVALID_HANDLE_VALUE)
+-    {
+-        return false;
+-    }
+-    
+-    if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT))
+-    {
+-        CloseHandle(hFile);
+-        return false;
+-    }
+-    
+-    if (!CryptCreateHash(hProv, CALG_MD5, 0, 0, &hHash))
+-    {
+-        CloseHandle(hFile);
+-        CryptReleaseContext(hProv, 0);
+-        return false;
+-    }
+-    
+-    while (ReadFile(hFile, rgbFile, 1024, &cbRead, NULL))
+-    {
+-        if (0 == cbRead)
+-        {
+-            break;
+-        }
+-        
+-        if (!CryptHashData(hHash, rgbFile, cbRead, 0))
+-        {
+-            CryptReleaseContext(hProv, 0);
+-            CryptDestroyHash(hHash);
+-            CloseHandle(hFile);
+-            return false;
+-        }
+-    }
+-    
+-    if (!CryptGetHashParam(hHash, HP_HASHVAL, rgbHash, &cbHash, 0))
+-    {
+-        CryptReleaseContext(hProv, 0);
+-        CryptDestroyHash(hHash);
+-        CloseHandle(hFile);
+-        return false;
+-    }
+-    
+-    // Convert to hex string
+-    for (DWORD i = 0; i < cbHash; i++)
+-    {
+-        sprintf(&md5_string[i * 2], "%02x", rgbHash[i]);
+-    }
+-    
+-    CryptReleaseContext(hProv, 0);
+-    CryptDestroyHash(hHash);
+-    CloseHandle(hFile);
+-    
+-    return true;
+-}
++bool calculate_md5(const char* filename, char* md5_string);
+ 
+ // Print MD5 hash of data track (always)
+ void print_data_track_md5(const char* data_track_file, const char* disc_serial)
+--- a/src/cue_resources.cpp
++++ b/src/cue_resources.cpp
+@@ -1,6 +1,5 @@
++#include "native.h"
+ #include "cue_resources.h"
+-#include "gui.h"
+-#include <windows.h>
+ #include <string.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+@@ -8,6 +7,8 @@
+ struct CueResourceEntry {
+     const char* game_id;
+     int resource_id;
++    const unsigned char* data;
++    size_t size;
+ };
+ 
+ // Generated lookup table - included from separate file
+@@ -31,16 +32,9 @@
+         return NULL;  // Game ID not found
+     }
+ 
+-    // Load resource from executable
+-    HRSRC hRes = FindResource(NULL, MAKEINTRESOURCE(resource_id), RT_RCDATA);
+-    if (!hRes) return NULL;
+-
+-    DWORD size = SizeofResource(NULL, hRes);
+-    HGLOBAL hData = LoadResource(NULL, hRes);
+-    if (!hData) return NULL;
+-
+-    void* pData = LockResource(hData);
+-    if (!pData) return NULL;
++    const CueResourceEntry& entry = cue_lookup[resource_id - 1];
++    const size_t size = entry.size;
++    const void* pData = entry.data;
+ 
+     // Copy to allocated buffer with null terminator
+     char* result = (char*)malloc(size + 1);
+@@ -259,7 +253,7 @@
+     }
+     
+     // Use GUI-aware selection
+-    int choice = gui_select_option("CUE File Selection", message, options, candidate_count);
++    int choice = select_cue_option("CUE File Selection", message, options, candidate_count);
+ 
+     // A negative/out-of-range result means the user closed or cancelled the
+     // dialog - signal cancellation so the caller can abort the extraction.
+--- a/src/lz.cpp
++++ b/src/lz.cpp
+@@ -162,6 +162,8 @@
+ 		memset(tmp, 0x80, 0xA60);
+ 		while (1)
+ 		{
++			// A match or literal may exactly fill the caller-sized disc block.
++			if (start == end) return (int)(start - out);
+ 			// Start reading at 0x920.
+ 			tmp_sect1 = tmp + offset + 0x920;
+ 			if (!decode_bit(&range, &code, 0, &in, tmp_sect1))  // Raw char.

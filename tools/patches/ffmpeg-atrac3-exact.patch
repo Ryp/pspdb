@@ -1,0 +1,757 @@
+--- a/libavcodec/atrac.c
++++ b/libavcodec/atrac.c
+@@ -125,6 +125,7 @@
+     memcpy(prev, &in[num_samples], num_samples * sizeof(float));
+ }
+ 
++#include "pspdb_qmf_coefficients.h"
+ void ff_atrac_iqmf(float *inlo, float *inhi, unsigned int nIn, float *pOut,
+                    float *delayBuf, float *temp)
+ {
+@@ -146,12 +147,12 @@
+     /* loop2 */
+     p1 = temp;
+     for (j = nIn; j != 0; j--) {
+-        float s1 = 0.0;
+-        float s2 = 0.0;
++        long double s1 = (long double)p1[46] * sony_qmf_window[46];
++        long double s2 = (long double)p1[47] * sony_qmf_window[47];
+ 
+-        for (i = 0; i < 48; i += 2) {
+-            s1 += p1[i] * qmf_window[i];
+-            s2 += p1[i+1] * qmf_window[i+1];
++        for (i = 44; i >= 0; i -= 2) {
++            s1 += (long double)p1[i] * sony_qmf_window[i];
++            s2 += (long double)p1[i+1] * sony_qmf_window[i+1];
+         }
+ 
+         pOut[0] = s2;
+--- a/libavcodec/atrac3.c
++++ b/libavcodec/atrac3.c
+@@ -41,7 +41,6 @@
+ #include "libavutil/mem.h"
+ #include "libavutil/mem_internal.h"
+ #include "libavutil/thread.h"
+-#include "libavutil/tx.h"
+ 
+ #include "avcodec.h"
+ #include "bytestream.h"
+@@ -64,6 +63,8 @@
+ 
+ #define ATRAC3_VLC_BITS 8
+ 
++static const int sony_max_quant[8] = {0, 1, 2, 3, 4, 7, 15, 31};
++
+ typedef struct GainBlock {
+     AtracGainInfo g_block[4];
+ } GainBlock;
+@@ -71,7 +72,9 @@
+ typedef struct TonalComponent {
+     int pos;
+     int num_coefs;
+-    float coef[8];
++    int coef[8];
++    float scale_factor;
++    int max_quant;
+ } TonalComponent;
+ 
+ typedef struct ChannelUnit {
+@@ -115,9 +118,6 @@
+     int scrambled_stream;
+     //@}
+ 
+-    AtracGCContext    gainc_ctx;
+-    AVTXContext      *mdct_ctx;
+-    av_tx_fn          mdct_fn;
+     void (*vector_fmul)(float *dst, const float *src0, const float *src1,
+                         int len);
+ } ATRAC3Context;
+@@ -126,6 +126,13 @@
+ static VLCElem atrac3_vlc_table[7 * 1 << ATRAC3_VLC_BITS];
+ static VLC   spectral_coeff_tab[7];
+ 
++void sony_imlt256(const float input[256], float output[512], const float window[512],
++                  int odd, const uint32_t tables[9][128]);
++int sony_gain512(const int32_t first[16], const int32_t second[16], float output[512]);
++#include "pspdb_sony_imlt.c"
++#include "pspdb_sony_tables.h"
++#include "pspdb_gain_apply.h"
++
+ /**
+  * Regular 512 points IMDCT without overlapping, with the exception of the
+  * swapping of odd bands caused by the reverse spectra of the QMF.
+@@ -136,20 +143,9 @@
+ {
+     int i;
+ 
+-    if (odd_band) {
+-        /**
+-         * Reverse the odd bands before IMDCT, this is an effect of the QMF
+-         * transform or it gives better compression to do it this way.
+-         * FIXME: It should be possible to handle this in imdct_calc
+-         * for that to happen a modification of the prerotation step of
+-         * all SIMD code and C code is needed.
+-         * Or fix the functions before so they generate a pre reversed spectrum.
+-         */
+-        for (i = 0; i < 128; i++)
+-            FFSWAP(float, input[i], input[255 - i]);
+-    }
+-
+-    q->mdct_fn(q->mdct_ctx, output, input, sizeof(float));
++    sony_imlt256(input, output, pspdb_unity_window, odd_band, pspdb_sony_tables);
++    for (i = 0; i < MDCT_SIZE; ++i)
++        output[i] *= -0x1p-15f;
+ 
+     /* Perform windowing on the output. */
+     q->vector_fmul(output, output, mdct_window, MDCT_SIZE);
+@@ -203,8 +199,6 @@
+     av_freep(&q->units);
+     av_freep(&q->decoded_bytes_buffer);
+ 
+-    av_tx_uninit(&q->mdct_ctx);
+-
+     return 0;
+ }
+ 
+@@ -275,7 +269,7 @@
+     int num_subbands, coding_mode, i, j, first, last, subband_size;
+     int subband_vlc_index[32], sf_index[32];
+     int mantissas[128];
+-    float scale_factor;
++    volatile float scale_factor;
+ 
+     num_subbands = get_bits(gb, 5);  // number of coded subbands
+     coding_mode  = get_bits1(gb);    // coding Mode: 0 - VLC/ 1-CLC
+@@ -304,12 +298,13 @@
+                                        mantissas, subband_size);
+ 
+             /* decode the scale factor for this subband */
+-            scale_factor = ff_atrac_sf_table[sf_index[i]] *
+-                           inv_max_quant[subband_vlc_index[i]];
++            /* Sony 0x4905f..0x49083 rounds the division before multiplication. */
++            scale_factor = (long double)ff_atrac_sf_table[sf_index[i]] /
++                           (sony_max_quant[subband_vlc_index[i]] + 0.5L);
+ 
+             /* inverse quantize the coefficients */
+             for (j = 0; first < last; first++, j++)
+-                output[first] = mantissas[j] * scale_factor;
++                ((volatile float *)output)[first] = (long double)mantissas[j] * scale_factor;
+         } else {
+             /* this subband was not coded, so zero the entire subband */
+             memset(output + first, 0, subband_size * sizeof(*output));
+@@ -374,7 +369,6 @@
+             for (c = 0; c < coded_components; c++) {
+                 TonalComponent *cmp = &components[component_count];
+                 int sf_index, coded_values, max_coded_values;
+-                float scale_factor;
+ 
+                 sf_index = get_bits(gb, 6);
+                 if (component_count >= 64)
+@@ -386,17 +380,17 @@
+                 coded_values     = coded_values_per_component + 1;
+                 coded_values     = FFMIN(max_coded_values, coded_values);
+ 
+-                scale_factor = ff_atrac_sf_table[sf_index] *
+-                               inv_max_quant[quant_step_index];
++                cmp->scale_factor = ff_atrac_sf_table[sf_index];
++                cmp->max_quant = sony_max_quant[quant_step_index];
+ 
+                 read_quant_spectral_coeffs(gb, quant_step_index, coding_mode,
+                                            mantissa, coded_values);
+ 
+                 cmp->num_coefs = coded_values;
+ 
+-                /* inverse quant */
++                /* Keep mantissas until Sony's extended-precision tonal addition. */
+                 for (m = 0; m < coded_values; m++)
+-                    cmp->coef[m] = mantissa[m] * scale_factor;
++                    cmp->coef[m] = mantissa[m];
+ 
+                 component_count++;
+             }
+@@ -452,7 +446,8 @@
+                                 TonalComponent *components)
+ {
+     int i, j, last_pos = -1;
+-    float *input, *output;
++    int *input;
++    volatile float *output;
+ 
+     for (i = 0; i < num_components; i++) {
+         last_pos = FFMAX(components[i].pos + components[i].num_coefs, last_pos);
+@@ -460,7 +455,9 @@
+         output   = &spectrum[components[i].pos];
+ 
+         for (j = 0; j < components[i].num_coefs; j++)
+-            output[j] += input[j];
++            /* Sony 0x491a7..0x491c5 rounds only after adding to the spectrum. */
++            output[j] = (long double)input[j] * components[i].scale_factor /
++                        (components[i].max_quant + 0.5L) + output[j];
+     }
+ 
+     return last_pos;
+@@ -630,10 +627,9 @@
+             memset(snd->imdct_buf, 0, 512 * sizeof(*snd->imdct_buf));
+ 
+         /* gain compensation and overlapping */
+-        ff_atrac_gain_compensation(&q->gainc_ctx, snd->imdct_buf,
+-                                   &snd->prev_frame[band * 256],
+-                                   &gain1->g_block[band], &gain2->g_block[band],
+-                                   256, &output[band * 256]);
++        pspdb_apply_sony_gain(snd->imdct_buf, &snd->prev_frame[band * 256],
++                             &gain1->g_block[band], &gain2->g_block[band],
++                             &output[band * 256]);
+     }
+ 
+     /* Swap the gain control buffers for the next frame. */
+@@ -876,12 +872,11 @@
+ static av_cold int atrac3_decode_init(AVCodecContext *avctx)
+ {
+     static AVOnce init_static_once = AV_ONCE_INIT;
+-    int i, js_pair, ret;
++    int i, js_pair;
+     int version, delay, samples_per_frame, frame_factor;
+     const uint8_t *edata_ptr = avctx->extradata;
+     ATRAC3Context *q = avctx->priv_data;
+     AVFloatDSPContext *fdsp;
+-    float scale = 1.0 / 32768;
+     int channels = avctx->ch_layout.nb_channels;
+ 
+     if (channels < MIN_CHANNELS || channels > MAX_CHANNELS) {
+@@ -979,13 +974,6 @@
+ 
+     avctx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+ 
+-    /* initialize the MDCT transform */
+-    if ((ret = av_tx_init(&q->mdct_ctx, &q->mdct_fn, AV_TX_FLOAT_MDCT, 1, 256,
+-                          &scale, AV_TX_FULL_IMDCT)) < 0) {
+-        av_log(avctx, AV_LOG_ERROR, "Error initializing MDCT\n");
+-        return ret;
+-    }
+-
+     /* init the joint-stereo decoding data */
+     for (js_pair = 0; js_pair < MAX_JS_PAIRS; js_pair++) {
+         q->weighting_delay[js_pair][0] = 0;
+@@ -1002,7 +990,6 @@
+         }
+     }
+ 
+-    ff_atrac_init_gain_compensation(&q->gainc_ctx, 4, 3);
+     fdsp = avpriv_float_dsp_alloc(avctx->flags & AV_CODEC_FLAG_BITEXACT);
+     if (!fdsp)
+         return AVERROR(ENOMEM);
+--- /dev/null
++++ b/libavcodec/pspdb_qmf_coefficients.h
+@@ -0,0 +1,55 @@
++/* PSPDB native ATRAC3 arithmetic, GPL-3.0-or-later.
++ * Mathematical translation of the original PSX ATRAC3 decoder.
++ * Keep operation order and explicit binary32 stores: these are observable.
++ */
++/* Exact binary64 QMF coefficients; preserve every stored bit. */
++static const double sony_qmf_window[48] = {
++    -0x1.ea88dae7901a3p-16,
++    -0x1.821b13ffd6ad5p-13,
++    -0x1.d7157699f042ap-14,
++    0x1.3bcd6e59e62a9p-11,
++    0x1.fc09ff9cd396ep-12,
++    -0x1.bf2f88e244e1cp-10,
++    -0x1.10ec0811cc7a2p-10,
++    0x1.0a9a48fd30282p-8,
++    0x1.9ab1f7a850684p-10,
++    -0x1.14427102906cep-7,
++    -0x1.8c70b8bb221e7p-10,
++    0x1.00e9272917591p-6,
++    -0x1.0090b393d921ep-13,
++    -0x1.b8747b2712be7p-6,
++    0x1.42c9e54d0780ep-8,
++    0x1.641fc4ec58ae4p-5,
++    -0x1.ff4a51cc95334p-7,
++    -0x1.17445f806e247p-4,
++    0x1.342cb819e2545p-5,
++    0x1.bd09e688b59bbp-4,
++    -0x1.65243c4a5e1d1p-4,
++    -0x1.971410ae23138p-3,
++    0x1.0e7f7cb7e1834p-2,
++    0x1.db622665c556bp-1,
++    0x1.db622665c556bp-1,
++    0x1.0e7f7cb7e1834p-2,
++    -0x1.971410ae23138p-3,
++    -0x1.65243c4a5e1d1p-4,
++    0x1.bd09e688b59bbp-4,
++    0x1.342cb819e2545p-5,
++    -0x1.17445f806e247p-4,
++    -0x1.ff4a51cc95334p-7,
++    0x1.641fc4ec58ae4p-5,
++    0x1.42c9e54d0780ep-8,
++    -0x1.b8747b2712be7p-6,
++    -0x1.0090b393d921ep-13,
++    0x1.00e9272917591p-6,
++    -0x1.8c70b8bb221e7p-10,
++    -0x1.14427102906cep-7,
++    0x1.9ab1f7a850684p-10,
++    0x1.0a9a48fd30282p-8,
++    -0x1.10ec0811cc7a2p-10,
++    -0x1.bf2f88e244e1cp-10,
++    0x1.fc09ff9cd396ep-12,
++    0x1.3bcd6e59e62a9p-11,
++    -0x1.d7157699f042ap-14,
++    -0x1.821b13ffd6ad5p-13,
++    -0x1.ea88dae7901a3p-16,
++};
+--- /dev/null
++++ b/libavcodec/pspdb_sony_imlt.c
+@@ -0,0 +1,140 @@
++/* PSPDB native ATRAC3 arithmetic, GPL-3.0-or-later.
++ * Mathematical translation of the original PSX ATRAC3 decoder.
++ * Keep operation order and explicit binary32 stores: these are observable.
++ */
++#include <float.h>
++#include <stdint.h>
++#include <string.h>
++
++_Static_assert(sizeof(float) == sizeof(uint32_t) && FLT_MANT_DIG == 24,
++               "Sony IMLT requires IEEE binary32 float");
++_Static_assert(LDBL_MANT_DIG == 64,
++               "Sony IMLT requires x87 extended-precision long double");
++
++static float sony_imlt_table_float(uint32_t bits)
++{
++    float value;
++    memcpy(&value, &bits, sizeof(value));
++    return value;
++}
++
++/*
++ * Translation of Sony RVA 0xc690..0xca06. Use the original round-to-nearest
++ * x87 environment and compile without floating-point reassociation/fast-math.
++ * Volatile binary32 destinations reproduce FSTP DWORD rounding even with
++ * -fexcess-precision=fast; values retained on the x87 stack use long double.
++ * Tables are the 128-dword captures at globals 0x12328..0x12348, in order.
++ * The supplied window is the final 0xaff0 normalized window, not bare 0xae30.
++ */
++void sony_imlt256(const float input[256], float output[512],
++                  const float window[512], int odd,
++                  const uint32_t tables[9][128])
++{
++    float data[256];
++    volatile float real[128];
++    volatile float imag[128];
++    uint32_t visited[128] = {0};
++    volatile float *const compact = data;
++    volatile float *const pcm = output;
++
++    /* 0xc690..0xc6db: bit-copy input, reversing only when odd == 1. */
++    if (odd == 1) {
++        for (unsigned i = 0; i < 256; ++i)
++            memcpy(&data[i], &input[255 - i], sizeof(data[i]));
++    } else {
++        memcpy(data, input, sizeof(data));
++    }
++
++    /* 0xc6dd..0xc734: rotate the forward even-indexed input pairs. */
++    for (unsigned i = 0; i < 64; ++i) {
++        const float a = sony_imlt_table_float(tables[0][i]);
++        const float b = sony_imlt_table_float(tables[1][i]);
++        const long double first = data[4 * i];
++        const long double second = data[4 * i + 2];
++        real[i] = first * (long double)a - (long double)b * second;
++        imag[i] = first * (long double)b + second * (long double)a;
++    }
++
++    /* 0xc736..0xc774: fold the backward odd-indexed input pairs. */
++    for (unsigned j = 0; j < 64; ++j) {
++        const unsigned i = 64 + j;
++        const float a = sony_imlt_table_float(tables[0][i]);
++        const float b = sony_imlt_table_float(tables[1][i]);
++        const long double first = data[253 - 4 * j];
++        const long double second = data[255 - 4 * j];
++        real[i] = first * (long double)b - (long double)a * second;
++        imag[i] = -(first * (long double)a) - (long double)b * second;
++    }
++
++    /* 0xc776..0xc7f1: the original visited-index permutation swaps. */
++    for (unsigned i = 0; i < 128; ++i) {
++        if (!visited[i]) {
++            const uint32_t other = tables[8][i];
++            const float saved_imag = imag[other];
++            visited[other] = 1;
++            const long double saved_real = real[other];
++            real[other] = real[i];
++            real[i] = saved_real;
++            imag[other] = imag[i];
++            imag[i] = saved_imag;
++        }
++    }
++
++    /* 0xc7f3..0xc8cd: seven radix-2 stages, in the original group order. */
++    for (unsigned half = 1, stride = 64; half < 128; half *= 2, stride /= 2) {
++        for (unsigned base = 0; base < 128; base += 2 * half) {
++            for (unsigned j = 0; j < half; ++j) {
++                const unsigned lower = base + j;
++                const unsigned upper = lower + half;
++                const unsigned twiddle = j * stride;
++                const float a = sony_imlt_table_float(tables[6][twiddle]);
++                const float b = sony_imlt_table_float(tables[7][twiddle]);
++                const long double rotated_real =
++                    (long double)real[upper] * (long double)a
++                    - (long double)b * (long double)imag[upper];
++                /* 0xc85f stores only the imaginary rotation to binary32. */
++                const volatile float rotated_imag =
++                    (long double)b * (long double)real[upper]
++                    + (long double)a * (long double)imag[upper];
++                real[upper] = (long double)real[lower] - rotated_real;
++                imag[upper] = (long double)imag[lower]
++                              - (long double)rotated_imag;
++                real[lower] = rotated_real + (long double)real[lower];
++                imag[lower] = (long double)rotated_imag
++                              + (long double)imag[lower];
++            }
++        }
++    }
++
++    /* 0xc8d3..0xc985: postrotate into the reused 256-float input area. */
++    for (unsigned i = 0; i < 128; ++i) {
++        const unsigned reverse = 127 - i;
++        const float a = sony_imlt_table_float(tables[2][i]);
++        const float b = sony_imlt_table_float(tables[3][i]);
++        const float c = sony_imlt_table_float(tables[4][i]);
++        const float d = sony_imlt_table_float(tables[5][i]);
++        long double forward = (long double)b * (long double)real[reverse];
++        forward += (long double)imag[reverse] * (long double)d;
++        forward += (long double)real[i] * (long double)a;
++        forward += (long double)imag[i] * (long double)c;
++        compact[i] = forward;
++
++        long double backward = (long double)real[i] * (long double)c;
++        backward -= (long double)real[reverse] * (long double)d;
++        backward -= (long double)imag[i] * (long double)a;
++        backward += (long double)b * (long double)imag[reverse];
++        compact[255 - i] = backward;
++    }
++
++    /* 0xc987..0xc9d5: first and last quarters, with final window stores. */
++    for (unsigned i = 0; i < 128; ++i) {
++        pcm[i] = (long double)window[i] * (long double)compact[128 + i];
++        pcm[384 + i] = -((long double)window[384 + i]
++                         * (long double)compact[i]);
++    }
++
++    /* 0xc9d7..0xca06: the middle half is negated and read backwards. */
++    for (unsigned i = 0; i < 256; ++i)
++        pcm[128 + i] = -((long double)window[128 + i]
++                         * (long double)compact[255 - i]);
++}
+--- /dev/null
++++ b/libavcodec/pspdb_sony_gain.c
+@@ -0,0 +1,75 @@
++/* PSPDB native ATRAC3 arithmetic, GPL-3.0-or-later.
++ * Mathematical translation of the original PSX ATRAC3 decoder.
++ * Keep operation order and explicit binary32 stores: these are observable.
++ */
++#include <math.h>
++#include <stdint.h>
++
++/*
++ * Native translation of Sony 0x67a4b0e0, with n fixed at 512.
++ * Requires libm (-lm); interpolated samples use independent powl calls.
++ * The source power routine uses x87 extended intermediates. On the target
++ * GCC x86_64 Linux host, long double has the same 64-bit significand. Every
++ * weighted exponent and multiplication by 1/8 is exact; each power result
++ * is explicitly rounded at a volatile float store, not a float recurrence.
++ * powl is a mathematical translation of the x87 power routine, verified
++ * against the original across 6593 gain boundary cases.
++ *
++ * Records are RAW Sony 64-byte arguments: count at word 0, locations at
++ * words 1..7, level codes at words 8..14, and an unread word 15. Valid
++ * records have count 0..7, locations 0..31 and level codes 0..15.
++ * The source skips a point whose inclusive endpoint precedes its cursor.
++ */
++int sony_gain512(const int32_t first[16], const int32_t second[16],
++                 float output[512])
++{
++    int32_t exponent[64] = {0};
++    int cursor = 0;
++
++    /* b10d-b133: second record assigns through location + 32, inclusive. */
++    for (int point = 0; point < second[0]; ++point) {
++        const int end = second[1 + point] + 32;
++        const int32_t level = second[8 + point] - 4;
++        while (cursor <= end)
++            exponent[cursor++] = level;
++    }
++
++    /* b14b-b177: first record adds through its location, inclusive. */
++    cursor = 0;
++    for (int point = 0; point < first[0]; ++point) {
++        const int end = first[1 + point];
++        const int32_t level = first[8 + point] - 4;
++        while (cursor <= end)
++            exponent[cursor++] += level;
++    }
++
++    volatile float *const rounded_output = output;
++    int previous = 0;
++    int out = 511;
++
++    /* b195 initializes the map pointer to e[63]; b254 decrements it. */
++    for (int block = 63; block >= 0; --block) {
++        const int target = -exponent[block];
++        if (target == previous) {
++            /* b1ac-b1ee: integer shift, optionally reciprocal, eight stores. */
++            const long double factor = target < 0
++                ? 1.0L / (int32_t)(UINT32_C(1) << -target)
++                : (long double)(int32_t)(UINT32_C(1) << target);
++            for (int sample = 0; sample < 8; ++sample)
++                rounded_output[out--] = (float)factor;
++        } else {
++            /* b1f2-b248: exclude old endpoint, include new; write backward. */
++            int old_term = 7 * previous;
++            int new_term = target;
++            for (int sample = 0; sample < 8; ++sample) {
++                const int weighted = old_term + new_term;
++                const long double power = (long double)weighted * 0.125L;
++                rounded_output[out--] = (float)powl(2.0L, power);
++                new_term += target;
++                old_term -= previous;
++            }
++        }
++        previous = target;
++    }
++    return 0;
++}
+--- /dev/null
++++ b/libavcodec/pspdb_sony_tables.h
+@@ -0,0 +1,203 @@
++/* PSPDB native ATRAC3 arithmetic, GPL-3.0-or-later.
++ * Mathematical translation of the original PSX ATRAC3 decoder.
++ * Keep operation order and explicit binary32 stores: these are observable.
++ */
++#include <stdint.h>
++static const uint32_t pspdb_sony_tables[9][128] = {
++    {
++        0x3f800000u, 0x3f7fec43u, 0x3f7fb10fu, 0x3f7f4e6du, 0x3f7ec46du, 0x3f7e1324u, 0x3f7d3aacu, 0x3f7c3b28u,
++        0x3f7b14beu, 0x3f79c79du, 0x3f7853f8u, 0x3f76ba07u, 0x3f74fa0bu, 0x3f731447u, 0x3f710908u, 0x3f6ed89eu,
++        0x3f6c835eu, 0x3f6a09a7u, 0x3f676bd8u, 0x3f64aa59u, 0x3f61c598u, 0x3f5ebe05u, 0x3f5b941au, 0x3f584853u,
++        0x3f54db31u, 0x3f514d3du, 0x3f4d9f02u, 0x3f49d112u, 0x3f45e403u, 0x3f41d870u, 0x3f3daef9u, 0x3f396842u,
++        0x3f3504f3u, 0x3f3085bbu, 0x3f2beb4au, 0x3f273656u, 0x3f226799u, 0x3f1d7fd1u, 0x3f187fc0u, 0x3f13682au,
++        0x3f0e39dau, 0x3f08f59bu, 0x3f039c3du, 0x3efc5d27u, 0x3ef15aeau, 0x3ee63375u, 0x3edae880u, 0x3ecf7bcau,
++        0x3ec3ef15u, 0x3eb8442au, 0x3eac7cd4u, 0x3ea09ae5u, 0x3e94a031u, 0x3e888e93u, 0x3e78cfccu, 0x3e605c13u,
++        0x3e47c5c2u, 0x3e2f10a2u, 0x3e164083u, 0x3dfab273u, 0x3dc8bd36u, 0x3d96a905u, 0x3d48fb30u, 0x3cc90ab0u,
++        0x248d3000u, 0xbcc90ab0u, 0xbd48fb30u, 0xbd96a905u, 0xbdc8bd36u, 0xbdfab273u, 0xbe164083u, 0xbe2f10a2u,
++        0xbe47c5c2u, 0xbe605c13u, 0xbe78cfccu, 0xbe888e93u, 0xbe94a031u, 0xbea09ae5u, 0xbeac7cd4u, 0xbeb8442au,
++        0xbec3ef15u, 0xbecf7bcau, 0xbedae880u, 0xbee63375u, 0xbef15aeau, 0xbefc5d27u, 0xbf039c3du, 0xbf08f59bu,
++        0xbf0e39dau, 0xbf13682au, 0xbf187fc0u, 0xbf1d7fd1u, 0xbf226799u, 0xbf273656u, 0xbf2beb4au, 0xbf3085bbu,
++        0xbf3504f3u, 0xbf396842u, 0xbf3daef9u, 0xbf41d870u, 0xbf45e403u, 0xbf49d112u, 0xbf4d9f02u, 0xbf514d3du,
++        0xbf54db31u, 0xbf584853u, 0xbf5b941au, 0xbf5ebe05u, 0xbf61c598u, 0xbf64aa59u, 0xbf676bd8u, 0xbf6a09a7u,
++        0xbf6c835eu, 0xbf6ed89eu, 0xbf710908u, 0xbf731447u, 0xbf74fa0bu, 0xbf76ba07u, 0xbf7853f8u, 0xbf79c79du,
++        0xbf7b14beu, 0xbf7c3b28u, 0xbf7d3aacu, 0xbf7e1324u, 0xbf7ec46du, 0xbf7f4e6du, 0xbf7fb10fu, 0xbf7fec43u,
++    },
++    {
++        0x80000000u, 0xbcc90ab0u, 0xbd48fb30u, 0xbd96a905u, 0xbdc8bd36u, 0xbdfab273u, 0xbe164083u, 0xbe2f10a2u,
++        0xbe47c5c2u, 0xbe605c13u, 0xbe78cfccu, 0xbe888e93u, 0xbe94a031u, 0xbea09ae5u, 0xbeac7cd4u, 0xbeb8442au,
++        0xbec3ef15u, 0xbecf7bcau, 0xbedae880u, 0xbee63375u, 0xbef15aeau, 0xbefc5d27u, 0xbf039c3du, 0xbf08f59bu,
++        0xbf0e39dau, 0xbf13682au, 0xbf187fc0u, 0xbf1d7fd1u, 0xbf226799u, 0xbf273656u, 0xbf2beb4au, 0xbf3085bbu,
++        0xbf3504f3u, 0xbf396842u, 0xbf3daef9u, 0xbf41d870u, 0xbf45e403u, 0xbf49d112u, 0xbf4d9f02u, 0xbf514d3du,
++        0xbf54db31u, 0xbf584853u, 0xbf5b941au, 0xbf5ebe05u, 0xbf61c598u, 0xbf64aa59u, 0xbf676bd8u, 0xbf6a09a7u,
++        0xbf6c835eu, 0xbf6ed89eu, 0xbf710908u, 0xbf731447u, 0xbf74fa0bu, 0xbf76ba07u, 0xbf7853f8u, 0xbf79c79du,
++        0xbf7b14beu, 0xbf7c3b28u, 0xbf7d3aacu, 0xbf7e1324u, 0xbf7ec46du, 0xbf7f4e6du, 0xbf7fb10fu, 0xbf7fec43u,
++        0xbf800000u, 0xbf7fec43u, 0xbf7fb10fu, 0xbf7f4e6du, 0xbf7ec46du, 0xbf7e1324u, 0xbf7d3aacu, 0xbf7c3b28u,
++        0xbf7b14beu, 0xbf79c79du, 0xbf7853f8u, 0xbf76ba07u, 0xbf74fa0bu, 0xbf731447u, 0xbf710908u, 0xbf6ed89eu,
++        0xbf6c835eu, 0xbf6a09a7u, 0xbf676bd8u, 0xbf64aa59u, 0xbf61c598u, 0xbf5ebe05u, 0xbf5b941au, 0xbf584853u,
++        0xbf54db31u, 0xbf514d3du, 0xbf4d9f02u, 0xbf49d112u, 0xbf45e403u, 0xbf41d870u, 0xbf3daef9u, 0xbf396842u,
++        0xbf3504f3u, 0xbf3085bbu, 0xbf2beb4au, 0xbf273656u, 0xbf226799u, 0xbf1d7fd1u, 0xbf187fc0u, 0xbf13682au,
++        0xbf0e39dau, 0xbf08f59bu, 0xbf039c3du, 0xbefc5d27u, 0xbef15aeau, 0xbee63375u, 0xbedae880u, 0xbecf7bcau,
++        0xbec3ef15u, 0xbeb8442au, 0xbeac7cd4u, 0xbea09ae5u, 0xbe94a031u, 0xbe888e93u, 0xbe78cfccu, 0xbe605c13u,
++        0xbe47c5c2u, 0xbe2f10a2u, 0xbe164083u, 0xbdfab273u, 0xbdc8bd36u, 0xbd96a905u, 0xbd48fb30u, 0xbcc90ab0u,
++    },
++    {
++        0x3efc126cu, 0x3ef4365cu, 0x3eec5aabu, 0x3ee4813cu, 0x3edcabf2u, 0x3ed4dcaeu, 0x3ecd154eu, 0x3ec557afu,
++        0x3ebda5abu, 0x3eb60116u, 0x3eae6bc5u, 0x3ea6e784u, 0x3e9f761du, 0x3e981955u, 0x3e90d2e9u, 0x3e89a493u,
++        0x3e829006u, 0x3e772dd7u, 0x3e6975d3u, 0x3e5bfb3au, 0x3e4ec134u, 0x3e41cadau, 0x3e351b35u, 0x3e28b53au,
++        0x3e1c9bcdu, 0x3e10d1bau, 0x3e0559bcu, 0x3df46cf6u, 0x3dded50bu, 0x3dc9f0aeu, 0x3db5c4a7u, 0x3da25589u,
++        0x3d8fa7bfu, 0x3d7b7f02u, 0x3d5941a8u, 0x3d389f16u, 0x3d199e90u, 0x3cf88dc2u, 0x3cc13cf1u, 0x3c8d56a8u,
++        0x3c39cc12u, 0x3bbfd553u, 0x3a51be63u, 0xbb7a3d6eu, 0xbc0307c1u, 0xbc403ff9u, 0xbc762c7bu, 0xbc9261b7u,
++        0xbca5fe7cu, 0xbcb5e97cu, 0xbcc220a0u, 0xbccaa2b4u, 0xbccf6f77u, 0xbcd08792u, 0xbccdeca1u, 0xbcc7a122u,
++        0xbcbda890u, 0xbcb00742u, 0xbc9ec276u, 0xbc89e06du, 0xbc62d057u, 0xbc2ac384u, 0xbbd757ebu, 0xbb16758fu,
++        0x3b1d4c1cu, 0x3bf61ce0u, 0x3c557be5u, 0x3c9b40a7u, 0x3ccf012eu, 0x3d02f863u, 0x3d1ffff2u, 0x3d3e8efbu,
++        0x3d5e9cfdu, 0x3d801075u, 0x3d9188c2u, 0x3da3b280u, 0x3db688b1u, 0x3dca0629u, 0x3dde2580u, 0x3df2e13fu,
++        0x3e0419d6u, 0x3e0f0b7du, 0x3e1a429eu, 0x3e25bc27u, 0x3e3174f1u, 0x3e3d69dfu, 0x3e4997a9u, 0x3e55fafau,
++        0x3e629089u, 0x3e6f54e6u, 0x3e7c449bu, 0x3e84ae11u, 0x3e8b4c00u, 0x3e91fa4du, 0x3e98b725u, 0x3e9f80c0u,
++        0x3ea65541u, 0x3ead32d1u, 0x3eb4178fu, 0x3ebb01a7u, 0x3ec1ef35u, 0x3ec8de52u, 0x3ecfcd27u, 0x3ed6b9cdu,
++        0x3edda25cu, 0x3ee484feu, 0x3eeb5fccu, 0x3ef230e8u, 0x3ef8f66fu, 0x3effae90u, 0x3f032bb8u, 0x3f067799u,
++        0x3f09ba08u, 0x3f0cf21cu, 0x3f101ef1u, 0x3f133fa3u, 0x3f165356u, 0x3f19592eu, 0x3f1c504eu, 0x3f1f37e5u,
++        0x3f220f1fu, 0x3f24d52eu, 0x3f278944u, 0x3f2a2aa0u, 0x3f2cb87du, 0x3f2f321bu, 0x3f3196c7u, 0x3f33e5c9u,
++    },
++    {
++        0x3f01f67bu, 0x3f05e20bu, 0x3f09caf5u, 0x3f0db045u, 0x3f11910cu, 0x3f156c58u, 0x3f19413bu, 0x3f1d0ec6u,
++        0x3f20d40du, 0x3f249026u, 0x3f284226u, 0x3f2be927u, 0x3f2f8446u, 0x3f33129fu, 0x3f369355u, 0x3f3a058au,
++        0x3f3d6867u, 0x3f40bb15u, 0x3f43fcc3u, 0x3f472ca3u, 0x3f4a49ecu, 0x3f4d53d6u, 0x3f5049a1u, 0x3f532a90u,
++        0x3f55f5eau, 0x3f58aafeu, 0x3f5b491bu, 0x3f5dcf9bu, 0x3f603dd9u, 0x3f629337u, 0x3f64cf1du, 0x3f66f0fau,
++        0x3f68f83fu, 0x3f6ae469u, 0x3f6cb4f6u, 0x3f6e696cu, 0x3f70015au, 0x3f717c52u, 0x3f72d9eeu, 0x3f7419d1u,
++        0x3f753ba0u, 0x3f763f0du, 0x3f7723cbu, 0x3f77e999u, 0x3f78903au, 0x3f79177au, 0x3f797f2cu, 0x3f79c72au,
++        0x3f79ef56u, 0x3f79f797u, 0x3f79dfdeu, 0x3f79a824u, 0x3f795066u, 0x3f78d8adu, 0x3f784104u, 0x3f778983u,
++        0x3f76b246u, 0x3f75bb71u, 0x3f74a52fu, 0x3f736fb4u, 0x3f721b39u, 0x3f70a800u, 0x3f6f1651u, 0x3f6d667cu,
++        0x3f6b98d8u, 0x3f69adc1u, 0x3f67a59cu, 0x3f6580d4u, 0x3f633fdau, 0x3f60e328u, 0x3f5e6b3au, 0x3f5bd898u,
++        0x3f592bc9u, 0x3f566562u, 0x3f5385f8u, 0x3f508e29u, 0x3f4d7e96u, 0x3f4a57e7u, 0x3f471acbu, 0x3f43c7f2u,
++        0x3f406015u, 0x3f3ce3f0u, 0x3f395442u, 0x3f35b1d1u, 0x3f31fd6au, 0x3f2e37d5u, 0x3f2a61e7u, 0x3f267c76u,
++        0x3f228856u, 0x3f1e8667u, 0x3f1a7786u, 0x3f165c99u, 0x3f12367fu, 0x3f0e0621u, 0x3f09cc6bu, 0x3f058a44u,
++        0x3f01409bu, 0x3ef9e0bdu, 0x3ef13502u, 0x3ee87fddu, 0x3edfc338u, 0x3ed700fdu, 0x3ece3b08u, 0x3ec57345u,
++        0x3ebcab9eu, 0x3eb3e5f1u, 0x3eab2428u, 0x3ea26827u, 0x3e99b3d3u, 0x3e910904u, 0x3e88699bu, 0x3e7faeecu,
++        0x3e6ea8c4u, 0x3e5dc46du, 0x3e4d0580u, 0x3e3c6f98u, 0x3e2c0629u, 0x3e1bccb7u, 0x3e0bc6b9u, 0x3df7eefdu,
++        0x3dd8c4c7u, 0x3dba1559u, 0x3d9be72cu, 0x3d7c80cdu, 0x3d424e81u, 0x3d094396u, 0x3ca2d711u, 0x3bd68f21u,
++    },
++    {
++        0x3f0060adu, 0x3f010ae6u, 0x3f01964du, 0x3f0202efu, 0x3f0250e1u, 0x3f02803eu, 0x3f02912au, 0x3f0283cfu,
++        0x3f02585eu, 0x3f020f10u, 0x3f01a826u, 0x3f0123e7u, 0x3f0082a0u, 0x3eff8950u, 0x3efdd4b5u, 0x3efbe833u,
++        0x3ef9c4a0u, 0x3ef76adbu, 0x3ef4dbd2u, 0x3ef2187fu, 0x3eef21e9u, 0x3eebf923u, 0x3ee89f4bu, 0x3ee5158eu,
++        0x3ee15d22u, 0x3edd7746u, 0x3ed96549u, 0x3ed52881u, 0x3ed0c24eu, 0x3ecc341du, 0x3ec77f62u, 0x3ec2a59au,
++        0x3ebda84bu, 0x3eb88905u, 0x3eb3495fu, 0x3eadeaf7u, 0x3ea86f75u, 0x3ea2d884u, 0x3e9d27d7u, 0x3e975f29u,
++        0x3e918038u, 0x3e8b8cc9u, 0x3e8586a6u, 0x3e7edf32u, 0x3e7292f0u, 0x3e662c2cu, 0x3e59ae91u, 0x3e4d1ddcu,
++        0x3e407dc0u, 0x3e33d200u, 0x3e271e54u, 0x3e1a6684u, 0x3e0dae4fu, 0x3e00f971u, 0x3de89764u, 0x3dcf5190u,
++        0x3db628edu, 0x3d9d24e0u, 0x3d844cc6u, 0x3d575010u, 0x3d267bc4u, 0x3cec5682u, 0x3c8cd983u, 0x3bba74bcu,
++        0xbbb90a09u, 0xbc89a9eeu, 0xbce37d79u, 0xbd1dd130u, 0xbd48feedu, 0xbd733af2u, 0xbd8e3c3du, 0xbda2556au,
++        0xbdb5e2e4u, 0xbdc8de99u, 0xbddb42b3u, 0xbded0969u, 0xbdfe2d2bu, 0xbe075449u, 0xbe0f3b26u, 0xbe16c8a8u,
++        0xbe1dfa51u, 0xbe24cdc5u, 0xbe2b40bdu, 0xbe315106u, 0xbe36fc85u, 0xbe3c4140u, 0xbe411d4eu, 0xbe458ee1u,
++        0xbe49944au, 0xbe4d2bf0u, 0xbe505456u, 0xbe530c1au, 0xbe5551f9u, 0xbe5724c8u, 0xbe58837au, 0xbe596d1fu,
++        0xbe59e0e3u, 0xbe59de11u, 0xbe59640du, 0xbe58725du, 0xbe5708a2u, 0xbe55269cu, 0xbe52cc25u, 0xbe4ff939u,
++        0xbe4cadf2u, 0xbe48ea83u, 0xbe44af3fu, 0xbe3ffc98u, 0xbe3ad321u, 0xbe35337du, 0xbe2f1e7au, 0xbe289501u,
++        0xbe21980du, 0xbe1a28c1u, 0xbe124858u, 0xbe09f830u, 0xbe0139b1u, 0xbdf01cdcu, 0xbddcf030u, 0xbdc8f0cbu,
++        0xbdb42278u, 0xbd9e8924u, 0xbd882901u, 0xbd620c8bu, 0xbd324b08u, 0xbd0116ffu, 0xbc9cf3e9u, 0xbbd3f123u,
++    },
++    {
++        0x3eff2f3au, 0x3efd5f70u, 0x3efb520fu, 0x3ef90738u, 0x3ef67f1au, 0x3ef3b9f7u, 0x3ef0b81bu, 0x3eed79e3u,
++        0x3ee9ffbau, 0x3ee64a19u, 0x3ee2598au, 0x3ede2ea0u, 0x3ed9ca02u, 0x3ed52c62u, 0x3ed0567eu, 0x3ecb4925u,
++        0x3ec60532u, 0x3ec08b8du, 0x3ebadd2bu, 0x3eb4fb0fu, 0x3eaee646u, 0x3ea89fecu, 0x3ea22926u, 0x3e9b8329u,
++        0x3e94af32u, 0x3e8dae89u, 0x3e868283u, 0x3e7e58fdu, 0x3e6f5bc8u, 0x3e60104du, 0x3e507987u, 0x3e409a7au,
++        0x3e307647u, 0x3e201019u, 0x3e0f6b2fu, 0x3dfd15aau, 0x3ddae4d1u, 0x3db84a9bu, 0x3d954df9u, 0x3d63ebdeu,
++        0x3d1c932fu, 0x3ca94087u, 0x3b421ad5u, 0xbc73683cu, 0xbd0643fcu, 0xbd500d4du, 0xbd8d1390u, 0xbdb24119u,
++        0xbdd787ccu, 0xbdfcdff7u, 0xbe11210bu, 0xbe23d33au, 0xbe3682beu, 0xbe492bcdu, 0xbe5bca8cu, 0xbe6e5b3au,
++        0xbe806d01u, 0xbe89a193u, 0xbe92c974u, 0xbe9be2c1u, 0xbea4eba6u, 0xbeade247u, 0xbeb6c4d7u, 0xbebf9182u,
++        0xbec84684u, 0xbed0e21bu, 0xbed96285u, 0xbee1c610u, 0xbeea0b08u, 0xbef22fc5u, 0xbefa32a8u, 0xbf01090au,
++        0xbf04e63du, 0xbf08b028u, 0xbf0c660cu, 0xbf10072cu, 0xbf1392d4u, 0xbf170853u, 0xbf1a66fbu, 0xbf1dae28u,
++        0xbf20dd36u, 0xbf23f38bu, 0xbf26f093u, 0xbf29d3bdu, 0xbf2c9c7eu, 0xbf2f4a56u, 0xbf31dcc7u, 0xbf345357u,
++        0xbf36ad9bu, 0xbf38eb28u, 0xbf3b0b9cu, 0xbf3d0e98u, 0xbf3ef3cdu, 0xbf40bae9u, 0xbf4263a7u, 0xbf43edc8u,
++        0xbf455914u, 0xbf46a55au, 0xbf47d26eu, 0xbf48e032u, 0xbf49ce88u, 0xbf4a9d5eu, 0xbf4b4ca8u, 0xbf4bdc61u,
++        0xbf4c4c8cu, 0xbf4c9d33u, 0xbf4cce69u, 0xbf4ce046u, 0xbf4cd2eau, 0xbf4ca67fu, 0xbf4c5b32u, 0xbf4bf13bu,
++        0xbf4b68d6u, 0xbf4ac24au, 0xbf49fde1u, 0xbf491befu, 0xbf481ccdu, 0xbf4700ddu, 0xbf45c885u, 0xbf447434u,
++        0xbf43045eu, 0xbf41797eu, 0xbf3fd417u, 0xbf3e14afu, 0xbf3c3bd3u, 0xbf3a4a1au, 0xbf384019u, 0xbf361e72u,
++    },
++    {
++        0x3f800000u, 0x3f7fb10fu, 0x3f7ec46du, 0x3f7d3aacu, 0x3f7b14beu, 0x3f7853f8u, 0x3f74fa0bu, 0x3f710908u,
++        0x3f6c835eu, 0x3f676bd8u, 0x3f61c598u, 0x3f5b941au, 0x3f54db31u, 0x3f4d9f02u, 0x3f45e403u, 0x3f3daef9u,
++        0x3f3504f3u, 0x3f2beb4au, 0x3f226799u, 0x3f187fc0u, 0x3f0e39dau, 0x3f039c3du, 0x3ef15aeau, 0x3edae880u,
++        0x3ec3ef15u, 0x3eac7cd4u, 0x3e94a031u, 0x3e78cfccu, 0x3e47c5c2u, 0x3e164083u, 0x3dc8bd36u, 0x3d48fb30u,
++        0x248d3000u, 0xbd48fb30u, 0xbdc8bd36u, 0xbe164083u, 0xbe47c5c2u, 0xbe78cfccu, 0xbe94a031u, 0xbeac7cd4u,
++        0xbec3ef15u, 0xbedae880u, 0xbef15aeau, 0xbf039c3du, 0xbf0e39dau, 0xbf187fc0u, 0xbf226799u, 0xbf2beb4au,
++        0xbf3504f3u, 0xbf3daef9u, 0xbf45e403u, 0xbf4d9f02u, 0xbf54db31u, 0xbf5b941au, 0xbf61c598u, 0xbf676bd8u,
++        0xbf6c835eu, 0xbf710908u, 0xbf74fa0bu, 0xbf7853f8u, 0xbf7b14beu, 0xbf7d3aacu, 0xbf7ec46du, 0xbf7fb10fu,
++        0x3eff2f3au, 0x3efd5f70u, 0x3efb520fu, 0x3ef90738u, 0x3ef67f1au, 0x3ef3b9f7u, 0x3ef0b81bu, 0x3eed79e3u,
++        0x3ee9ffbau, 0x3ee64a19u, 0x3ee2598au, 0x3ede2ea0u, 0x3ed9ca02u, 0x3ed52c62u, 0x3ed0567eu, 0x3ecb4925u,
++        0x3ec60532u, 0x3ec08b8du, 0x3ebadd2bu, 0x3eb4fb0fu, 0x3eaee646u, 0x3ea89fecu, 0x3ea22926u, 0x3e9b8329u,
++        0x3e94af32u, 0x3e8dae89u, 0x3e868283u, 0x3e7e58fdu, 0x3e6f5bc8u, 0x3e60104du, 0x3e507987u, 0x3e409a7au,
++        0x3e307647u, 0x3e201019u, 0x3e0f6b2fu, 0x3dfd15aau, 0x3ddae4d1u, 0x3db84a9bu, 0x3d954df9u, 0x3d63ebdeu,
++        0x3d1c932fu, 0x3ca94087u, 0x3b421ad5u, 0xbc73683cu, 0xbd0643fcu, 0xbd500d4du, 0xbd8d1390u, 0xbdb24119u,
++        0xbdd787ccu, 0xbdfcdff7u, 0xbe11210bu, 0xbe23d33au, 0xbe3682beu, 0xbe492bcdu, 0xbe5bca8cu, 0xbe6e5b3au,
++        0xbe806d01u, 0xbe89a193u, 0xbe92c974u, 0xbe9be2c1u, 0xbea4eba6u, 0xbeade247u, 0xbeb6c4d7u, 0xbebf9182u,
++    },
++    {
++        0x80000000u, 0xbd48fb30u, 0xbdc8bd36u, 0xbe164083u, 0xbe47c5c2u, 0xbe78cfccu, 0xbe94a031u, 0xbeac7cd4u,
++        0xbec3ef15u, 0xbedae880u, 0xbef15aeau, 0xbf039c3du, 0xbf0e39dau, 0xbf187fc0u, 0xbf226799u, 0xbf2beb4au,
++        0xbf3504f3u, 0xbf3daef9u, 0xbf45e403u, 0xbf4d9f02u, 0xbf54db31u, 0xbf5b941au, 0xbf61c598u, 0xbf676bd8u,
++        0xbf6c835eu, 0xbf710908u, 0xbf74fa0bu, 0xbf7853f8u, 0xbf7b14beu, 0xbf7d3aacu, 0xbf7ec46du, 0xbf7fb10fu,
++        0xbf800000u, 0xbf7fb10fu, 0xbf7ec46du, 0xbf7d3aacu, 0xbf7b14beu, 0xbf7853f8u, 0xbf74fa0bu, 0xbf710908u,
++        0xbf6c835eu, 0xbf676bd8u, 0xbf61c598u, 0xbf5b941au, 0xbf54db31u, 0xbf4d9f02u, 0xbf45e403u, 0xbf3daef9u,
++        0xbf3504f3u, 0xbf2beb4au, 0xbf226799u, 0xbf187fc0u, 0xbf0e39dau, 0xbf039c3du, 0xbef15aeau, 0xbedae880u,
++        0xbec3ef15u, 0xbeac7cd4u, 0xbe94a031u, 0xbe78cfccu, 0xbe47c5c2u, 0xbe164083u, 0xbdc8bd36u, 0xbd48fb30u,
++        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++        0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++    },
++    {
++        0x00000000u, 0x00000040u, 0x00000020u, 0x00000060u, 0x00000010u, 0x00000050u, 0x00000030u, 0x00000070u,
++        0x00000008u, 0x00000048u, 0x00000028u, 0x00000068u, 0x00000018u, 0x00000058u, 0x00000038u, 0x00000078u,
++        0x00000004u, 0x00000044u, 0x00000024u, 0x00000064u, 0x00000014u, 0x00000054u, 0x00000034u, 0x00000074u,
++        0x0000000cu, 0x0000004cu, 0x0000002cu, 0x0000006cu, 0x0000001cu, 0x0000005cu, 0x0000003cu, 0x0000007cu,
++        0x00000002u, 0x00000042u, 0x00000022u, 0x00000062u, 0x00000012u, 0x00000052u, 0x00000032u, 0x00000072u,
++        0x0000000au, 0x0000004au, 0x0000002au, 0x0000006au, 0x0000001au, 0x0000005au, 0x0000003au, 0x0000007au,
++        0x00000006u, 0x00000046u, 0x00000026u, 0x00000066u, 0x00000016u, 0x00000056u, 0x00000036u, 0x00000076u,
++        0x0000000eu, 0x0000004eu, 0x0000002eu, 0x0000006eu, 0x0000001eu, 0x0000005eu, 0x0000003eu, 0x0000007eu,
++        0x00000001u, 0x00000041u, 0x00000021u, 0x00000061u, 0x00000011u, 0x00000051u, 0x00000031u, 0x00000071u,
++        0x00000009u, 0x00000049u, 0x00000029u, 0x00000069u, 0x00000019u, 0x00000059u, 0x00000039u, 0x00000079u,
++        0x00000005u, 0x00000045u, 0x00000025u, 0x00000065u, 0x00000015u, 0x00000055u, 0x00000035u, 0x00000075u,
++        0x0000000du, 0x0000004du, 0x0000002du, 0x0000006du, 0x0000001du, 0x0000005du, 0x0000003du, 0x0000007du,
++        0x00000003u, 0x00000043u, 0x00000023u, 0x00000063u, 0x00000013u, 0x00000053u, 0x00000033u, 0x00000073u,
++        0x0000000bu, 0x0000004bu, 0x0000002bu, 0x0000006bu, 0x0000001bu, 0x0000005bu, 0x0000003bu, 0x0000007bu,
++        0x00000007u, 0x00000047u, 0x00000027u, 0x00000067u, 0x00000017u, 0x00000057u, 0x00000037u, 0x00000077u,
++        0x0000000fu, 0x0000004fu, 0x0000002fu, 0x0000006fu, 0x0000001fu, 0x0000005fu, 0x0000003fu, 0x0000007fu,
++    },
++};
++static const float pspdb_unity_window[512] = {
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++    1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
++};
+--- /dev/null
++++ b/libavcodec/pspdb_gain_apply.h
+@@ -0,0 +1,27 @@
++/* PSPDB native ATRAC3 arithmetic, GPL-3.0-or-later.
++ * Mathematical translation of the original PSX ATRAC3 decoder.
++ * Keep operation order and explicit binary32 stores: these are observable.
++ */
++#include "pspdb_sony_gain.c"
++static void pspdb_apply_sony_gain(const float *input, float *previous,
++                                  const AtracGainInfo *current, const AtracGainInfo *next,
++                                  float *output) {
++    int32_t first[16] = {0}, second[16] = {0};
++    float factors[512];
++    first[0] = current->num_points;
++    second[0] = next->num_points;
++    for (int i = 0; i < first[0]; ++i) {
++        first[1 + i] = current->loc_code[i];
++        first[8 + i] = current->lev_code[i];
++    }
++    for (int i = 0; i < second[0]; ++i) {
++        second[1 + i] = next->loc_code[i];
++        second[8 + i] = next->lev_code[i];
++    }
++    sony_gain512(first, second, factors);
++    /* Sony 0x48370: store pre-scaled upper overlap, add lower in x87 precision. */
++    for (unsigned i = 0; i < 256; ++i) {
++        ((volatile float *)output)[i] = (long double)input[i] * factors[i] + previous[i];
++        ((volatile float *)previous)[i] = (long double)input[256 + i] * factors[256 + i];
++    }
++}

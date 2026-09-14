@@ -47,7 +47,7 @@ def tool_provenance(kind, tool=None):
     if kind == 'psx':
         return dict(result, name='PSXtract-2',
                     sha256=hashlib.sha256(tool.resolve(strict=True).read_bytes()).hexdigest(),
-                    options=['<parent.pbp>', 'reconstructed-disc', 'wine-sha256:' + hashlib.sha256(executable('PSPDB_WINE', 'wine').resolve(strict=True).read_bytes()).hexdigest()])
+                    options=['<parent.pbp>', 'reconstructed-disc', 'native-linux'])
     raise ValueError(f'Unknown extractor kind: {kind}')
 
 
@@ -57,7 +57,7 @@ def current_provenance():
         try:
             tool = None
             if kind == 'psx':
-                tool = executable('PSPDB_PSXTRACT2', 'psxtract.exe')
+                tool = executable('PSPDB_PSXTRACT', 'pspdb-psxtract')
             elif kind == 'document':
                 tool = executable('PSPDB_DOCUMENT', 'pspdb-document')
             current[kind] = tool_provenance(kind, tool)
@@ -69,20 +69,17 @@ def current_provenance():
 def extract_psx(source, output, tool):
     # Whole-PBP context belongs under DATA.BIN in the parent inventory.
     tool = tool.resolve(strict=True)
-    wine = executable('PSPDB_WINE', 'wine').resolve(strict=True)
     provenance = tool_provenance('psx', tool)
-    env = dict(os.environ, WINEDEBUG='-all', WINEDLLOVERRIDES='mscoree,mshtml,winemenubuilder.exe=d')
-    env.setdefault('WINEPREFIX', str(Path.home() / '.cache/pspdb/wine-psxtract2'))
-    with tempfile.TemporaryDirectory(prefix='pspdb-psxtract2-') as tmp:
+    with tempfile.TemporaryDirectory(prefix='pspdb-psxtract-') as tmp:
         work = Path(tmp)
-        result = subprocess.run([str(wine), str(tool), str(source.resolve())], cwd=work,
-                                env=env, capture_output=True, text=True, errors='replace', timeout=900)
+        result = subprocess.run([str(tool), str(source.resolve())], cwd=work,
+                                capture_output=True, text=True, errors='replace', timeout=900)
         log = result.stdout + result.stderr
         discs = sorted(work.glob('*.bin'))
         # A Redump MD5 mismatch is a known cosmetic limitation for some titles.
-        if result.returncode or not discs or 'Disc successfully converted' not in log or re.search(r'ERROR:|audio conversion.*failed|cannot be opened', log, re.I):
+        if result.returncode or not discs or re.search(r'ERROR:|audio conversion.*failed|cannot be opened', log, re.I):
             raise ValueError('PSXtract-2 failed: ' + log[-6000:])
-        for i, disc in enumerate(discs, 1):
+        for disc in discs:
             size = disc.stat().st_size
             if not size or size % 2352:
                 raise ValueError('Invalid reconstructed CD sector count')
@@ -90,9 +87,11 @@ def extract_psx(source, output, tool):
                 stream.seek(16 * 2352 + 24)
                 if stream.read(7) != b'\x01CD001\x01':
                     raise ValueError('Reconstructed disc lacks ISO9660 descriptor')
+        for i, disc in enumerate(discs, 1):
             shutil.move(disc, output / ('disc.bin' if len(discs) == 1 else f'disc-{i}.bin'))
         # Keep decoded source-backed auxiliary containers; CUE/logs stay tool outputs.
-        for name in ('ISO_HEADER.BIN', 'ISO_MAP.BIN', 'STARTDAT.BIN', 'SPECIAL_DATA.BIN', 'TRASH.BIN', 'OVERDUMP.BIN'):
+        for name in ('ISO_HEADER.BIN', *(f'ISO_HEADER_{i}.BIN' for i in range(1, 6)),
+                     'ISO_MAP.BIN', 'STARTDAT.BIN', 'SPECIAL_DATA.BIN', 'TRASH.BIN', 'OVERDUMP.BIN'):
             path = work / 'TEMP' / name
             if path.is_file() and path.stat().st_size:
                 shutil.copyfile(path, output / name)
@@ -149,7 +148,7 @@ def main():
         VERSIONS = json.loads(args.versions)
     try:
         if args.kind == 'psx':
-            provenance = extract_psx(args.source, args.output, executable('PSPDB_PSXTRACT2', 'psxtract.exe'))
+            provenance = extract_psx(args.source, args.output, executable('PSPDB_PSXTRACT', 'pspdb-psxtract'))
         else:
             provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
     except (OSError, ValueError, EOFError, subprocess.SubprocessError) as exc:

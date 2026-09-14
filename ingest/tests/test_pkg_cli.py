@@ -178,15 +178,15 @@ class PkgCliTests(unittest.TestCase):
                 + 'assert source == ' + repr(pbp) + '\n'
                 + 'pathlib.Path(sys.argv[2]).write_bytes(' + repr(compressed) + ')\n')
             helper.chmod(0o755)
-            wine = base/'wine'
+            psxtract = base/'psxtract'
             disc = bytearray(20 * 2352)
             disc[16*2352+24:16*2352+31] = b'\x01CD001\x01'
-            wine.write_text('#!' + sys.executable + '\nimport pathlib,sys\n'
-                + 'assert pathlib.Path(sys.argv[2]).read_bytes() == ' + repr(pbp) + '\n'
+            psxtract.write_text('#!' + sys.executable + '\nimport pathlib,sys\n'
+                + 'assert pathlib.Path(sys.argv[1]).read_bytes() == ' + repr(pbp) + '\n'
                 + 'pathlib.Path("fixture.bin").write_bytes(' + repr(bytes(disc)) + ')\n'
                 + 'print("Disc successfully converted using prebaked CUE file!")\n')
-            wine.chmod(0o755)
-            with patch.dict(os.environ, {'PSPDB_POPS': str(helper), 'PSPDB_PSXTRACT2': str(helper), 'PSPDB_WINE': str(wine)}):
+            psxtract.chmod(0o755)
+            with patch.dict(os.environ, {'PSPDB_POPS': str(helper), 'PSPDB_PSXTRACT': str(psxtract)}):
                 run = self.run_ingest(inputs, '--catalog', catalog)
                 self.assertNotEqual(run.returncode, 0, run.stderr)
                 self.assertFalse(result_path(catalog, 'pkg', hashlib.sha256(package).hexdigest()).exists())

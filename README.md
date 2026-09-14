@@ -491,10 +491,11 @@ suffix that expands as needed. Full content IDs remain searchable. Hash-based
 catalog identity and links remain stable when a display title changes.
 
 
-PS1 PKG ingest uses Zig-PSP for PBP/SFO parsing and PSXtract-2 under Wine for
-full disc reconstruction, attached beneath the original `DATA.BIN` section.
-Configure `PSPDB_PSXTRACT2`, `PSPDB_WINE`, and optionally `WINEPREFIX`, or put
-`psxtract.exe` and `wine` on PATH. See [PS1 extraction setup and validation](tools/psxtract/README.md).
+PS1 PKG ingest uses Zig-PSP for PBP/SFO parsing and native Linux PSXtract-2 for
+full disc reconstruction, attached beneath the original `DATA.BIN` occurrence.
+Set `PSPDB_PSXTRACT` or put `pspdb-psxtract` on PATH. The native helper includes
+the exact ATRAC3 decoder; Wine and external audio-converter executables are not used.
+PSX remains a file-based helper. See [PS1 extraction setup and validation](tools/psxtract/README.md).
 
 Standard VMP memory-card wrappers expose their unchanged 131072-byte raw card as
 an `.mcr` child. This follows the
