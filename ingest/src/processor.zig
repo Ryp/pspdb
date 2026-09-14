@@ -68,6 +68,22 @@ pub const Dispatch = struct {
 
 pub const Counts = struct { stored: usize = 0, reused: usize = 0 };
 
+fn hash_source(bytes: []const u8) struct { sha256: [64]u8, sha1: [40]u8 } {
+    var sha256 = std.crypto.hash.sha2.Sha256.init(.{});
+    var sha1 = std.crypto.hash.Sha1.init(.{});
+    var offset: usize = 0;
+    while (offset < bytes.len) {
+        const end = offset + @min(bytes.len - offset, 64 * 1024);
+        sha256.update(bytes[offset..end]);
+        sha1.update(bytes[offset..end]);
+        offset = end;
+    }
+    return .{
+        .sha256 = std.fmt.bytesToHex(sha256.finalResult(), .lower),
+        .sha1 = std.fmt.bytesToHex(sha1.finalResult(), .lower),
+    };
+}
+
 fn read_metadata(allocator: std.mem.Allocator, bytes: []const u8) !Result {
     if (bytes.len == 0) return error.EmptyFile;
     const umd_bytes = (try iso.read_file(allocator, bytes, "UMD_DATA.BIN")) orelse return error.MissingUmdData;
@@ -98,18 +114,9 @@ pub fn process_iso(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, 
 }
 
 pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
-    var sha256 = std.crypto.hash.sha2.Sha256.init(.{});
-    var sha1 = std.crypto.hash.Sha1.init(.{});
-    var offset: usize = 0;
-    while (offset < bytes.len) {
-        const end = offset + @min(bytes.len - offset, 64 * 1024);
-        sha256.update(bytes[offset..end]);
-        sha1.update(bytes[offset..end]);
-        offset = end;
-    }
-    const iso_hash = std.fmt.bytesToHex(sha256.finalResult(), .lower);
+    const hashes = hash_source(bytes);
     if (catalog) |root| {
-        if (try catalog_io.contains(allocator, io, root, iso_hash, bytes.len, "iso")) return null;
+        if (try catalog_io.contains(allocator, io, root, hashes.sha256, bytes.len, "iso")) return null;
     }
     var result = try read_metadata(allocator, bytes);
     errdefer result.deinit(allocator);
@@ -120,8 +127,8 @@ pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
     result.stored = inventory.counts.stored;
     result.reused = inventory.counts.reused;
     result.entries = try inventory.finish();
-    result.sha256 = iso_hash;
-    result.sha1 = std.fmt.bytesToHex(sha1.finalResult(), .lower);
+    result.sha256 = hashes.sha256;
+    result.sha1 = hashes.sha1;
     return result;
 }
 
@@ -129,13 +136,18 @@ pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
 /// buffers so the existing extraction queue can outlive the package walk.
 pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
     const package = try pkg.Package.init(bytes);
-    var digest: [32]u8 = undefined;
-    var sha1: [20]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
-    std.crypto.hash.Sha1.hash(bytes, &sha1, .{});
-    const hash = std.fmt.bytesToHex(digest, .lower);
-    if (cache) |value| if (try catalog_io.contains(allocator, io, value, hash, bytes.len, "pkg")) return null;
-    var result: Result = .{ .kind = .pkg, .size_bytes = bytes.len, .sha256 = hash, .sha1 = std.fmt.bytesToHex(sha1, .lower), .content_type = package.content_type, .package_flags = package.package_flags };
+    const hashes = hash_source(bytes);
+    if (cache) |value| {
+        if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, "pkg")) return null;
+    }
+    var result: Result = .{
+        .kind = .pkg,
+        .size_bytes = bytes.len,
+        .sha256 = hashes.sha256,
+        .sha1 = hashes.sha1,
+        .content_type = package.content_type,
+        .package_flags = package.package_flags,
+    };
     errdefer result.deinit(allocator);
     result.content_id = try allocator.dupe(u8, package.content_id);
     if (try package.read_file(allocator, "PARAM.SFO")) |metadata| {
