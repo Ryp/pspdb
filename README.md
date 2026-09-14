@@ -30,13 +30,16 @@ Pass multiple input folders as positional arguments to ingest them together:
 ```
 
 All folders share one worker pool, thread cap, catalog/store configuration, and
-combined summary. A failed folder does not stop the others; any failure makes
-the command exit nonzero. Overlapping folders are scanned as supplied, without
-deduplicating their paths.
+combined summary. A failed folder does not stop the others. Source I/O, storage
+integrity and catalog publication failures make the command exit nonzero.
+Extractor failures are recorded in JSON instead of rejecting otherwise readable
+sources. Overlapping folders are scanned as supplied, without deduplicating paths.
 
-Discovers ISO and PKG files, including members of ZIP archives. ISOs require a
-root `UMD_DATA.BIN`. Retail PSP/PS1 PKGs are decrypted by the native PKG extractor,
-preserving every file and directory at its original path. `--store` is optional. `--threads N` caps threads (default: logical CPU
+Discovers ISO and PKG files, including members of ZIP archives. Successful ISO
+extraction requires a root `UMD_DATA.BIN`; missing or invalid metadata is recorded
+as an extraction error once source identity is established. Retail PSP/PS1 PKGs
+are decrypted by the native PKG extractor, preserving file and directory paths.
+`--store` is optional. `--threads N` caps threads (default: logical CPU
 count); `--no-progress` disables terminal progress. `--skip-existing` skips current
 ISO/PKG results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
 
@@ -57,14 +60,25 @@ catalog/iso/v1/<source-sha256>-tree.json
 The ingest record contains source metadata; the tree contains the immediate
 output inventory and tool provenance. See the [metadata schema](schemas/record.schema.json)
 and [tree schema](schemas/tree.schema.json). The tree is published before its
-ingest record. Results are immutable within a revision; different results in the
-same namespace raise `CatalogConflict`. New revisions preserve previous results.
+ingest record. Successful results are immutable within a revision; conflicting
+successful results raise `CatalogConflict`. A tree with an `error` string, including
+an error in an inline extraction, is an incomplete attempt and may be replaced on
+retry. Source metadata identity records remain immutable. New revisions preserve
+previous successful results.
 The same bytes may have separate source roles: an original `iso` observation and
 a nested `iso9660` extraction retain independent inventories and provenance.
 Their SHA-256/size byte identity and stored object remain shared.
 Inputs are read-only. Catalog JSON is tracked in Git; object stores and source
 images stay local. See [CONTRIBUTING.md](CONTRIBUTING.md) to submit ingested content
 and validate new metadata/tree pairs.
+
+Failed extractors publish a nonempty `error` string on their extraction tree
+(or occurrence-scoped inline extraction), for example `"error": "UnsupportedEdat"`.
+The original file's path, size and hash remain cataloged, as do successful siblings.
+An error is not a claim of successful decoding; failed authentication never
+publishes unauthenticated plaintext. The website shows an error icon and message
+on the affected file. Error-bearing results are never fresh for `--skip-existing`,
+so supplying a missing helper or license allows a later run to retry them.
 
 SFO metadata is parsed in memory with the pinned Zig-PSP zSFOTool code. A
 [dependency patch](tools/patches/zig-psp-sfo-memory.md) exposes its reader and
@@ -104,9 +118,10 @@ retains precedence over outer package metadata regardless of entry order.
 The PKG extractor supports retail PSP and PS1 packages, including standard PSP
 theme packages (content type 9), not debug, native PS3, or Vita packages.
 Themes may legitimately omit `PARAM.SFO`; no title metadata is invented. Present
-malformed metadata still fails. Theme payloads retain their original bytes and
-paths, including opaque PSPEDAT wrappers. Package decryption does not imply that every inner DRM payload is
-supported: as with ISOs, a nested extractor failure fails that source's full ingest.
+malformed metadata records an extraction error. Theme payloads retain their original bytes and
+paths, including opaque PSPEDAT wrappers. Package decryption does not imply that every
+inner DRM payload is supported: nested extraction failures are recorded on their
+trees without discarding the package inventory.
 
 ## PSN reference inventory and bounded acquisition
 
@@ -205,7 +220,7 @@ The status command is read-only. It compares revisions, executable SHA-256 hashe
 and extraction options (including the RCOMage INI digest), and follows child hashes
 to report affected ISO and PKG roots. Missing tools are reported as unavailable, never current.
 If a tool/configuration changes within the same revision, bump that extractor's
-revision before regenerating; existing results will not be overwritten.
+revision before regenerating successful results; those results will not be overwritten.
 Changes to adapter behavior, naming rules, metadata parsing, or file detection also
 require a revision bump for the extractor whose output changes. `schema_version`
 remains the JSON format version, independent of extractor revisions.
@@ -220,8 +235,9 @@ Intermediate freshness is scoped by extractor kind and source hash:
 `fresh_trees[kind][sha256]` in status JSON. A fresh original ISO observation does
 not authorize reuse of a stale ISO9660 extraction of the same bytes.
 
-The website/export selects the highest numeric **complete** revision per extractor
-kind and source hash, so old revisions do not create duplicate browser rows. An incomplete newer
+The website/export selects the highest numeric **complete metadata/tree pair** per
+extractor kind and source hash, so old revisions do not create duplicate browser rows.
+An error-bearing tree is still a published pair, not a successful extraction. An incomplete newer
 pair does not hide an older complete result. Legacy `catalog/<extractor>/<hash>.json`
 and `catalog/trees/<hash>.json` remain readable, but the status command reports
 them as unversioned; regeneration writes versioned pairs and leaves them intact.
@@ -418,7 +434,7 @@ retain intermediate suffixes such as `.prx.gz` or `.prx.kl4e`.
 Shared inventories retain canonical paths, so identical content can appear
 under different filenames without conflicting catalog records.
 RCO outputs include native resources and generated XML; provenance includes the
-binary hash and configuration digest. Child failures fail their ISO's ingest.
+binary hash and configuration digest. Child failures are recorded on their extraction trees.
 `--skip-existing` skips an ISO only when its result and known reachable extraction
 results are current. Current intermediate trees can be reused from the object store
 while outdated descendants are extracted again. The thread
@@ -450,7 +466,8 @@ The key boundary selects a regular, nonsymlink, exactly 16-byte
 Override that directory with `PSPDB_RAP_DIR`; otherwise `XDG_DATA_HOME` or
 `~/.local/share/pspdb/licenses` supplies the default. License bytes never enter
 catalog JSON or provenance. Missing/invalid licenses and failed authentication
-fail the ingest root. EDAT revision 2 records native `pspdb-ingest` provenance;
+produce an EDAT extraction error, without rejecting the parent inventory or
+publishing plaintext. EDAT revision 2 records native `pspdb-ingest` provenance;
 ISO/PKG revision 2 enables complete recursive inventories without a store.
 
 EDAT extraction supports license-2 NPD v1/flags-0 and v2/flags-0-or-0x0c files,
@@ -553,8 +570,8 @@ identity and frame offsets/sizes/hashes. This generated metadata is not an
 extracted file; the output directory and DOCUMENT inventory contain only page PNGs.
 
 All expected pages must pass PNG CRC, end-boundary and pixel decoding checks before
-atomic publication. Late-page failure leaves the caller's output empty and fails
-its ingest root. No whole-disc reconstruction or inferred PBP key is used.
+atomic publication. Late-page failure leaves the caller's output empty and records
+an extraction error in the parent inventory. No whole-disc reconstruction or inferred PBP key is used.
 Support is limited to the exercised 99-slot families with PS3 frames referencing
 PSP frames. Generic PGD, 999-slot tables and unique PS3-only frames remain unsupported.
 Resource limits are 64 MiB input, 256 MiB total page frames, 4096 encrypted-range

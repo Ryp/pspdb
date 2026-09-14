@@ -22,6 +22,7 @@ pub const InlineExtraction = struct {
     name_rule: []const u8 = "source_stem",
     entries: []Entry,
     dependencies: []Dependency = &.{},
+    @"error": ?[]const u8 = null,
     owned_provenance: ?std.json.Parsed(extractor.Provenance) = null,
 
     pub fn jsonStringify(self: InlineExtraction, json: *std.json.Stringify) !void {
@@ -36,6 +37,10 @@ pub const InlineExtraction = struct {
         try json.write(self.name_rule);
         try json.objectField("entries");
         try json.write(self.entries);
+        if (self.@"error") |message| {
+            try json.objectField("error");
+            try json.write(message);
+        }
         if (self.dependencies.len != 0) {
             try json.objectField("dependencies");
             try json.write(self.dependencies);
@@ -57,6 +62,7 @@ pub const Entry = struct {
             for (tree.entries) |entry| entry.deinit(allocator);
             allocator.free(tree.entries);
             allocator.free(tree.sha256);
+            if (tree.@"error") |message| allocator.free(message);
             for (tree.dependencies) |dependency| dependency.deinit(allocator);
             allocator.free(tree.dependencies);
             if (tree.owned_provenance) |provenance| provenance.deinit();
@@ -100,11 +106,14 @@ pub const Result = struct {
     video_sfo_bytes: []u8 = &.{},
     updater_sfo_bytes: []u8 = &.{},
     metadata: sfo.Metadata = .{},
+    has_metadata: bool = true,
     entries: []Entry = &.{},
+    @"error": ?[]const u8 = null,
     sha256: [64]u8 = undefined,
     sha1: [40]u8 = undefined,
     stored: usize = 0,
     reused: usize = 0,
+    extraction_errors: usize = 0,
 
     pub fn deinit(self: Result, allocator: std.mem.Allocator) void {
         allocator.free(self.content_id);
@@ -116,6 +125,7 @@ pub const Result = struct {
         allocator.free(self.game_sfo_bytes);
         allocator.free(self.video_sfo_bytes);
         allocator.free(self.updater_sfo_bytes);
+        if (self.@"error") |message| allocator.free(message);
         for (self.entries) |entry| entry.deinit(allocator);
         allocator.free(self.entries);
     }

@@ -66,9 +66,32 @@ pub const Dispatch = struct {
     }
 };
 
-pub const Counts = struct { stored: usize = 0, reused: usize = 0 };
+pub const Counts = struct { stored: usize = 0, reused: usize = 0, extraction_errors: usize = 0 };
 
-fn hash_source(bytes: []const u8) struct { sha256: [64]u8, sha1: [40]u8 } {
+fn orchestrator(kind: extractor.Kind) extractor.Provenance {
+    return .{ .name = "pspdb-ingest", .version = switch (kind) {
+        inline else => |value| @field(revisions, @tagName(value)),
+    } };
+}
+
+// Only memory-backed decoder/parser errors cross this boundary. I/O and queue
+// callbacks mark their inventory fatal before unwinding through a parser.
+fn extraction_error(inventory: *Inventory, err: anyerror) ![]const u8 {
+    if (inventory.fatal or err == error.OutOfMemory or err == error.CryptoFailure) return err;
+    inventory.counts.extraction_errors += 1;
+    std.debug.print("Extraction error: {s}\n", .{@errorName(err)});
+    return inventory.allocator.dupe(u8, @errorName(err));
+}
+
+const SourceHashes = struct { sha256: [64]u8, sha1: [40]u8 };
+
+fn source_error(allocator: std.mem.Allocator, bytes: []const u8, hashes: SourceHashes, kind: @FieldType(Result, "kind"), err: anyerror) !Result {
+    if (err == error.OutOfMemory or err == error.CryptoFailure) return err;
+    std.debug.print("Extraction error: {s}\n", .{@errorName(err)});
+    return .{ .kind = kind, .size_bytes = bytes.len, .sha256 = hashes.sha256, .sha1 = hashes.sha1, .has_metadata = false, .@"error" = try allocator.dupe(u8, @errorName(err)), .extraction_errors = 1 };
+}
+
+fn hash_source(bytes: []const u8) SourceHashes {
     var sha256 = std.crypto.hash.sha2.Sha256.init(.{});
     var sha1 = std.crypto.hash.Sha1.init(.{});
     var offset: usize = 0;
@@ -118,15 +141,18 @@ pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
     if (catalog) |root| {
         if (try catalog_io.contains(allocator, io, root, hashes.sha256, bytes.len, "iso")) return null;
     }
-    var result = try read_metadata(allocator, bytes);
+    var result = read_metadata(allocator, bytes) catch |err| return try source_error(allocator, bytes, hashes, .iso, err);
     errdefer result.deinit(allocator);
     var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .pair_documents = true, .paths = .init(allocator) };
     defer inventory.deinit();
-    try iso.walk(allocator, bytes, &inventory, Inventory.emit_view);
+    iso.walk(allocator, bytes, &inventory, Inventory.emit_view) catch |err| {
+        result.@"error" = try extraction_error(&inventory, err);
+    };
     try inventory.extract_documents();
     result.stored = inventory.counts.stored;
     result.reused = inventory.counts.reused;
-    result.entries = try inventory.finish();
+    result.entries = try inventory.finish_result(&result.@"error");
+    result.extraction_errors = inventory.counts.extraction_errors;
     result.sha256 = hashes.sha256;
     result.sha1 = hashes.sha1;
     return result;
@@ -135,29 +161,16 @@ pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
 /// PKGs are roots just like ISOs; decrypted entries retain their own backing
 /// buffers so the existing extraction queue can outlive the package walk.
 pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
-    const package = try pkg.Package.init(bytes);
     const hashes = hash_source(bytes);
     if (cache) |value| {
         if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, "pkg")) return null;
     }
-    var result: Result = .{
-        .kind = .pkg,
-        .size_bytes = bytes.len,
-        .sha256 = hashes.sha256,
-        .sha1 = hashes.sha1,
-        .content_type = package.content_type,
-        .package_flags = package.package_flags,
-    };
+    if (bytes.len == 0) return try source_error(allocator, bytes, hashes, .pkg, error.EmptyFile);
+    const package = pkg.Package.init(bytes) catch |err| return try source_error(allocator, bytes, hashes, .pkg, err);
+    var result = read_pkg_metadata(allocator, package) catch |err| return try source_error(allocator, bytes, hashes, .pkg, err);
     errdefer result.deinit(allocator);
-    result.content_id = try allocator.dupe(u8, package.content_id);
-    if (try package.read_file(allocator, "PARAM.SFO")) |metadata| {
-        result.pkg_sfo_bytes = metadata;
-        if (metadata.len == 0) return error.InvalidSfo;
-        result.metadata = try sfo.parsePkg(allocator, metadata, &result.pkg_title);
-    } else if (package.content_type != 9) {
-        // PSP theme PKGs can contain only a theme payload, with no SFO or PBP.
-        return error.MissingPkgMetadata;
-    }
+    result.sha256 = hashes.sha256;
+    result.sha1 = hashes.sha1;
     var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .pair_documents = true, .paths = .init(allocator) };
     defer inventory.deinit();
     const PackageInventory = struct {
@@ -170,18 +183,38 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
             if (!std.mem.eql(u8, name, "USRDIR/CONTENT/EBOOT.PBP")) return;
             // Use the inventory's already-decrypted PBP rather than decrypting
             // its entire game payload a second time just to read PARAM.SFO.
-            const parsed = try containers.parse_pbp(view.bytes);
+            const parsed = containers.parse_pbp(view.bytes) catch return;
             self.result.pbp_sfo_bytes = try self.inventory.allocator.dupe(u8, parsed.get("PARAM.SFO").?);
-            const inner = try sfo.parsePkg(self.inventory.allocator, self.result.pbp_sfo_bytes, &self.result.pbp_title);
+            const inner = sfo.parsePkg(self.inventory.allocator, self.result.pbp_sfo_bytes, &self.result.pbp_title) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => return,
+            };
             self.result.metadata = .{ .title = inner.title orelse self.result.metadata.title, .disc_id = inner.disc_id, .disc_version = inner.disc_version, .required_firmware = inner.required_firmware };
         }
     };
     var context = PackageInventory{ .inventory = &inventory, .result = &result };
-    try package.walk(allocator, &context, PackageInventory.emit);
+    package.walk(allocator, &context, PackageInventory.emit) catch |err| {
+        result.@"error" = try extraction_error(&inventory, err);
+    };
     try inventory.extract_documents();
-    result.entries = try inventory.finish();
+    result.entries = try inventory.finish_result(&result.@"error");
     result.stored = inventory.counts.stored;
+    result.extraction_errors = inventory.counts.extraction_errors;
     result.reused = inventory.counts.reused;
+    return result;
+}
+
+fn read_pkg_metadata(allocator: std.mem.Allocator, package: pkg.Package) !Result {
+    var result: Result = .{ .kind = .pkg, .size_bytes = package.bytes.len, .content_type = package.content_type, .package_flags = package.package_flags };
+    errdefer result.deinit(allocator);
+    result.content_id = try allocator.dupe(u8, package.content_id);
+    if (try package.read_file(allocator, "PARAM.SFO")) |metadata| {
+        result.pkg_sfo_bytes = metadata;
+        if (metadata.len == 0) return error.InvalidSfo;
+        result.metadata = try sfo.parsePkg(allocator, metadata, &result.pkg_title);
+    } else if (package.content_type != 9) {
+        return error.MissingPkgMetadata;
+    }
     return result;
 }
 
@@ -200,6 +233,7 @@ const Inventory = struct {
     document_inputs: std.AutoHashMapUnmanaged(usize, memory.View) = .empty,
     entries: std.ArrayList(Entry) = .empty,
     paths: std.StringHashMap(usize),
+    fatal: bool = false,
 
     fn deinit(self: *Inventory) void {
         self.paths.deinit();
@@ -217,6 +251,16 @@ const Inventory = struct {
     }
 
     fn emit_view(self: *Inventory, name: []const u8, contents: ?memory.View) !void {
+        self.emit_entry(name, contents) catch |err| {
+            switch (err) {
+                error.InvalidIsoPath, error.DuplicateIsoPath => {},
+                else => self.fatal = true,
+            }
+            return err;
+        };
+    }
+
+    fn emit_entry(self: *Inventory, name: []const u8, contents: ?memory.View) !void {
         try validate_path(name);
         if (self.paths.contains(name)) return error.DuplicateIsoPath;
         var entry = Entry{ .path = try self.allocator.dupe(u8, name), .type = if (contents != null) .file else .directory };
@@ -262,48 +306,122 @@ const Inventory = struct {
     // A manual's sibling context belongs to this inventory occurrence, never to
     // the hash-only extraction queue. Wait until both paths have been observed.
     fn extract_documents(self: *Inventory) !void {
-        const dispatch = self.dispatch orelse return;
+        if (self.dispatch == null) return;
         for (self.documents.items) |index| {
             const entry = &self.entries.items[index];
             const prefix = entry.path[0 .. entry.path.len - "DOCUMENT.DAT".len];
             const companion_path = try std.fmt.allocPrint(self.allocator, "{s}DOCINFO.EDAT", .{prefix});
-            errdefer self.allocator.free(companion_path);
-            const companion_index = self.paths.get(companion_path) orelse {
-                self.allocator.free(companion_path);
-                continue;
-            };
+            defer self.allocator.free(companion_path);
+            const companion_index = self.paths.get(companion_path) orelse continue;
             const companion = self.entries.items[companion_index];
-            if (companion.type != .file or companion.size_bytes.? != 304) return error.InvalidDocinfo;
-            if (entry.size_bytes.? > 64 * 1024 * 1024) return error.InvalidDocument;
-            const source_input = self.document_inputs.get(index) orelse return error.InvalidDocument;
-            const companion_input = self.document_inputs.get(companion_index) orelse return error.InvalidDocinfo;
-            var output = try external_extractor.extract(self.allocator, self.io, entry.sha256.?, source_input.bytes, .document, companion_input.bytes);
-            defer output.deinit(self.allocator, self.io);
-            var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = dispatch.store, .dispatch = dispatch, .paths = .init(self.allocator) };
-            defer child.deinit();
-            try output.walk(self.allocator, self.io, &child, Inventory.emit_view);
-            const tree = try self.allocator.create(InlineExtraction);
-            errdefer self.allocator.destroy(tree);
-            const hash = try self.allocator.dupe(u8, &entry.sha256.?);
-            errdefer self.allocator.free(hash);
-            const dependencies = try self.allocator.alloc(Dependency, 1);
-            errdefer self.allocator.free(dependencies);
-            const companion_hash = try self.allocator.dupe(u8, &companion.sha256.?);
-            errdefer self.allocator.free(companion_hash);
-            dependencies[0] = .{ .path = companion_path, .sha256 = companion_hash, .size_bytes = companion.size_bytes.? };
-            tree.* = .{
-                .sha256 = hash,
-                .size_bytes = entry.size_bytes.?,
-                .extractor = output.provenance.?.value,
-                .name_rule = "identity",
-                .entries = try child.finish(),
-                .dependencies = dependencies,
-                .owned_provenance = output.take_provenance(),
-            };
-            entry.extraction = tree;
-            self.counts.stored += child.counts.stored;
-            self.counts.reused += child.counts.reused;
+            const source = self.document_inputs.get(index) orelse return error.InvalidDocument;
+            const companion_input = self.document_inputs.get(companion_index);
+            try self.attach(entry, .document, source.bytes, if (companion_input) |view| view.bytes else "", entry.sha256.?);
+            if (companion.type == .file) {
+                const dependencies = try self.allocator.alloc(Dependency, 1);
+                errdefer self.allocator.free(dependencies);
+                const path = try self.allocator.dupe(u8, companion.path);
+                errdefer self.allocator.free(path);
+                dependencies[0] = .{ .path = path, .sha256 = try self.allocator.dupe(u8, &companion.sha256.?), .size_bytes = companion.size_bytes.? };
+                entry.extraction.?.dependencies = dependencies;
+            }
         }
+    }
+
+    fn extract_external(self: *Inventory, hash: [64]u8, input: []const u8, kind: extractor.Kind, companion: ?[]const u8) !external_extractor.Output {
+        return external_extractor.extract(self.allocator, self.io, hash, input, kind, companion) catch |err| {
+            switch (err) {
+                error.ExtractionFailed, error.ExtractorUnavailable, error.InvalidExtractorProvenance => {},
+                else => self.fatal = true,
+            }
+            return err;
+        };
+    }
+
+    fn walk_external(self: *Inventory, output: external_extractor.Output) !void {
+        output.walk(self.allocator, self.io, self, Inventory.emit_view) catch |err| {
+            switch (err) {
+                error.EmptyExtraction, error.UnsupportedExtractedEntry, error.InvalidIsoPath, error.DuplicateIsoPath => {},
+                else => self.fatal = true,
+            }
+            return err;
+        };
+    }
+
+    fn decode_context(self: *Inventory, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8, output: *?external_extractor.Output) !extractor.Provenance {
+        if (kind == .pops) {
+            const bytes = try pops.decode(self.allocator, input, companion);
+            const view = try memory.Owner.take_allocated(self.allocator, bytes);
+            defer view.release();
+            try self.emit_view(if (std.mem.startsWith(u8, bytes, "\x7fELF")) "module.elf" else "payload.gz", view);
+            return .{ .name = "pspdb-pops", .version = revisions.pops, .options = &.{"in-memory"} };
+        }
+        if (kind == .document) {
+            if (companion.len != 304) return error.InvalidDocinfo;
+            if (input.len > 64 * 1024 * 1024) return error.InvalidDocument;
+        }
+        output.* = try self.extract_external(hash, input, kind, if (kind == .document) companion else null);
+        try self.walk_external(output.*.?);
+        return output.*.?.provenance.?.value;
+    }
+
+    fn attach(self: *Inventory, entry: *Entry, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8) !void {
+        var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = self.store, .dispatch = self.dispatch, .paths = .init(self.allocator) };
+        defer child.deinit();
+        var output: ?external_extractor.Output = null;
+        defer if (output) |value| value.deinit(self.allocator, self.io);
+        var failure: ?[]const u8 = null;
+        errdefer if (failure) |message| self.allocator.free(message);
+        const provenance = child.decode_context(kind, input, companion, hash, &output) catch |err| blk: {
+            failure = extraction_error(&child, err) catch |fatal| {
+                self.fatal = true;
+                return fatal;
+            };
+            break :blk orchestrator(kind);
+        };
+        const tree = try self.allocator.create(InlineExtraction);
+        errdefer self.allocator.destroy(tree);
+        const source_hash = try self.allocator.dupe(u8, &entry.sha256.?);
+        errdefer self.allocator.free(source_hash);
+        tree.* = .{
+            .sha256 = source_hash,
+            .size_bytes = entry.size_bytes.?,
+            .extractor = provenance,
+            .name_rule = if (kind == .pops) "source_stem" else "identity",
+            .entries = try child.finish_result(&failure),
+            .@"error" = failure,
+            .owned_provenance = if (output != null) output.?.take_provenance() else null,
+        };
+        entry.extraction = tree;
+        self.counts.stored += child.counts.stored;
+        self.counts.reused += child.counts.reused;
+        self.counts.extraction_errors += child.counts.extraction_errors;
+    }
+
+    fn finish_result(self: *Inventory, failure: *?[]const u8) ![]Entry {
+        return self.finish() catch |err| {
+            if (failure.* == null) failure.* = try extraction_error(self, err);
+            // Keep only paths whose directory ancestors actually survived.
+            if (self.fatal or err == error.OutOfMemory or err == error.CryptoFailure) return err;
+            var changed = true;
+            while (changed) {
+                changed = false;
+                var index = self.entries.items.len;
+                while (index != 0) {
+                    index -= 1;
+                    const entry = self.entries.items[index];
+                    const slash = std.mem.lastIndexOfScalar(u8, entry.path, '/') orelse continue;
+                    const valid = for (self.entries.items) |parent| {
+                        if (parent.type == .directory and std.mem.eql(u8, parent.path, entry.path[0..slash])) break true;
+                    } else false;
+                    if (!valid) {
+                        (self.entries.orderedRemove(index)).deinit(self.allocator);
+                        changed = true;
+                    }
+                }
+            }
+            return self.sorted_entries();
+        };
     }
 
     fn finish(self: *Inventory) ![]Entry {
@@ -313,6 +431,10 @@ const Inventory = struct {
                 if (self.entries.items[parent].type != .directory) return error.InvalidIsoPath;
             }
         }
+        return self.sorted_entries();
+    }
+
+    fn sorted_entries(self: *Inventory) ![]Entry {
         std.mem.sort(Entry, self.entries.items, {}, struct {
             fn less(_: void, a: Entry, b: Entry) bool {
                 return std.mem.lessThan(u8, a.path, b.path);
@@ -344,13 +466,33 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
     defer inventory.deinit();
     var output: ?external_extractor.Output = null;
     defer if (output) |value| value.deinit(allocator, io);
-    const provenance: extractor.Provenance = switch (task.kind) {
+    var failure: ?[]const u8 = null;
+    defer if (failure) |message| allocator.free(message);
+    const provenance = execute_task(allocator, task, dispatch, &inventory, &output) catch |err| blk: {
+        failure = try extraction_error(&inventory, err);
+        break :blk orchestrator(task.kind);
+    };
+    const entries = try inventory.finish_result(&failure);
+    defer {
+        for (entries) |entry| entry.deinit(allocator);
+        allocator.free(entries);
+    }
+    try catalog_io.publish_extraction(allocator, io, dispatch.catalog, task.hash, task.input.bytes.len, entries, provenance, @tagName(task.kind), failure);
+    return inventory.counts;
+}
+
+fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, inventory: *Inventory, output: *?external_extractor.Output) !extractor.Provenance {
+    return switch (task.kind) {
         .edat => blk: {
             const bytes = edat.decode(allocator, task.input.bytes, null) catch |err| switch (err) {
                 error.MissingEdatRap => retry: {
                     const directory = dispatch.rap_directory orelse return error.MissingEdatRap;
                     const content_id = try edat.content_id(task.input.bytes);
-                    var rap = licenses.read_rap(io, directory, content_id) catch |key_error| {
+                    var rap = licenses.read_rap(inventory.io, directory, content_id) catch |key_error| {
+                        switch (key_error) {
+                            error.MissingEdatRap, error.InvalidEdatRap, error.InvalidEdatContentId => {},
+                            else => inventory.fatal = true,
+                        }
                         std.debug.print("EDAT {s}: {s} in {s}; configure PSPDB_RAP_DIR or import its RAP with tools/psn_acquire.py\n", .{ content_id, @errorName(key_error), directory });
                         return key_error;
                     };
@@ -390,32 +532,35 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             break :blk .{ .name = "pspdb-ingest", .version = revision };
         },
         .psar => blk: {
-            try psar.walk(allocator, task.input, &inventory, Inventory.emit_view);
+            try psar.walk(allocator, task.input, inventory, Inventory.emit_view);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.psar };
         },
         .rco => blk: {
-            try rco.walk(allocator, task.input, &inventory, Inventory.emit_view);
+            try rco.walk(allocator, task.input, inventory, Inventory.emit_view);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.rco };
         },
         .iso9660 => blk: {
-            try iso.walk(allocator, task.input.bytes, &inventory, Inventory.emit_view);
+            try iso.walk(allocator, task.input.bytes, inventory, Inventory.emit_view);
             try inventory.extract_documents();
             break :blk .{ .name = "pspdb-ingest", .version = revisions.iso9660 };
         },
         .sce => blk: {
-            try containers.walk_sce(task.input.bytes, &inventory, Inventory.emit);
+            try containers.walk_sce(task.input.bytes, inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.sce };
         },
         .vmp => blk: {
-            try containers.walk_vmp(task.input.bytes, &inventory, Inventory.emit);
+            try containers.walk_vmp(task.input.bytes, inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.vmp };
         },
         .elf => blk: {
-            try containers.walk_elf(task.input.bytes, &inventory, Inventory.emit);
+            try containers.walk_elf(task.input.bytes, inventory, Inventory.emit);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.elf };
         },
         .pbp => blk: {
             const pbp = try containers.parse_pbp(task.input.bytes);
+            var title: []u8 = &.{};
+            defer allocator.free(title);
+            _ = try sfo.parsePkg(allocator, pbp.get("PARAM.SFO") orelse "", &title);
             if (pbp.get("DATA.BIN")) |psar_bytes| {
                 if (extractor.detect(psar_bytes) == .npumdimg) {
                     const data = try data_psp.Header.parse(pbp.get("DATA.PSP") orelse return error.MissingDataPsp);
@@ -429,56 +574,23 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             const data_bin = pbp.get("DATA.BIN") orelse &.{};
             const is_pops = std.mem.startsWith(u8, data_bin, "PSISOIMG0000") or std.mem.startsWith(u8, data_bin, "PSTITLEIMG0000");
             if (is_pops) inventory.suppress_dispatch = "DATA.PSP";
-            try pbp.walk(&inventory, Inventory.emit);
-            if (is_pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
-                // Sibling/container context stays attached to its source section.
-                var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.store, .dispatch = dispatch, .paths = .init(allocator) };
-                defer child.deinit();
-                const section_provenance: extractor.Provenance = if (section[0] == .pops) native: {
-                    const bytes = try pops.decode(allocator, pbp.get("DATA.PSP") orelse return error.MissingDataPsp, data_bin);
-                    const view = try memory.Owner.take_allocated(allocator, bytes);
-                    defer view.release();
-                    const name: []const u8 = if (std.mem.startsWith(u8, bytes, "\x7fELF")) "module.elf" else "payload.gz";
-                    try child.emit_view(name, view);
-                    break :native .{ .name = "pspdb-pops", .version = revisions.pops, .options = &.{"in-memory"} };
-                } else external: {
-                    output = try external_extractor.extract(allocator, io, task.hash, task.input.bytes, .psx, null);
-                    try output.?.walk(allocator, io, &child, Inventory.emit_view);
-                    break :external output.?.provenance.?.value;
-                };
-                const index = inventory.paths.get(section[1]) orelse return error.MissingDataPsp;
-                const entry = &inventory.entries.items[index];
-                const tree = try allocator.create(InlineExtraction);
-                errdefer allocator.destroy(tree);
-                const hash = try allocator.dupe(u8, &entry.sha256.?);
-                errdefer allocator.free(hash);
-                tree.* = .{
-                    .sha256 = hash,
-                    .size_bytes = entry.size_bytes.?,
-                    .extractor = section_provenance,
-                    .name_rule = if (section[0] == .psx) "identity" else "source_stem",
-                    .entries = try child.finish(),
-                    .owned_provenance = if (section[0] == .psx) output.?.take_provenance() else null,
-                };
-                entry.extraction = tree;
-                inventory.counts.stored += child.counts.stored;
-                inventory.counts.reused += child.counts.reused;
-            };
+            try pbp.walk(inventory, Inventory.emit);
+            if (is_pops) {
+                if (inventory.paths.get("DATA.PSP")) |index| {
+                    try inventory.attach(&inventory.entries.items[index], .pops, pbp.get("DATA.PSP").?, data_bin, task.hash);
+                }
+                if (inventory.paths.get("DATA.BIN")) |index| {
+                    try inventory.attach(&inventory.entries.items[index], .psx, task.input.bytes, "", task.hash);
+                }
+            }
             break :blk .{ .name = "Zig-PSP zPBPTool", .version = revisions.pbp, .options = &.{"in-memory"} };
         },
         else => blk: {
-            output = try external_extractor.extract(allocator, io, task.hash, task.input.bytes, task.kind, null);
-            try output.?.walk(allocator, io, &inventory, Inventory.emit_view);
-            break :blk output.?.provenance.?.value;
+            output.* = try inventory.extract_external(task.hash, task.input.bytes, task.kind, null);
+            try inventory.walk_external(output.*.?);
+            break :blk output.*.?.provenance.?.value;
         },
     };
-    const entries = try inventory.finish();
-    defer {
-        for (entries) |entry| entry.deinit(allocator);
-        allocator.free(entries);
-    }
-    try catalog_io.publish_extraction(allocator, io, dispatch.catalog, task.hash, task.input.bytes.len, entries, provenance, @tagName(task.kind));
-    return inventory.counts;
 }
 
 /// Reuse an unchanged immediate inventory, but still visit its derived children.
@@ -498,11 +610,12 @@ fn reuse_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *D
     const parsed = try std.json.parseFromSlice(Saved, allocator, bytes, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
     if (!std.mem.eql(u8, parsed.value.sha256, &task.hash) or parsed.value.size_bytes != task.input.bytes.len) return error.CatalogConflict;
+    if (parsed.value.@"error" != null) return null;
     return reuse_entries(allocator, io, parsed.value.entries, dispatch, task.kind == .iso9660);
 }
 
 const SavedEntry = struct { path: []const u8, type: []const u8, sha256: ?[]const u8 = null, size_bytes: ?u64 = null, extraction: ?SavedTree = null };
-const SavedTree = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry, dependencies: []Dependency = &.{} };
+const SavedTree = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry, dependencies: []Dependency = &.{}, @"error": ?[]const u8 = null };
 
 fn reuse_entries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry, dispatch: *Dispatch, pair_documents: bool) anyerror!?Counts {
     const store = dispatch.store orelse return null;
@@ -513,6 +626,7 @@ fn reuse_entries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry
         const hash = entry.sha256 orelse return error.CatalogConflict;
         try validate_hash(hash);
         if (entry.extraction) |tree| {
+            if (tree.@"error" != null) return null;
             const size = entry.size_bytes orelse return error.CatalogConflict;
             if (!std.mem.eql(u8, tree.sha256, hash) or tree.size_bytes != size) return error.CatalogConflict;
             const document = std.mem.eql(u8, std.Io.Dir.path.basename(entry.path), "DOCUMENT.DAT");
@@ -641,25 +755,33 @@ pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, 
 
     const stat = try file.stat(io);
     if (stat.kind != .file) return error.NotRegularFile;
-    if (stat.size == 0) return error.EmptyFile;
     const size = std.math.cast(usize, stat.size) orelse return error.FileTooLarge;
 
-    const mapping = try std.posix.mmap(null, size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, file.handle, 0);
-    const input = try memory.Owner.take_mapped(allocator, mapping);
+    const input = if (size == 0)
+        try memory.Owner.take_allocated(allocator, try allocator.alloc(u8, 0))
+    else blk: {
+        const mapping = try std.posix.mmap(null, size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, file.handle, 0);
+        break :blk try memory.Owner.take_mapped(allocator, mapping);
+    };
     defer input.release();
     const result = if (std.ascii.endsWithIgnoreCase(path, ".pkg"))
-        try process_pkg_checked(allocator, io, mapping, store, catalog, dispatch)
+        try process_pkg_checked(allocator, io, input.bytes, store, catalog, dispatch)
     else
-        try process_iso_checked(allocator, io, mapping, store, catalog, dispatch);
+        try process_iso_checked(allocator, io, input.bytes, store, catalog, dispatch);
     errdefer if (result) |value| value.deinit(allocator);
     const after = try file.stat(io);
     if (stat.size != after.size or stat.mtime.nanoseconds != after.mtime.nanoseconds or stat.ctime.nanoseconds != after.ctime.nanoseconds) return error.SourceChanged;
     return result;
 }
 
-test "processor rejects non-ISO bytes" {
-    try std.testing.expectError(error.EmptyFile, process_iso(std.testing.allocator, std.testing.io, "", null));
-    try std.testing.expectError(error.InvalidIso, process_iso(std.testing.allocator, std.testing.io, "not an ISO", null));
+test "unparseable source publishes identity without invented metadata" {
+    const allocator = std.testing.allocator;
+    const result = try process_iso(allocator, std.testing.io, "not an ISO", null);
+    defer result.deinit(allocator);
+    try std.testing.expectEqualStrings("InvalidIso", result.@"error".?);
+    try std.testing.expect(!result.has_metadata);
+    try std.testing.expectEqual(@as(usize, 0), result.entries.len);
+    try std.testing.expectEqualStrings(&hash_source("not an ISO").sha256, &result.sha256);
 }
 
 test "failed queue publication permits retry with input retained past its parent" {

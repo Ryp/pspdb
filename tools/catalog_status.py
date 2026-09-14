@@ -47,6 +47,21 @@ def validate_inline_dependencies(entry, inventory):
     return dependencies
 
 
+def extraction_error(tree):
+    """Find failed attempts, including errors bound to an inline occurrence."""
+    if 'error' in tree:
+        error = tree['error']
+        if not isinstance(error, str) or not error:
+            raise ValueError('Extraction error must be a nonempty string')
+        return error
+    for entry in tree['entries']:
+        if entry.get('extraction'):
+            error = extraction_error(entry['extraction'])
+            if error is not None:
+                return error
+    return None
+
+
 def catalog_status(root, current=None, unavailable=None, *, contextual_kinds=None):
     if contextual_kinds is None:
         contextual_kinds = json.loads(
@@ -130,6 +145,7 @@ def catalog_status(root, current=None, unavailable=None, *, contextual_kinds=Non
         actual = tree.get('extractor') if tree else None
         expected = current.get(kind)
         reason = ('missing metadata' if not record else 'missing tree' if not tree else
+                  'extraction failed' if extraction_error(tree) is not None else
                   'missing current revision' if str(selected[node]) != extract_external.versions()[kind] else
                   'extractor unavailable' if expected is None else
                   'extractor changed' if actual != expected else None)

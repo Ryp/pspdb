@@ -28,26 +28,46 @@ pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: 
 pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: inventory.Result) !void {
     const fields = result.metadata;
     if (result.kind == .pkg) {
+        const Metadata = struct {
+            content_id: []const u8,
+            content_type: u32,
+            package_flags: ?u32,
+            title_id: []const u8,
+            disc_id: ?[]const u8,
+            disc_version: ?[]const u8,
+            title: ?[]const u8,
+            required_firmware: ?[]const u8,
+        };
         const record = .{
             .kind = "pkg",
             .schema_version = @as(u32, 1),
             .sha256 = @as([]const u8, &result.sha256),
             .sha1 = @as([]const u8, &result.sha1),
             .size_bytes = result.size_bytes,
-            .metadata = .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware },
+            .metadata = if (result.has_metadata) @as(?Metadata, .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware }) else null,
         };
-        const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries };
+        const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries, .@"error" = result.@"error" };
         try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);
         try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "ingest", record);
         return;
     }
+    const Metadata = struct {
+        identifier: []const u8,
+        umd_uid: []const u8,
+        type_code: []const u8,
+        media_code: []const u8,
+        disc_id: ?[]const u8,
+        disc_version: ?[]const u8,
+        title: ?[]const u8,
+        required_firmware: ?[]const u8,
+    };
     const record = .{
         .kind = "iso",
         .schema_version = @as(u32, 1),
         .sha256 = @as([]const u8, &result.sha256),
         .sha1 = @as([]const u8, &result.sha1),
         .size_bytes = result.size_bytes,
-        .metadata = .{
+        .metadata = if (result.has_metadata) @as(?Metadata, .{
             .identifier = result.record.identifier,
             .umd_uid = result.record.uid,
             .type_code = result.record.type_code,
@@ -56,7 +76,7 @@ pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
             .disc_version = fields.disc_version,
             .title = fields.title,
             .required_firmware = fields.required_firmware,
-        },
+        }) else null,
     };
     const tree = .{
         .kind = "tree",
@@ -65,6 +85,7 @@ pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
         .size_bytes = record.size_bytes,
         .extractor = .{ .name = "pspdb-ingest", .version = revisions.iso, .options = [0][]const u8{} },
         .entries = result.entries,
+        .@"error" = result.@"error",
     };
     try write_record(allocator, io, root, "iso", revisions.iso, &result.sha256, "tree", tree);
     try write_record(allocator, io, root, "iso", revisions.iso, &result.sha256, "ingest", record);
@@ -75,23 +96,63 @@ fn write_record(allocator: std.mem.Allocator, io: std.Io, root: []const u8, dire
     defer allocator.free(json);
     const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-{s}.json", .{ root, directory, version, digest, suffix });
     defer allocator.free(path);
-    var output = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .make_path = true });
+    try std.Io.Dir.cwd().createDirPath(io, std.Io.Dir.path.dirname(path).?);
+    // Lock the stable directory inode, not the result inode being replaced.
+    // Every publisher takes this lock before checking or replacing an attempt.
+    var lock_directory = try std.Io.Dir.cwd().openDir(io, std.Io.Dir.path.dirname(path).?, .{ .iterate = true });
+    defer lock_directory.close(io);
+    const lock: std.Io.File = .{ .handle = lock_directory.handle, .flags = .{ .nonblocking = false } };
+    try lock.lock(io, .exclusive);
+    defer lock.unlock(io);
+    const existing = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
+    if (existing) |bytes| {
+        defer allocator.free(bytes);
+        const old = try std.json.parseFromSlice(std.json.Value, allocator, bytes, .{});
+        defer old.deinit();
+        const new = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+        defer new.deinit();
+        if (equal(old.value, new.value)) return;
+        if (!std.mem.eql(u8, suffix, "tree")) return error.CatalogConflict;
+        for ([_][]const u8{ "kind", "schema_version", "sha256", "size_bytes" }) |field| {
+            if (old.value != .object or new.value != .object or
+                !equal(old.value.object.get(field) orelse return error.CatalogConflict, new.value.object.get(field) orelse return error.CatalogConflict)) return error.CatalogConflict;
+        }
+        const old_extractor = old.value.object.get("extractor") orelse return error.CatalogConflict;
+        const new_extractor = new.value.object.get("extractor") orelse return error.CatalogConflict;
+        if (old_extractor != .object or new_extractor != .object or
+            !equal(old_extractor.object.get("version") orelse return error.CatalogConflict, new_extractor.object.get("version") orelse return error.CatalogConflict)) return error.CatalogConflict;
+        // Never downgrade a successful tree, including a concurrent winner.
+        if (!has_error(old.value)) {
+            if (has_error(new.value)) return;
+            return error.CatalogConflict;
+        }
+    }
+    var output = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .replace = true });
     defer output.deinit(io);
     try output.file.writeStreamingAll(io, json);
     try output.file.writeStreamingAll(io, "\n");
     try output.file.sync(io);
-    output.link(io) catch |err| switch (err) {
-        error.PathAlreadyExists => {
-            const existing = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited);
-            defer allocator.free(existing);
-            const old = try std.json.parseFromSlice(std.json.Value, allocator, existing, .{});
-            defer old.deinit();
-            const new = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
-            defer new.deinit();
-            if (!equal(old.value, new.value)) return error.CatalogConflict;
-        },
-        else => return err,
-    };
+    try output.replace(io);
+}
+
+fn has_error(value: std.json.Value) bool {
+    if (value != .object) return false;
+    if (value.object.get("error")) |message| {
+        if (message == .string and message.string.len != 0) return true;
+    }
+    const entries = value.object.get("entries") orelse return false;
+    if (entries != .array) return false;
+    for (entries.array.items) |entry| {
+        if (entry == .object) {
+            if (entry.object.get("extraction")) |tree| {
+                if (has_error(tree)) return true;
+            }
+        }
+    }
+    return false;
 }
 
 // Compare parsed values so harmless indentation/key-order changes do not turn
@@ -122,7 +183,7 @@ fn equal(a: std.json.Value, b: std.json.Value) bool {
 }
 
 /// Publish external extractor metadata and the same inventory shape as ISO.
-pub fn publish_extraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []inventory.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8) !void {
+pub fn publish_extraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []inventory.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8, failure: ?[]const u8) !void {
     const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp") or std.mem.eql(u8, kind, "edat")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "decoded_suffix" else null;
     const tree = .{
         .kind = "tree",
@@ -132,6 +193,7 @@ pub fn publish_extraction(allocator: std.mem.Allocator, io: std.Io, root: []cons
         .extractor = provenance,
         .name_rule = name_rule,
         .entries = entries,
+        .@"error" = failure,
     };
     try write_record(allocator, io, root, kind, provenance.version.?, &hash, "tree", tree);
     try write_record(allocator, io, root, kind, provenance.version.?, &hash, "ingest", .{

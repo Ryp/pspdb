@@ -68,9 +68,11 @@ PR description. Whole-image hashes in the ingest records identify the sources.
 
 PR checks validate the JSON schemas, filenames, source identity and size
 consistency, paired records, extractor revisions, and tree paths. They also
-reject edits, renames, or deletions of existing catalog records. These checks
-validate catalog consistency; they cannot verify file contents without the
-original sources. CI does not need those sources or the extraction tools.
+reject edits to successful results, renames, and deletions of existing catalog
+records. Error-bearing extraction trees are incomplete attempts and may be updated
+on retry, preserving their source identity and revision. These checks validate
+catalog consistency; they cannot verify file contents without the original sources.
+CI does not need those sources or the extraction tools.
 
 Extractor fixes belong in a new revision: update
 [tools/extractor_versions.json](tools/extractor_versions.json), rebuild, and add

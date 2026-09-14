@@ -111,6 +111,7 @@ function renderWindow() {
     row.setAttribute("aria-level", filterNodes ? 1 : node.depth + 1);
     if (node.note) highlight(node.noteElement, node.note);
     if (node.hashElement) highlight(node.hashElement, node.hash.slice(0, 12));
+    if (node.error) highlight(node.errorElement, `Extraction failed: ${node.error}`);
     row.setAttribute("aria-rowindex", index + 2);
     fragment.append(row);
   }
@@ -192,7 +193,7 @@ function applySearch() {
     let files = 0;
     for (const node of nodes.values()) {
       if (node.type !== "file") continue;
-      if (!searchTerms.every(term => node.searchText.includes(term))) continue;
+      if (!searchTerms.every(term => node.searchText.includes(term) || node.errorSearchText?.includes(term))) continue;
       files++;
       filterNodes.add(node);
     }
@@ -229,6 +230,7 @@ function applySearch() {
     rowElements.get(selected?.path)?.classList.remove("selected");
     rowElements.get(selected?.path)?.setAttribute("aria-selected", "false");
     $("tree").removeAttribute("aria-activedescendant");
+    $("selected-error").hidden = true;
   }
 }
 
@@ -297,6 +299,10 @@ function attachExtraction(node, extractions, ancestors = new Set(), contextual =
   node.extraction = extraction.extractor.name;
   node.extractionKind = extraction.extraction_kind;
   node.extractionVersion = extraction.extractor.version;
+  if (extraction.error) {
+    node.error = extraction.error;
+    node.errorSearchText = `extraction failed: ${extraction.error}`.toLowerCase();
+  }
   if (extraction.stale_extraction) node.stale_extraction = extraction.stale_extraction;
   addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
 }
@@ -436,8 +442,10 @@ function select(node, scroll = true, updateURL = true) {
   row.setAttribute("aria-selected", "true");
   $("tree").setAttribute("aria-activedescendant", node.id);
   $("selected-path").textContent = node.path || label(node);
+  $("selected-error").hidden = !node.error;
+  $("selected-error-message").textContent = node.error ? `Extraction failed for ${node.path}: ${node.error}` : "";
   $("notice").textContent = "";
-  if (scroll) {
+  if (scroll || node.error) {
     // Scroll only vertically, preserving the user's horizontal column position.
     const host = $("table-scroll"), top = visible.indexOf(node) * rowHeight;
     const height = host.clientHeight - $("tree").tHead.offsetHeight;
@@ -509,6 +517,7 @@ function render() {
     const folder = expandable(node);
     const container = Boolean(node.extraction);
     const row = element("tr", `node ${container ? "file container" : folder ? "folder" : "file"}${node.virtual && !container ? " virtual" : ""}`);
+    if (node.error) row.classList.add("extraction-failed");
     row.hidden = !showing.has(node);
     row.id = node.id;
     row.dataset.path = node.path;
@@ -534,8 +543,18 @@ function render() {
       node.titleElement = element("span", "", label(node).slice(node.gamePrefix.length));
       name.replaceChildren(node.pathElement, node.prefixElement, node.titleElement);
     }
-    name.title = node.extraction ? `${node.path} — extracted with ${node.extraction}`  : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
+    name.title = node.extraction ? `${node.path} — ${node.error ? "extraction failed with" : "extracted with"} ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
     content.append(name);
+    if (node.error) {
+      const error = element("span", "extraction-error");
+      const icon = element("span", "error-icon", "!");
+      icon.setAttribute("aria-hidden", "true");
+      node.errorElement = element("span", "error-message", `Extraction failed: ${node.error}`);
+      node.errorElement.id = `${node.id}-error`;
+      row.setAttribute("aria-describedby", node.errorElement.id);
+      error.append(icon, node.errorElement);
+      content.append(error);
+    }
     for (const [source, matches] of [["Redump", node.redump || []], ["UMDatabase", node.umdatabase || []]]) {
       for (const match of matches) {
         const redump = source === "Redump";
@@ -631,7 +650,7 @@ document.addEventListener("keydown", event => {
       event.preventDefault(); $("tree-search").focus(); return;
     }
   }
-  if (!root || event.ctrlKey || event.metaKey || event.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
+  if (!root || event.ctrlKey || event.metaKey || event.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target === $("selected-error")) return;
   if (!visible.length) return;
   if (event.key === "Enter" && /^(BUTTON|A)$/.test(event.target.tagName)) return;
   const key = event.key;

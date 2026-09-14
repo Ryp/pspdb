@@ -108,12 +108,12 @@ class IngestCliTests(unittest.TestCase):
         return [json.loads(line) for line in output.splitlines() if line.startswith("{")]
 
     def assert_processed_once(self, output, files):
-        actual = [(row["source"], row["iso_bytes"]) for row in self.records(output)
+        actual = [(row["source"], row.get("iso_bytes", row.get("size_bytes"))) for row in self.records(output)
                   if "!" not in row["source"]]
         self.assertCountEqual(actual, [(str(p), p.stat().st_size) for p in files])
 
     def assert_zip_results(self, output, expected_members, counts):
-        actual = [(row["source"], row["iso_bytes"]) for row in self.records(output)
+        actual = [(row["source"], row.get("iso_bytes", row.get("size_bytes"))) for row in self.records(output)
                   if "!" in row["source"]]
         self.assertCountEqual(actual, expected_members)
         self.assertIn(
@@ -213,10 +213,10 @@ class IngestCliTests(unittest.TestCase):
             self.assertEqual(code, 1, output)
             self.assertIn(f"Rejected {bad}:", output)
             self.assertIn(f"Rejected {archive_path}!unsupported.iso: UnsupportedCompressionMethod", output)
-            self.assertIn(f"Rejected {archive_path}!empty.iso: EmptyFile", output)
-            self.assert_zip_results(output, [(f"{archive_path}!good.iso", len(iso_bytes()))], (1, 3, 0))
+            self.assertIn('EmptyFile', output)
+            self.assert_zip_results(output, [(f"{archive_path}!good.iso", len(iso_bytes())), (f"{archive_path}!empty.iso", 0)], (1, 3, 0))
             self.assert_processed_once(output, [raw])
-            self.assert_summary(output, (1, 0, 0, 3, 2, 3, 2 * len(iso_bytes())))
+            self.assert_summary(output, (1, 0, 0, 3, 3, 2, 2 * len(iso_bytes())))
             self.assertEqual(snapshot(Path(tmp)), before)
 
     def test_discovery_mapping_and_rejection_are_read_only(self):
@@ -240,10 +240,10 @@ class IngestCliTests(unittest.TestCase):
                     code, output = self.run_cli(
                         root, "--threads", str(threads), "--no-progress"
                     )
-                    self.assertEqual(code, 1, output)
-                    self.assert_processed_once(output, files)
-                    self.assert_summary(output, (3, 2, 2, 5, 3, 1, sum(p.stat().st_size for p in files)))
-                    self.assertIn(f"Rejected {root / 'empty.iso'}: EmptyFile", output)
+                    self.assertEqual(code, 0, output)
+                    self.assert_processed_once(output, [*files, root / 'empty.iso'])
+                    self.assert_summary(output, (3, 2, 2, 5, 4, 0, sum(p.stat().st_size for p in files)))
+                    self.assertIn('EmptyFile', output)
                     self.assertEqual(snapshot(Path(tmp)), before)
 
     def test_multiple_roots_continue_after_a_missing_folder(self):
@@ -484,12 +484,14 @@ class IngestCliTests(unittest.TestCase):
                     args = ('--store', str(store), '--threads', '1', '--no-progress')
                     code, output = self.run_cli(root, *args, '--catalog', str(catalog))
                     if name == 'invalid-video':
-                        self.assertEqual(code, 1, output)
-                        self.assertIn('InvalidSfo', output)
-                        self.assertFalse(list(catalog.rglob('*.json')))
+                        self.assertEqual(code, 0, output)
+                        digest = hashlib.sha256(image).hexdigest()
+                        record = json.loads(result_path(catalog, 'iso', digest).read_text())
+                        self.assertNotIn('metadata', record)
+                        self.assertEqual(json.loads(tree_path(catalog, digest).read_text())['error'], 'InvalidSfo')
                         self.assertFalse(list(store.rglob('*')))
                         code, output = self.run_cli(root, *args)
-                        self.assertEqual(code, 1, output)
+                        self.assertEqual(code, 0, output)
                         self.assertIn('InvalidSfo', output)
                         continue
                     self.assertEqual(code, 0, output)
@@ -621,10 +623,11 @@ class IngestCliTests(unittest.TestCase):
             args = ('--catalog', str(catalog), '--threads', '2', '--no-progress')
             with patch.dict(os.environ, {'PSPDECRYPT': str(tool)}):
                 code, output = self.run_cli(root, *args)
-            self.assertEqual(code, 1, output)
-            self.assertEqual(self.records(output), [])
-            self.assertFalse((catalog / 'iso').exists())
-            self.assertFalse(result_path(catalog, 'psar', hashlib.sha256(payload).hexdigest()).exists())
+            self.assertEqual(code, 0, output)
+            self.assertEqual(len(self.records(output)), 2)
+            tree = json.loads(tree_path(catalog, hashlib.sha256(payload).hexdigest()).read_text())
+            self.assertEqual(tree['error'], 'InvalidPsar')
+            self.assertEqual(tree['entries'], [])
 
     def test_psar_replay_only_walks_final_overwrites(self):
         import zlib
@@ -662,7 +665,8 @@ class IngestCliTests(unittest.TestCase):
             files = {entry['path']: {key: entry[key] for key in ('size_bytes', 'sha256')}
                      for entry in tree['entries'] if entry['type'] == 'file'}
             self.assertEqual(files, expected)
-            # The superseded gzip is invalid; scheduling it would reject the root.
+            # The superseded invalid gzip must never become a queued error tree.
+            self.assertFalse((catalog / 'gzip').exists())
 
     def test_nested_external_trees_keep_inputs_alive_and_stop_cycles(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -716,11 +720,28 @@ if os.environ.get('PSPDB_TEST_FAIL_CHILD') == '1' and previous:
             with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs'), 'PSPDB_TEST_FAIL_CHILD': '1'}):
                 code, output = self.run_cli(root, '--catalog', str(catalog / 'failed'), '--store', str(store),
                     '--threads', '1', '--no-progress')
-            self.assertEqual(code, 1, output)
+            self.assertEqual(code, 0, output)
             self.assertIn('UnsupportedExtractedEntry', output)
-            self.assertFalse((catalog / 'failed' / 'iso').exists())
-            self.assertEqual(self.records(output), [])
+            self.assertEqual(len(self.records(output)), 1)
+            tree = json.loads(tree_path(catalog / 'failed', child_hash).read_text())
+            self.assertEqual(tree['error'], 'UnsupportedExtractedEntry')
             self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
+            # A failed attempt can be retried in place, without revising sources.
+            (Path(tmp) / 'outputs').unlink()
+            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
+                code, output = self.run_cli(root, '--catalog', str(catalog / 'failed'), '--store', str(store),
+                    '--threads', '1', '--no-progress')
+            self.assertEqual(code, 0, output)
+            recovered = json.loads(tree_path(catalog / 'failed', child_hash).read_text())
+            self.assertNotIn('error', recovered)
+            self.assertEqual({e['path'] for e in recovered['entries']}, {'child.dat', 'module.prx'})
+            # An unsuccessful later attempt must not downgrade that success.
+            (Path(tmp) / 'outputs').unlink()
+            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs'), 'PSPDB_TEST_FAIL_CHILD': '1'}):
+                code, output = self.run_cli(root, '--catalog', str(catalog / 'failed'), '--store', str(store),
+                    '--threads', '1', '--no-progress')
+            self.assertEqual(code, 0, output)
+            self.assertEqual(json.loads(tree_path(catalog / 'failed', child_hash).read_text()), recovered)
 
 
     def test_nested_jobs_overlap_within_and_across_isos_before_publication(self):
@@ -792,10 +813,11 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
             config = root / 'config'; config.mkdir(); (config / 'test.ini').write_text('config')
             with patch.dict(os.environ, {'RCOMAGE': str(tool), 'RCOMAGE_DATA': str(config)}):
                 code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
-            self.assertEqual(code, 1, output)
-            self.assertEqual(self.records(output), [])
-            self.assertFalse((root / 'catalog' / 'iso').exists())
-            self.assertFalse(result_path(root / 'catalog', 'rco', hashlib.sha256(payload).hexdigest()).exists())
+            self.assertEqual(code, 0, output)
+            self.assertEqual(len(self.records(output)), 1)
+            tree = json.loads(tree_path(root / 'catalog', hashlib.sha256(payload).hexdigest()).read_text())
+            self.assertTrue(tree['error'])
+            self.assertEqual(tree['entries'], [])
 
     def test_rco_final_language_overwrites_ignore_empty_text_offsets(self):
         import xml.etree.ElementTree as ET
@@ -834,7 +856,7 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
             self.assertEqual([(text.tag, text.attrib, text.text) for text in document],
                              [('Text', {'name': 'entry'}, None)])
 
-    def test_gzip_members_recurse_and_corrupt_streams_never_publish(self):
+    def test_gzip_members_recurse_and_corrupt_streams_publish_only_errors(self):
         import gzip
         elf = b'\x7fELF\x01\x01' + bytes(10) + b'\xa0\xff' + bytes(34)
         inner = gzip.compress(elf, mtime=0)
@@ -865,8 +887,11 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
                         '--threads', '2', '--no-progress',
                     )
                 if label != 'valid':
-                    self.assertEqual(code, 1, output)
-                    self.assertFalse(list(catalog.rglob('*-tree.json')))
+                    self.assertEqual(code, 0, output)
+                    tree = json.loads(tree_path(catalog, hashlib.sha256(compressed).hexdigest()).read_text())
+                    self.assertTrue(tree['error'])
+                    self.assertEqual(tree['entries'], [])
+                    self.assertEqual(len(self.records(output)), 1)
                     continue
                 self.assertEqual(code, 0, output)
                 for packed, name, plain in [(source, 'payload.gz', inner), (inner, 'module.elf', elf)]:
@@ -905,10 +930,12 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
                 iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
             iso.write(str(inputs / 'test.iso')); iso.close()
             code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--no-progress')
-            self.assertEqual(code, 1, output)
-            self.assertIn('InvalidPbp', output)
+            self.assertEqual(code, 0, output)
+            tree = json.loads(tree_path(root / 'catalog', hashlib.sha256(broken).hexdigest()).read_text())
+            self.assertEqual(tree['error'], 'InvalidPbp')
+            self.assertEqual(tree['entries'], [])
 
-    def test_elf_embedded_invalid_prx_blocks_root_publication(self):
+    def test_elf_embedded_invalid_prx_preserves_root_and_container(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
             decoded = b'KL3E' + bytes(60)
@@ -924,9 +951,14 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
             iso.write(str(inputs / 'test.iso')); iso.close()
             with patch.dict(os.environ, {'PATH': ''}):
                 code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--store', str(root / 'store'), '--no-progress')
-            self.assertEqual(code, 1, output)
-            self.assertFalse((root / 'catalog' / 'iso').exists())
-            self.assertFalse((root / 'catalog' / 'prx').exists())
+            self.assertEqual(code, 0, output)
+            tree = json.loads(tree_path(root / 'catalog', hashlib.sha256(wrapper).hexdigest()).read_text())
+            self.assertTrue(tree['error'])
+            self.assertEqual(tree['entries'], [])
+            parent = json.loads(tree_path(root / 'catalog', hashlib.sha256(elf).hexdigest()).read_text())
+            self.assertNotIn('error', parent)
+            self.assertEqual({e['sha256'] for e in parent['entries']}, {hashlib.sha256(wrapper).hexdigest()})
+            self.assertEqual(len(self.records(output)), 1)
 
     def test_kl_variants_decode_and_recurse_without_external_helpers(self):
         import gzip
@@ -1101,7 +1133,7 @@ shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--outpu
             self.assert_summary(output, (1, 0, 0, 3, 3, 0, sum(row["iso_bytes"] for row in expected)))
             self.assertEqual(snapshot(Path(tmp)), before)
 
-    def test_root_umd_is_required_and_malformed_data_is_rejected(self):
+    def test_invalid_root_metadata_publishes_source_identity_and_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "inputs"
             root.mkdir()
@@ -1111,21 +1143,29 @@ shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--outpu
                 ("malformed.iso", iso_bytes(b"not a UMD record"), "MalformedUmdData"),
                 ("blank-field.iso", iso_bytes(b"label|id|0001||"), "MalformedUmdData"),
                 ("not-iso.iso", b"not an ISO", "InvalidIso"),
+                ("empty.iso", b"", "EmptyFile"),
             ]
             for name, data, _ in invalid:
                 (root / name).write_bytes(data)
             valid = root / "valid.iso"
             valid.write_bytes(iso_bytes())
-            before = snapshot(Path(tmp))
-            code, output = self.run_cli(root, "--threads", "4", "--no-progress")
-            self.assertEqual(code, 1, output)
-            self.assert_processed_once(output, [valid])
-            for name, _, reason in invalid:
-                self.assertIn(f"Rejected {root / name}: {reason}", output)
-            self.assert_summary(output, (1, 0, 0, 6, 1, 5, valid.stat().st_size))
-            self.assertEqual(snapshot(Path(tmp)), before)
+            before = snapshot(root)
+            catalog = Path(tmp) / 'catalog'
+            code, output = self.run_cli(root, '--catalog', str(catalog), "--threads", "4", "--no-progress")
+            self.assertEqual(code, 0, output)
+            for name, data, reason in invalid:
+                digest = hashlib.sha256(data).hexdigest()
+                record = json.loads(result_path(catalog, 'iso', digest).read_text())
+                self.assertEqual(record['sha1'], hashlib.sha1(data).hexdigest())
+                self.assertEqual(record['size_bytes'], len(data))
+                self.assertNotIn('metadata', record)
+                tree = json.loads(tree_path(catalog, digest).read_text())
+                self.assertEqual(tree['error'], reason)
+                self.assertEqual(tree['entries'], [])
+            self.assert_summary(output, (1, 0, 0, 7, 7, 0, valid.stat().st_size + sum(len(data) for _, data, _ in invalid)))
+            self.assertEqual(snapshot(root), before)
 
-    def test_native_edat_rejects_missing_unsafe_and_wrong_licenses_without_store(self):
+    def test_native_edat_reports_missing_unsafe_and_wrong_licenses_without_decoded_bytes(self):
         identifier = 'UP0001-TEST00001_00-' + 'A' * 16
         header = bytearray(0x100)
         header[:4] = b'NPD\0'
@@ -1160,9 +1200,12 @@ shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--outpu
                     catalog = root / ('catalog-' + label)
                     with patch.dict(os.environ, {'PSPDB_RAP_DIR': str(licenses), 'PSPDB_EDAT': '/missing/helper', 'PATH': ''}):
                         code, output = self.run_cli(inputs, '--catalog', str(catalog), '--no-progress')
-                    self.assertEqual(code, 1, output)
+                    self.assertEqual(code, 0, output)
                     self.assertIn(expected, output)
-                    self.assertFalse(list(catalog.rglob('*-ingest.json')))
+                    tree = json.loads(tree_path(catalog, hashlib.sha256(header).hexdigest()).read_text())
+                    self.assertEqual(tree['error'], expected)
+                    self.assertEqual(tree['entries'], [])
+                    self.assertEqual(len(self.records(output)), 1)
                     if label != 'missing':
                         license_path.unlink()
 

@@ -105,6 +105,7 @@ pub fn main(init: std.process.Init) !u8 {
     std.debug.print("Summary: {d} directories scanned, {d} files ignored, {d} symlinks skipped, {d} input candidates, {d} accepted, {d} errors, {d} source input bytes.\n", .{
         stats.directories, stats.ignored, stats.symlinks, stats.candidates, stats.processed, stats.errors, stats.bytes,
     });
+    std.debug.print("Extraction errors cataloged: {d} (accepted sources may have incomplete extractions).\n", .{stats.extraction_errors});
     std.debug.print("Already cataloged: {d} sources skipped.\n", .{stats.skipped});
     std.debug.print("ZIPs: {d} scanned, {d} ISO/PKG members, {d} other members ignored.\n", .{ stats.zip_archives, stats.zip_members, stats.ignored_members });
     return if (stats.errors != 0) 1 else 0;

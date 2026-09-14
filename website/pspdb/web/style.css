@@ -80,6 +80,15 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
 .extraction-tags { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; flex-shrink: 0; }
 .extraction-tag { padding: 1px 5px; border: 1px solid #2b323b; border-radius: 4px; background: #1b2129; color: #83909f; font-size: 10px; line-height: 14px; }
 .extraction-tag.outdated { border-color: #44382d; background: #27221d; color: #ac9174; }
+.extraction-failed .name { flex: 0 1 45%; min-width: 40px; }
+.extraction-error { display: inline-flex; align-items: center; gap: 5px; flex: 1 1 0; min-width: 70px; color: #ffaaa5; }
+.error-icon { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; flex-shrink: 0; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; line-height: 1; font-weight: 700; }
+.error-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.extraction-failed.selected .extraction-error, .extraction-failed:hover .extraction-error { color: #ffc0bb; }
+#selected-error { display: flex; align-items: flex-start; gap: 7px; flex-shrink: 0; max-height: 25dvh; overflow: auto; padding: 8px 16px; border-top: 1px solid #70413f; background: #2d1d20; color: #ffc0bb; white-space: pre-wrap; overflow-wrap: anywhere; }
+#selected-error .error-icon { margin-top: 3px; }
+#selected-error-message { min-width: 0; }
+#selected-error:focus-visible { outline: 2px solid #ffc0bb; outline-offset: -2px; }
 
 .redump-link, .umdatabase-link { flex-shrink: 0; color: #b6d9fa; font-size: 0.8em; margin-left: 0.7em; white-space: nowrap; text-decoration: none; }
 .redump-link:hover, .umdatabase-link:hover { text-decoration: underline; }

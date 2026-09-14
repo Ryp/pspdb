@@ -49,6 +49,33 @@ class CatalogValidationTests(unittest.TestCase):
         self.save()
         self.assertEqual(validate_catalog(self.root), {'pairs': 1, 'isos': 0})
 
+    def test_error_results_validate_without_relaxing_identity_or_entry_checks(self):
+        self.tree['error'] = 'InvalidGzip'
+        self.save()
+        self.assertEqual(validate_catalog(self.root)['pairs'], 1)
+        for invalid in ('', None, 1, []):
+            with self.subTest(error=invalid):
+                self.tree['error'] = invalid
+                self.save()
+                with self.assertRaises(ValueError):
+                    validate_catalog(self.root)
+        self.tree['error'] = 'InvalidGzip'
+        self.tree['entries'] = [dict(path='../escape', type='file', sha256='b'*64, size_bytes=1)]
+        self.save()
+        with self.assertRaises(ValueError):
+            validate_catalog(self.root)
+
+    def test_failed_inline_result_preserves_dependency_validation(self):
+        self.tree['entries'] = self.paired_entries()
+        extraction = self.tree['entries'][1]['extraction']
+        extraction.update(error='MissingEdatRap', entries=[])
+        self.save()
+        self.assertEqual(validate_catalog(self.root)['pairs'], 1)
+        extraction['dependencies'][0]['sha256'] = 'e'*64
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'dependency identity mismatch'):
+            validate_catalog(self.root)
+
     def test_contextual_tree_checks_attachment_and_nested_entries(self):
         entry = dict(path='DATA.PSP', type='file', sha256='b'*64, size_bytes=14)
         entry['extraction'] = dict(sha256='b'*64, size_bytes=14, name_rule='source_stem',
@@ -174,6 +201,28 @@ class CatalogValidationTests(unittest.TestCase):
     def test_duplicate_json_keys_are_rejected(self):
         self.ingest_path.write_text('{"kind":"iso","kind":"prx"}')
         with self.assertRaisesRegex(ValueError, 'Duplicate JSON key'): read_json(self.ingest_path)
+
+    def test_git_comparison_allows_retry_but_not_identity_changes(self):
+        repo = self.root.parent
+        self.tree['entries'] = self.paired_entries()
+        self.tree['entries'][1]['extraction']['error'] = 'MissingEdatRap'
+        self.save()
+
+        def git(*args):
+            return subprocess.run(['git', *args], cwd=repo, check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        git('init', '-q')
+        git('add', 'catalog')
+        git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'Failed attempt')
+        base = git('rev-parse', 'HEAD')
+        del self.tree['entries'][1]['extraction']['error']
+        self.save()
+        validate_changes(repo, base)
+        self.tree['size_bytes'] += 1
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'immutable'):
+            validate_changes(repo, base)
 
     def test_git_comparison_allows_additions_but_not_edits_or_removals(self):
         repo = self.root.parent

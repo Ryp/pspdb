@@ -15,6 +15,7 @@ pub const Stats = struct {
     processed: usize = 0,
     skipped: usize = 0,
     errors: usize = 0,
+    extraction_errors: usize = 0,
     bytes: u64 = 0,
     zip_archives: usize = 0,
     zip_members: usize = 0,
@@ -260,6 +261,7 @@ const Pool = struct {
         self.mutex.lockUncancelable(self.io);
         group.counts.stored += counts.stored;
         group.counts.reused += counts.reused;
+        group.counts.extraction_errors += counts.extraction_errors;
         if (group.failure == null) group.failure = failure;
         group.pending -= 1;
         const finished = group.pending == 0;
@@ -279,6 +281,7 @@ const Pool = struct {
         if (group.result) |*result| {
             result.stored += group.counts.stored;
             result.reused += group.counts.reused;
+            result.extraction_errors += group.counts.extraction_errors;
             if (self.catalog) |root| @import("catalog.zig").publish(self.allocator, self.io, root, result.*) catch |err| {
                 self.fail(group.path, err);
                 return;
@@ -286,6 +289,7 @@ const Pool = struct {
             self.mutex.lockUncancelable(self.io);
             self.stats.processed += 1;
             self.stats.bytes += result.size_bytes;
+            self.stats.extraction_errors += result.extraction_errors;
             self.mutex.unlock(self.io);
             self.print_summary(group.path, result.*);
         }
@@ -361,6 +365,8 @@ const Pool = struct {
     fn extract(self: *Pool, extraction: Extraction) void {
         const task = extraction.task;
         const progress = extraction.group.progress.start(task.name, 0);
+        // Decoder failures have already become durable error trees. Only
+        // infrastructure/publication failures reach this fatal group boundary.
         const counts = processor.process_task(self.allocator, self.io, task, &extraction.group.dispatch.?) catch |err| {
             log(self.io, "Extraction {s} {s}: {s}\n", .{ @tagName(task.kind), task.name, @errorName(err) });
             progress.end();
@@ -379,6 +385,18 @@ const Pool = struct {
     }
 
     fn print_summary(self: *Pool, path: []const u8, result: inventory.Result) void {
+        if (!result.has_metadata) {
+            const line = std.json.Stringify.valueAlloc(self.allocator, .{
+                .source = path,
+                .kind = result.kind,
+                .sha256 = @as([]const u8, &result.sha256),
+                .size_bytes = result.size_bytes,
+                .@"error" = result.@"error",
+            }, .{}) catch return;
+            defer self.allocator.free(line);
+            log(self.io, "{s}\n", .{line});
+            return;
+        }
         if (result.kind == .pkg) {
             const line = std.json.Stringify.valueAlloc(self.allocator, .{
                 .source = path,

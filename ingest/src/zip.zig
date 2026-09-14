@@ -65,7 +65,6 @@ pub const Archive = struct {
         if (!std.mem.eql(u8, filename, try self.range(name_offset, filename_len))) return error.ZipMismatchFilename;
         const data_offset = try std.math.add(u64, name_offset, @as(u64, filename_len) + extra_len);
         const compressed = try self.range(data_offset, entry.compressed_size);
-        if (entry.uncompressed_size == 0) return error.EmptyFile;
         const size = std.math.cast(usize, entry.uncompressed_size) orelse return error.FileTooLarge;
         switch (entry.compression_method) {
             .store, .deflate => {},

@@ -29,6 +29,40 @@ class CatalogStatusTests(unittest.TestCase):
         path.write_text(json.dumps(tree))
         return path
 
+    def test_failed_descendant_is_retryable_without_invalidating_successful_siblings(self):
+        root, failed, sibling = 'a'*64, 'b'*64, 'c'*64
+        self.write('pkg', '1', root, [failed, sibling])
+        path = self.write('gzip', '3', failed)
+        self.write('gzip', '3', sibling)
+        tree = json.loads(path.read_text())
+        tree['error'] = 'InvalidGzip'
+        path.write_text(json.dumps(tree))
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_pkgs'], {})
+        self.assertEqual(report['fresh_trees']['gzip'], {sibling: True})
+        self.assertEqual([(item['sha256'], item['reason']) for item in report['stale']],
+                         [(failed, 'extraction failed')])
+        del tree['error']
+        path.write_text(json.dumps(tree))
+        self.assertEqual(catalog_status(self.root, self.current)['fresh_pkgs'], {root: True})
+
+    def test_inline_failure_retries_only_its_occurrence_parent(self):
+        first, second, child = 'a'*64, 'b'*64, 'c'*64
+        decoder = self.current.setdefault('pops', dict(name='pops', version='1', options=[]))
+        for digest, failed in ((first, True), (second, False)):
+            path = self.write('pbp', '1', digest, [child])
+            tree = json.loads(path.read_text())
+            extraction = dict(sha256=child, size_bytes=42, extractor=decoder,
+                              name_rule='source_stem', entries=[])
+            if failed:
+                extraction['error'] = 'InvalidPops'
+            tree['entries'][0]['extraction'] = extraction
+            path.write_text(json.dumps(tree))
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_trees']['pbp'], {second: True})
+        self.assertEqual([(item['sha256'], item['reason']) for item in report['stale']],
+                         [(first, 'extraction failed')])
+
     def test_nested_revision_invalidates_roots_without_invalidating_current_parent(self):
         a, b, c = 'a'*64, 'b'*64, 'c'*64
         self.write('iso', '2', a, [b])

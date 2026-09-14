@@ -9,9 +9,9 @@ import subprocess
 from jsonschema import Draft202012Validator
 
 if __package__:
-    from .catalog_status import validate_inline_dependencies
+    from .catalog_status import extraction_error, validate_inline_dependencies
 else:
-    from catalog_status import validate_inline_dependencies
+    from catalog_status import extraction_error, validate_inline_dependencies
 
 REPO = Path(__file__).resolve().parents[1]
 RESULT = re.compile(r'([a-z][a-z0-9_-]*)/v([1-9][0-9]*)/([0-9a-f]{64})-(ingest|tree)\.json\Z')
@@ -73,7 +73,7 @@ def validate_catalog(root, versions=None):
             native_since = {'psar': 3, 'rco': 2, 'prx': 4, 'kl3e': 2, 'kl4e': 2, 'edat': 2}
             native = (kind in native_since and int(version) >= native_since[kind]
                       and value['extractor']['name'] == 'pspdb-ingest')
-            if kind in ('psar', 'rco', 'prx', 'kl3e', 'kl4e', 'edat') and not native and 'sha256' not in value['extractor']:
+            if kind in ('psar', 'rco', 'prx', 'kl3e', 'kl4e', 'edat') and not native and 'error' not in value and 'sha256' not in value['extractor']:
                 raise ValueError(f'Missing external executable hash: {relative}')
             def check_entries(tree):
                 entries = tree['entries']
@@ -104,13 +104,26 @@ def validate_catalog(root, versions=None):
 
 
 def validate_changes(repo, base):
-    """Existing result paths are immutable; new revisions use new paths."""
+    """Completed results are immutable; failed extraction trees may be retried."""
     result = subprocess.run(['git', 'diff', '--no-renames', '--name-status', '-z', base, '--', 'catalog/'],
                             cwd=repo, check=True, capture_output=True)
     tokens = result.stdout.decode('utf-8').split('\0')
     for status, path in zip(tokens[0::2], tokens[1::2]):
-        if status != 'A':
-            raise ValueError(f'Existing catalog results are immutable ({status}): {path}')
+        if status == 'A':
+            continue
+        relative = Path(path).relative_to('catalog').as_posix()
+        match = RESULT.fullmatch(relative)
+        if status == 'M' and match and match.group(4) == 'tree':
+            old = json.loads(subprocess.run(
+                ['git', 'show', f'{base}:{path}'], cwd=repo, check=True,
+                capture_output=True, text=True).stdout, object_pairs_hook=unique_object)
+            new = read_json(Path(repo) / path)
+            if (extraction_error(old) is not None
+                    and all(old.get(key) == new.get(key)
+                            for key in ('kind', 'schema_version', 'sha256', 'size_bytes'))
+                    and old['extractor'].get('version') == new['extractor'].get('version')):
+                continue
+        raise ValueError(f'Existing successful catalog results are immutable ({status}): {path}')
 
 
 def main():

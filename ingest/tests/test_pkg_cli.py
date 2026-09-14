@@ -12,6 +12,7 @@ import tempfile
 import unittest
 import zipfile
 
+from unittest.mock import patch
 from test_ingest_cli import BINARY, REPO, result_path, tree_path, snapshot
 
 PSP_KEY = '07f2c68290b50d2c33818d709b60e62b'
@@ -152,9 +153,14 @@ class PkgCliTests(unittest.TestCase):
                 source = bytearray(source); struct.pack_into('>H', source, 6, platform)
                 (inputs/'bad.pkg').write_bytes(source)
                 run = self.run_ingest(inputs, '--catalog', catalog, '--store', base/'store')
-                self.assertNotEqual(run.returncode, 0, run.stderr)
-                self.assertIn(error, run.stderr)
-                self.assertFalse(list((catalog/'pkg').rglob('*-ingest.json')))
+                self.assertEqual(run.returncode, 0, run.stderr)
+                digest = hashlib.sha256(source).hexdigest()
+                record = json.loads(result_path(catalog, 'pkg', digest).read_text())
+                self.assertEqual(record['sha1'], hashlib.sha1(source).hexdigest())
+                self.assertNotIn('metadata', record)
+                tree = json.loads(tree_path(catalog, digest).read_text())
+                self.assertEqual(tree['error'], error)
+                self.assertEqual(tree['entries'], [])
 
     def test_legacy_pops_helper_cannot_bypass_native_authentication(self):
         import gzip
@@ -188,8 +194,26 @@ class PkgCliTests(unittest.TestCase):
             psxtract.chmod(0o755)
             with patch.dict(os.environ, {'PSPDB_POPS': str(helper), 'PSPDB_PSXTRACT': str(psxtract)}):
                 run = self.run_ingest(inputs, '--catalog', catalog)
-                self.assertNotEqual(run.returncode, 0, run.stderr)
-                self.assertFalse(result_path(catalog, 'pkg', hashlib.sha256(package).hexdigest()).exists())
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertTrue(result_path(catalog, 'pkg', hashlib.sha256(package).hexdigest()).exists())
+                tree = json.loads(tree_path(catalog, hashlib.sha256(pbp).hexdigest()).read_text())
+                executable_tree = next(e['extraction'] for e in tree['entries'] if e['path'] == 'DATA.PSP')
+                self.assertEqual(executable_tree['error'], 'InvalidPopsSize')
+                self.assertEqual(executable_tree['entries'], [])
+                disc_tree = next(e['extraction'] for e in tree['entries'] if e['path'] == 'DATA.BIN')
+                self.assertNotIn('error', disc_tree)
+                self.assertEqual({e['path'] for e in disc_tree['entries']}, {'disc.bin'})
+            unavailable = base/'unavailable'
+            with patch.dict(os.environ, {'PSPDB_PSXTRACT': str(base/'missing-psxtract')}):
+                run = self.run_ingest(inputs, '--catalog', unavailable)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            tree = json.loads(tree_path(unavailable, hashlib.sha256(pbp).hexdigest()).read_text())
+            sections = {e['path']: e for e in tree['entries']}
+            self.assertEqual(sections['DATA.PSP']['extraction']['entries'], [])
+            self.assertEqual(sections['DATA.BIN']['extraction']['entries'], [])
+            self.assertTrue(sections['DATA.BIN']['extraction']['error'])
+            self.assertEqual(sections['DATA.BIN']['extraction']['extractor']['name'], 'pspdb-ingest')
+            self.assertIn('PARAM.SFO', sections)
 
     def test_paired_manual_cannot_silently_accept_an_invalid_companion(self):
         document = bytes.fromhex('00504744010000000100000000000000') + bytes(144)
@@ -210,8 +234,17 @@ class PkgCliTests(unittest.TestCase):
                     entry = next(e for e in tree['entries'] if e['path'].endswith('/DOCUMENT.DAT'))
                     self.assertNotIn('extraction', entry)
                 else:
-                    self.assertNotEqual(run.returncode, 0, run.stderr)
-                    self.assertFalse(result_path(catalog, 'pkg', digest).exists())
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    tree = json.loads(tree_path(catalog, digest).read_text())
+                    entry = next(e for e in tree['entries'] if e['path'].endswith('/DOCUMENT.DAT'))
+                    self.assertTrue(entry['extraction']['error'])
+                    self.assertEqual(entry['extraction']['entries'], [])
+                    self.assertEqual(entry['extraction']['extractor']['name'], 'pspdb-ingest')
+                    self.assertNotIn('sha256', entry['extraction']['extractor'])
+                    self.assertEqual(entry['extraction']['dependencies'], [{
+                        'path': 'MANUAL/DOCINFO.EDAT',
+                        'sha256': hashlib.sha256(companion).hexdigest(), 'size_bytes': len(companion),
+                    }])
                 self.assertFalse(list((catalog/'document').rglob('*-ingest.json')))
 
     def test_same_iso_bytes_keep_root_and_nested_cache_roles_separate(self):
@@ -257,7 +290,7 @@ class PkgCliTests(unittest.TestCase):
             self.assertFalse(package_record.exists())
             self.assertEqual(json.loads(nested_tree.read_text()), tree)
 
-    def test_invalid_packages_do_not_publish_roots(self):
+    def test_invalid_containers_publish_truthful_source_errors(self):
         for mode in ('truncated', 'unsupported', 'traversal', 'duplicate', 'missing_parent', 'nested_failure', 'offset'):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
                 base=Path(tmp); inputs=base/'inputs'; inputs.mkdir(); catalog=base/'catalog'
@@ -268,8 +301,21 @@ class PkgCliTests(unittest.TestCase):
                     data=bytearray(data); struct.pack_into('>Q',data,32,2**64-1); data=bytes(data)
                 (inputs/'bad.pkg').write_bytes(data)
                 run=self.run_ingest(inputs,'--catalog',catalog,'--store',base/'store')
-                self.assertNotEqual(run.returncode,0,run.stderr)
-                self.assertFalse(list((catalog/'pkg').rglob('*-ingest.json')))
+                self.assertEqual(run.returncode, 0, run.stderr)
+                digest = hashlib.sha256(data).hexdigest()
+                record = json.loads(result_path(catalog, 'pkg', digest).read_text())
+                self.assertEqual(record['sha1'], hashlib.sha1(data).hexdigest())
+                tree = json.loads(tree_path(catalog, digest).read_text())
+                if mode in ('truncated', 'unsupported', 'offset'):
+                    self.assertNotIn('metadata', record)
+                    self.assertTrue(tree['error'])
+                    self.assertEqual(tree['entries'], [])
+                elif mode != 'nested_failure':
+                    self.assertIn('PARAM.SFO', {e['path'] for e in tree['entries']})
+                    self.assertTrue(tree['error'])
+                else:
+                    failures = [json.loads(p.read_text()) for p in catalog.rglob('*-tree.json')]
+                    self.assertTrue(any(t.get('error') for t in failures))
 
     def test_legacy_npumdimg_helper_cannot_accept_an_invalid_container(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -287,5 +333,44 @@ class PkgCliTests(unittest.TestCase):
             env = dict(os.environ, PKG2ZIP_NPUMDIMG=str(tool))
             args = [str(BINARY),str(inputs),'--no-progress','--threads','2','--catalog',str(base/'catalog')]
             run = subprocess.run(args,env=env,capture_output=True,text=True,timeout=30)
-            self.assertNotEqual(run.returncode, 0, run.stderr)
-            self.assertFalse(result_path(base/'catalog', 'pkg', hashlib.sha256(source).hexdigest()).exists())
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertTrue(result_path(base/'catalog', 'pkg', hashlib.sha256(source).hexdigest()).exists())
+            tree = json.loads(tree_path(base/'catalog', hashlib.sha256(b'NPUMDIMG'+bytes(248)).hexdigest()).read_text())
+            self.assertTrue(tree['error'])
+            self.assertEqual(tree['entries'], [])
+
+    def test_edat_errors_preserve_original_pkg_files_and_successful_gzip_siblings(self):
+        import gzip
+        identifier = 'UP0001-TEST00001_00-' + 'A' * 16
+        header = bytearray(0x100)
+        header[:4] = b'NPD\0'
+        struct.pack_into('>II', header, 4, 2, 2)
+        header[0x10:0x34] = identifier.encode()
+        struct.pack_into('>I', header, 0x84, 16384)
+        plain = b'trustworthy sibling plaintext'
+        compressed = gzip.compress(plain, mtime=0)
+        for unsupported in (False, True):
+            with self.subTest(unsupported=unsupported), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp); inputs = base/'inputs'; inputs.mkdir()
+                catalog, store = base/'catalog', base/'store'
+                damaged = bytearray(header)
+                if unsupported:
+                    struct.pack_into('>I', damaged, 0x80, 0x80000000)
+                source, files = pkg_bytes(extra=[('DATA.EDAT', damaged, True), ('GOOD.GZ', compressed, True)])
+                (inputs/'test.pkg').write_bytes(source)
+                with patch.dict(os.environ, {'PSPDB_RAP_DIR': str(base/'missing-licenses')}):
+                    run = self.run_ingest(inputs, '--catalog', catalog, '--store', store)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                tree = json.loads(tree_path(catalog, hashlib.sha256(source).hexdigest()).read_text())
+                self.assertNotIn('error', tree)
+                self.assertEqual({e['path'] for e in tree['entries']}, {name for name, _, _ in files})
+                failed = json.loads(tree_path(catalog, hashlib.sha256(damaged).hexdigest()).read_text())
+                self.assertEqual(failed['error'], 'UnsupportedEdat' if unsupported else 'MissingEdatRap')
+                self.assertEqual(failed['entries'], [])
+                decoded = json.loads(tree_path(catalog, hashlib.sha256(compressed).hexdigest()).read_text())
+                self.assertNotIn('error', decoded)
+                digest = hashlib.sha256(plain).hexdigest()
+                self.assertEqual(decoded['entries'][0]['sha256'], digest)
+                self.assertEqual((store/'sha256'/digest[:2]/digest[2:4]/digest).read_bytes(), plain)
+                digest = hashlib.sha256(damaged).hexdigest()
+                self.assertEqual((store/'sha256'/digest[:2]/digest[2:4]/digest).read_bytes(), damaged)

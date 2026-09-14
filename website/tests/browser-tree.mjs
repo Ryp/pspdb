@@ -269,5 +269,58 @@ if(extractedDownload){
  assert.equal(createHash('sha256').update(bytes).digest('hex'),extractedDownload.hash);
  console.log('PASS: extraction styling, exact source size, keyboard folding, hash search and verified child download; occurrences='+extractedDownload.occurrences);
 }
+const extractionErrors=await evaluate(`(()=>{
+ const check=(value,message)=>{if(!value)throw new Error(message)};
+ const packageHash='a'.repeat(64), edatHash='b'.repeat(64), inlineHash='c'.repeat(64), childHash='d'.repeat(64);
+ const hostile='<img src=x onerror=alert(1)> '+ 'long-error-detail-'.repeat(150);
+ const file=(path,hash,extra={})=>({path,type:'file',sha256:hash,size_bytes:10,...extra});
+ const tree=(hash,entries,error)=>({sha256:hash,size_bytes:10,extractor:{name:'extractor',version:'1'},entries,...(error?{error}:{})});
+ const fixture={records:{pkg:[{sha256:packageHash,size_bytes:10,metadata:{title:'Error visibility'}}]},trees:{
+  pkg:{[packageHash]:tree(packageHash,[
+   file('ISO.BIN.EDAT',edatHash),
+   file('DATA.PSP',inlineHash,{extraction:tree(inlineHash,[file('decoded.bin',childHash)],hostile)}),
+   file('UNCHANGED.PSP',inlineHash),
+   ...Array.from({length:200},(_,i)=>file('sibling-'+String(i).padStart(3,'0')+'.bin',childHash)),
+  ],'Partial package extraction')},
+  edat:{[edatHash]:tree(edatHash,[],'UnsupportedEdat')},
+ }};
+ clearSearch();rowElements.clear();disclosures.clear();collapsed.clear();visible=[];selected=null;
+ build(fixture);
+ for(const node of nodes.values())if(node.extraction)collapsed.add(node.path);
+ render();
+ const source=[...nodes.values()].find(n=>n.hash===packageHash);
+ const edat=source.children.find(n=>n.name==='ISO.BIN.EDAT');
+ const inline=source.children.find(n=>n.name==='DATA.PSP');
+ const sibling=source.children.find(n=>n.name==='UNCHANGED.PSP');
+ for(const node of [source,edat,inline]){
+  jump(node);
+  const row=rowElements.get(node.path), diagnostic=row.querySelector('.extraction-error');
+  check(diagnostic&&diagnostic.getBoundingClientRect().width>0,'Error is visible on its source row');
+  check(diagnostic.querySelector('.error-icon').getAttribute('aria-hidden')==='true','Error icon does not duplicate accessible text');
+  check(document.getElementById(row.getAttribute('aria-describedby')).textContent.includes(node.error),'Accessible source error');
+  check(!document.getElementById('selected-error').hidden&&document.getElementById('selected-error-message').textContent.includes(node.error),'Selected source shows full error without hover');
+  check(Math.abs(row.getBoundingClientRect().height-21)<0.1,'Errors preserve virtual row height');
+ }
+ check(!rowElements.get(sibling.path).querySelector('.extraction-error'),'Inline failure does not leak to same-hash sibling');
+ check(!document.querySelector('.extraction-error img, #selected-error img'),'Error HTML stays inert text');
+ check(document.getElementById('selected-error-message').textContent.includes(hostile),'Long error is not truncated in selection details');
+ const panel=document.getElementById('selected-error');
+ check(panel.scrollWidth<=panel.clientWidth+1,'Long errors wrap within the selected panel');
+ panel.focus();
+ panel.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));
+ check(selected===inline,'Error detail scrolling does not navigate the tree');
+ toggle(inline);
+ check(visible.includes(inline.children[0]),'Trustworthy children remain navigable after failure');
+ jump(source.children.at(-1));
+ check(!rowElements.get(edat.path).isConnected,'Distant failed source is virtualized');
+ document.getElementById('tree-search').value='UnsupportedEdat';applySearch();
+ check(visible.length===1&&visible[0]===edat,'Error search finds an empty failed extraction');
+ check(rowElements.get(edat.path).querySelector('.error-message mark')?.textContent==='UnsupportedEdat','Error matches highlight after remount');
+ check(!document.getElementById('selected-error').hidden,'Search selection retains full error details');
+ clearSearch();jump(sibling);
+ check(document.getElementById('selected-error').hidden,'Successful selection clears error details');
+ return 'PASS: source-scoped errors, empty failures, partial children, inert long text, accessibility, search and virtual remount';
+})()`);
+console.log(extractionErrors);
 await cmd('Page.navigate',{url:process.env.PSPDB_SITE_URL || 'http://127.0.0.1:8000'});
 ws.close();

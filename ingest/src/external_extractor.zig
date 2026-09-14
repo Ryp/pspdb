@@ -74,7 +74,10 @@ pub fn extract(allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, input: []
         @tagName(kind), source, "--output",     output,      "--versions", @embedFile("extractor_versions_json"), "--docinfo",
         companion,
     };
-    const result = try std.process.run(allocator, io, .{ .argv = argv[0..if (docinfo != null) argv.len else argv.len - 2] });
+    const result = std.process.run(allocator, io, .{ .argv = argv[0..if (docinfo != null) argv.len else argv.len - 2] }) catch |err| switch (err) {
+        error.FileNotFound => return error.ExtractorUnavailable,
+        else => return err,
+    };
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     var buffer: [2048]u8 = undefined;
@@ -86,7 +89,10 @@ pub fn extract(allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, input: []
         .exited => |code| if (code != 0) return error.ExtractionFailed,
         else => return error.ExtractionFailed,
     }
-    const provenance = try std.json.parseFromSlice(extractor.Provenance, allocator, result.stdout, .{ .allocate = .alloc_always });
+    const provenance = std.json.parseFromSlice(extractor.Provenance, allocator, result.stdout, .{ .allocate = .alloc_always }) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return error.InvalidExtractorProvenance,
+    };
     return .{ .path = work_path, .provenance = provenance };
 }
 

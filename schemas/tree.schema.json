@@ -12,6 +12,9 @@
     "entries"
   ],
   "properties": {
+    "error": {
+      "$ref": "#/$defs/error"
+    },
     "kind": {
       "const": "tree"
     },
@@ -70,6 +73,11 @@
     }
   },
   "$defs": {
+    "error": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Extraction failed. Entries retain only trustworthy observed outputs; this result is incomplete and may be retried."
+    },
     "entry": {
       "oneOf": [
         {
@@ -166,6 +174,9 @@
         "name_rule"
       ],
       "properties": {
+        "error": {
+          "$ref": "#/$defs/error"
+        },
         "dependencies": {
           "$ref": "#/$defs/dependencies"
         },

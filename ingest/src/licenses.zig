@@ -28,7 +28,7 @@ pub fn read_rap(io: std.Io, directory_path_bytes: []const u8, content_id: []cons
     if (content_id.len != 36 or std.mem.indexOfAny(u8, content_id, "/\\\x00") != null) return error.InvalidEdatContentId;
     var directory = std.Io.Dir.cwd().openDir(io, directory_path_bytes, .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound => return error.MissingEdatRap,
-        else => return error.InvalidEdatRap,
+        else => return err,
     };
     defer directory.close(io);
     var filename: [40:0]u8 = undefined;
@@ -39,7 +39,9 @@ pub fn read_rap(io: std.Io, directory_path_bytes: []const u8, content_id: []cons
     const descriptor = std.c.openat(directory.handle, &filename, .{ .ACCMODE = .RDONLY, .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true });
     if (descriptor < 0) return switch (std.posix.errno(descriptor)) {
         .NOENT => error.MissingEdatRap,
-        else => error.InvalidEdatRap,
+        .LOOP, .NOTDIR, .INVAL => error.InvalidEdatRap,
+        .NOMEM => error.OutOfMemory,
+        else => |err| std.posix.unexpectedErrno(err),
     };
     const file: std.Io.File = .{ .handle = descriptor, .flags = .{ .nonblocking = true } };
     defer file.close(io);
