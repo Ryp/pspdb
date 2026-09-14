@@ -50,7 +50,7 @@ def _protect(data, variant):
     )
 
 
-def _document(variant, pages, document_key=None):
+def _document(variant, pages, document_key=None, encrypted_ranges=()):
     header = bytearray(0x60)
     header[:0x0c] = b'DOC \0\0\1\0\0\0\1\0'
     code = b'../../escape'
@@ -59,11 +59,16 @@ def _document(variant, pages, document_key=None):
     frames = []
     for png in pages:
         payload = png + bytes(-len(png) % 8)
+        for start, size in reversed(encrypted_ranges):
+            payload = (payload[:start] + _encrypt(payload[start:start + size], variant, document_key)
+                       + payload[start + size:])
+        descriptors = b''.join(struct.pack('<II', *item) for item in encrypted_ranges)
         protection_size = 0x20 if variant == 'ps1' else 0x30
         frame_header = bytearray(0x20)
-        struct.pack_into('<I', frame_header, 0, 0x20 + len(payload) + protection_size)
-        # Zero encrypted-range descriptors: the PNG itself is plaintext.
-        frames.append(_protect(_encrypt(frame_header, variant, document_key) + payload, variant))
+        struct.pack_into('<I', frame_header, 0, 0x20 + len(descriptors) + len(payload) + protection_size)
+        struct.pack_into('<I', frame_header, 8, len(encrypted_ranges))
+        frames.append(_protect(_encrypt(frame_header, variant, document_key)
+                               + _encrypt(descriptors, variant, document_key) + payload, variant))
 
     offset = 0x3298 if variant == 'ps1' else 0x32b8
     offsets = []
@@ -194,6 +199,15 @@ class DocumentIntegrationTests(unittest.TestCase):
                     {source.relative_to(root)}
                     | {(output / name).relative_to(root) for name in expected},
                 )
+
+    def test_overlapping_encrypted_ranges_preserve_declared_order(self):
+        for variant in ('ps1', 'psp'):
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as directory:
+                document = _document(variant, self.pages, encrypted_ranges=((16, 24), (0, 32), (48, 16)))
+                result, _, output = self._extract(Path(directory), document)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual((output / 'psp/001.png').read_bytes(), self.pages[0])
+                self.assertEqual((output / 'psp/002.png').read_bytes(), self.pages[1])
 
     def test_bad_second_page_fails_without_publishing_first_page(self):
         for variant in ('ps1', 'psp'):

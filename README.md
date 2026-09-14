@@ -525,6 +525,17 @@ and creates a deterministic zipapp without modifying upstream sources or install
 system packages. Keep `PSPDB_DOCUMENT` set for freshness scans too, and run through
 `uv run --locked` so the helper has its declared Pillow/PyCryptodome dependencies.
 
+The patched readers borrow the supplied source bytes and decode one page at a
+time. Pillow validates each unchanged PNG in memory before the helper writes it
+directly into its private publication directory. Readers no longer reopen source
+snapshots, reconstruct unused DAT buffers or write intermediate PNG trees.
+DOCUMENT remains an external Python helper: the ingestion adapter still stages
+its explicit inputs and consumes the published page files.
+
+DOCUMENT revision 2 records this byte-input/callback implementation. ISO/PKG
+revision 3 and nested ISO9660 revision 2 preserve earlier inline manual provenance
+as immutable history. Rebuild the helper before using these revisions.
+
 Fixed-key recognition uses the encrypted DOC magic/version block, not filenames
 or generic PGD magic. The reader checks supported header/table/page protection;
 these are source-consistency checks, not independent trusted-origin authentication.

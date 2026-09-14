@@ -1,7 +1,7 @@
-"""Failure-atomic PNG page extraction using the pinned PSP-DOCUMENT.DAT readers."""
+"""Failure-atomic PNG publication from bounded byte-input DOCUMENT readers."""
 import argparse
-import contextlib
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -24,7 +24,7 @@ def provenance():
     return {'name': 'PSP-DOCUMENT.DAT', 'options': [
         'upstream:' + UPSTREAM, 'fixed-key-99-slot-pages',
         'explicit-docinfo-304-byte-authenticated-8-byte-key', 'platform-ordinals',
-        'page-files-only:1',
+        'page-files-only:1', 'byte-input-page-callbacks:1',
         'pycryptodome:' + Crypto.__version__, 'Pillow:' + PIL.__version__]}
 
 
@@ -32,8 +32,8 @@ def identity(data):
     return {'sha256': hashlib.sha256(data).hexdigest(), 'size_bytes': len(data)}
 
 
-def verify_png(path):
-    with path.open('rb') as stream:
+def verify_png(data):
+    with BytesIO(data) as stream:
         with Image.open(stream) as image:
             if image.format != 'PNG' or image.n_frames != 1:
                 raise ValueError('Document page is not a single PNG image')
@@ -44,12 +44,9 @@ def verify_png(path):
         # Require its exact CRC and EOF: rfind(IEND) alone permits trailing data.
         if stream.read(5) != b'\xaeB`\x82':
             raise ValueError('Document page has an invalid PNG end boundary')
-        stream.seek(0)
-        page_identity = {'sha256': hashlib.file_digest(stream, 'sha256').hexdigest(),
-                         'size_bytes': os.fstat(stream.fileno()).st_size}
-    with Image.open(path) as image:
+    with Image.open(BytesIO(data)) as image:
         image.load()
-    return page_identity
+    return identity(data)
 
 
 def extract(source, output, docinfo=None):
@@ -73,49 +70,23 @@ def extract(source, output, docinfo=None):
 
     with tempfile.TemporaryDirectory(prefix='.pspdb-document-', dir=output.parent) as directory:
         work = Path(directory)
-        # Freeze explicit input snapshots under neutral names; never discover siblings.
-        staged_source = work / 'source_DOCUMENT.DAT'
-        staged_source.write_bytes(original)
-        staged_docinfo = None
-        if companion is not None:
-            staged_docinfo = work / 'source_DOCINFO.EDAT'
-            staged_docinfo.write_bytes(companion)
-        with open(os.devnull, 'w') as log, contextlib.chdir(work), \
-                contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-            if variant == 'ps1':
-                from decrypt_document_ps1 import PS1Doc
-                result = PS1Doc(str(staged_source)).readDocData()
-            else:
-                from decrypt_document_psp import PSPDoc
-                result = PSPDoc(str(staged_source), staged_docinfo).readDocData()
-        if result is None:
-            raise ValueError('Upstream document validation failed')
-        count = result.header.pages_total
-        ps3_count = result.header.pages_total_ps3
-        if not 1 <= count <= 99 or len(result.pages.info) != count or not 0 <= ps3_count <= count:
-            raise ValueError('Unsupported or incomplete document page table')
-        page_directory = work / ('out_png_' + variant) / result.file_info.name
-        expected = {f'page_{index:03d}.png' for index in range(1, count + 1)}
-        if not page_directory.is_dir() or {p.name for p in page_directory.iterdir()} != expected:
-            raise ValueError('Incomplete document page extraction')
-
         publish = work / 'publish'
         publish.mkdir()
+        (publish / 'psp').mkdir()
         pages, frames = [], {}
-        for ordinal, info in enumerate(result.pages.info, 1):
-            page = page_directory / f'page_{ordinal:03d}.png'
-            if page.is_symlink() or not page.is_file():
-                raise ValueError('Unexpected document output entry')
-            page_identity = verify_png(page)
+
+        def emit_page(ordinal, info, data):
+            if ordinal != len(pages) + 1 or ordinal > 99:
+                raise ValueError('Incomplete or unordered document page extraction')
             frame = (info.offset, info.size)
             if info.offset < 0 or info.size <= 0 or info.offset + info.size > len(original):
                 raise ValueError('Document frame exceeds its source')
+            page_identity = verify_png(data)
             frame_identity = identity(memoryview(original)[info.offset:info.offset + info.size])
             frame_identity['offset'] = info.offset
             relative = f'psp/{ordinal:03d}.png'
             target = publish / relative
-            target.parent.mkdir(exist_ok=True)
-            page.rename(target)
+            target.write_bytes(data)
             item = {'path': relative, **page_identity, 'source_frame': frame_identity}
             pages.append(item)
             previous = frames.get(frame)
@@ -123,13 +94,25 @@ def extract(source, output, docinfo=None):
                 raise ValueError('One document frame produced conflicting page bytes')
             frames[frame] = item
 
+        if variant == 'ps1':
+            from decrypt_document_ps1 import PS1Doc
+            result = PS1Doc(original).read_doc_data(emit_page)
+        else:
+            from decrypt_document_psp import PSPDoc
+            result = PSPDoc(original, companion).read_doc_data(emit_page)
+        count = result.header.pages_total
+        ps3_count = result.header.pages_total_ps3
+        if not 1 <= count <= 99 or len(result.pages.info) != count or len(pages) != count or not 0 <= ps3_count <= count:
+            raise ValueError('Unsupported or incomplete document page table')
+        if ps3_count:
+            (publish / 'ps3').mkdir()
+
         for ordinal, info in enumerate(result.pages.info[:ps3_count], 1):
             item = frames.get((info.offset_ps3, info.size_ps3))
             if item is None:
                 raise ValueError('Unique PS3-only document frames are not supported')
             relative = f'ps3/{ordinal:03d}.png'
             target = publish / relative
-            target.parent.mkdir(exist_ok=True)
             os.link(publish / item['path'], target)
             pages.append({**item, 'path': relative})
         manifest = {'format': 'pspdb.document-pages', 'schema_version': 1,
