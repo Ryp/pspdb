@@ -17,6 +17,8 @@ const licenses = @import("licenses.zig");
 const memory = @import("bytes.zig");
 const iso = @import("iso_reader.zig");
 const extractor = @import("extractor.zig");
+const external_extractor = @import("external_extractor.zig");
+const CatalogState = @import("catalog_state.zig").State;
 const StoreWriter = @import("store.zig").Writer;
 const umd = @import("umd_data.zig");
 const sfo = @import("sfo.zig");
@@ -44,7 +46,10 @@ pub const Task = struct {
 pub const Dispatch = struct {
     context: *anyopaque,
     enqueue: *const fn (*anyopaque, Task) anyerror!void,
-    adapter: extractor.Adapter,
+    store: ?[]const u8,
+    catalog: []const u8,
+    state: ?*const CatalogState = null,
+    rap_directory: ?[]const u8 = null,
     mutex: std.Io.Mutex = .init,
     visited: std.AutoHashMap([64]u8, void),
 
@@ -258,7 +263,7 @@ const Inventory = struct {
             if (entry.size_bytes.? > 64 * 1024 * 1024) return error.InvalidDocument;
             const source_input = self.document_inputs.get(index) orelse return error.InvalidDocument;
             const companion_input = self.document_inputs.get(companion_index) orelse return error.InvalidDocinfo;
-            const output = try dispatch.adapter.extract(self.allocator, self.io, entry.sha256.?, source_input.bytes, .document, companion_input.bytes);
+            const output = try external_extractor.extract(self.allocator, self.io, entry.sha256.?, source_input.bytes, .document, companion_input.bytes);
             // The inline tree takes the parsed provenance; temporary output
             // files still disappear after their immediate inventory walk.
             defer {
@@ -266,7 +271,7 @@ const Inventory = struct {
                 self.allocator.free(output.path);
                 if (!attached) output.provenance.deinit();
             }
-            var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = dispatch.adapter.store, .dispatch = dispatch, .paths = .init(self.allocator) };
+            var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = dispatch.store, .dispatch = dispatch, .paths = .init(self.allocator) };
             defer child.deinit();
             try output.walk(self.allocator, self.io, &child, Inventory.emit_view);
             const tree = try self.allocator.create(InlineExtraction);
@@ -312,7 +317,7 @@ const Inventory = struct {
 
 /// Process only this extraction's immediate tree. Descendants go to Dispatch.
 pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Dispatch) !Counts {
-    if (dispatch.adapter.state) |state| {
+    if (dispatch.state) |state| {
         if (state.fresh_trees.map.getPtr(@tagName(task.kind))) |fresh| {
             if (fresh.map.contains(&task.hash)) {
                 if (try reuse_task(allocator, io, task, dispatch)) |counts| return counts;
@@ -323,20 +328,20 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
     var inventory = Inventory{
         .allocator = allocator,
         .io = io,
-        .store = dispatch.adapter.store,
+        .store = dispatch.store,
         .dispatch = dispatch,
         .owner = task.input.owner,
         .pair_documents = task.kind == .iso9660,
         .paths = .init(allocator),
     };
     defer inventory.deinit();
-    var output: ?extractor.Output = null;
+    var output: ?external_extractor.Output = null;
     defer if (output) |value| value.deinit(allocator, io);
     const provenance: extractor.Provenance = switch (task.kind) {
         .edat => blk: {
             const bytes = edat.decode(allocator, task.input.bytes, null) catch |err| switch (err) {
                 error.MissingEdatRap => retry: {
-                    const directory = dispatch.adapter.rap_directory orelse return error.MissingEdatRap;
+                    const directory = dispatch.rap_directory orelse return error.MissingEdatRap;
                     const content_id = try edat.content_id(task.input.bytes);
                     var rap = licenses.read_rap(io, directory, content_id) catch |key_error| {
                         std.debug.print("EDAT {s}: {s} in {s}; configure PSPDB_RAP_DIR or import its RAP with tools/psn_acquire.py\n", .{ content_id, @errorName(key_error), directory });
@@ -420,7 +425,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             try containers.walk_pbp(task.input.bytes, &inventory, Inventory.emit);
             if (is_pops) inline for (.{ .{ extractor.Kind.pops, "DATA.PSP" }, .{ extractor.Kind.psx, "DATA.BIN" } }) |section| {
                 // Sibling/container context stays attached to its source section.
-                var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.adapter.store, .dispatch = dispatch, .paths = .init(allocator) };
+                var child = Inventory{ .allocator = allocator, .io = io, .store = dispatch.store, .dispatch = dispatch, .paths = .init(allocator) };
                 defer child.deinit();
                 const section_provenance: extractor.Provenance = if (section[0] == .pops) native: {
                     const bytes = try pops.decode(allocator, pbp.get("DATA.PSP") orelse return error.MissingDataPsp, data_bin);
@@ -430,7 +435,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
                     try child.emit_view(name, view);
                     break :native .{ .name = "pspdb-pops", .version = revisions.pops, .options = &.{"in-memory"} };
                 } else external: {
-                    output = try dispatch.adapter.extract(allocator, io, task.hash, task.input.bytes, .psx, null);
+                    output = try external_extractor.extract(allocator, io, task.hash, task.input.bytes, .psx, null);
                     try output.?.walk(allocator, io, &child, Inventory.emit_view);
                     break :external output.?.provenance.value;
                 };
@@ -448,7 +453,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
             break :blk .{ .name = "Zig-PSP zPBPTool", .version = revisions.pbp, .options = &.{"in-memory"} };
         },
         else => blk: {
-            output = try dispatch.adapter.extract(allocator, io, task.hash, task.input.bytes, task.kind, null);
+            output = try external_extractor.extract(allocator, io, task.hash, task.input.bytes, task.kind, null);
             try output.?.walk(allocator, io, &inventory, Inventory.emit_view);
             break :blk output.?.provenance.value;
         },
@@ -458,17 +463,17 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
         for (entries) |entry| entry.deinit(allocator);
         allocator.free(entries);
     }
-    try catalog_io.publish_extraction(allocator, io, dispatch.adapter.catalog, task.hash, task.input.bytes.len, entries, provenance, @tagName(task.kind));
+    try catalog_io.publish_extraction(allocator, io, dispatch.catalog, task.hash, task.input.bytes.len, entries, provenance, @tagName(task.kind));
     return inventory.counts;
 }
 
 /// Reuse an unchanged immediate inventory, but still visit its derived children.
 fn reuse_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Dispatch) !?Counts {
-    if (dispatch.adapter.store == null) return null;
+    if (dispatch.store == null) return null;
     const revision = switch (task.kind) {
         inline else => |kind| @field(revisions, @tagName(kind)),
     };
-    const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-tree.json", .{ dispatch.adapter.catalog, @tagName(task.kind), revision, task.hash });
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-tree.json", .{ dispatch.catalog, @tagName(task.kind), revision, task.hash });
     defer allocator.free(path);
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited) catch |err| switch (err) {
         error.FileNotFound => return null,
@@ -486,7 +491,7 @@ const SavedEntry = struct { path: []const u8, type: []const u8, sha256: ?[]const
 const SavedTree = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry, dependencies: []Dependency = &.{} };
 
 fn reuse_entries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry, dispatch: *Dispatch, pair_documents: bool) anyerror!?Counts {
-    const store = dispatch.adapter.store orelse return null;
+    const store = dispatch.store orelse return null;
     var counts: Counts = .{};
     for (entries) |entry| {
         try validate_path(entry.path);
@@ -660,7 +665,8 @@ test "failed queue publication permits retry with input retained past its parent
     var dispatch = Dispatch{
         .context = &queue,
         .enqueue = Queue.enqueue,
-        .adapter = .{ .store = "unused", .catalog = "unused" },
+        .store = "unused",
+        .catalog = "unused",
         .visited = .init(allocator),
     };
     defer dispatch.visited.deinit();
@@ -695,7 +701,8 @@ test "native descendants outlive their parent and never reread their source from
     var dispatch = Dispatch{
         .context = &queue,
         .enqueue = Queue.enqueue,
-        .adapter = .{ .store = root, .catalog = root },
+        .store = root,
+        .catalog = root,
         .visited = .init(allocator),
     };
     defer dispatch.visited.deinit();

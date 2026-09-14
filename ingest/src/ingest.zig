@@ -3,7 +3,7 @@ const processor = @import("processor.zig");
 const zip = @import("zip.zig");
 const inventory = @import("inventory.zig");
 const memory = @import("bytes.zig");
-const extractor = @import("extractor.zig");
+const CatalogState = @import("catalog_state.zig").State;
 
 pub const Stats = struct {
     directories: usize = 0,
@@ -78,8 +78,8 @@ const Pool = struct {
     store: ?[]const u8,
     catalog: ?[]const u8,
     skip_existing: bool,
-    state: ?*const @import("catalog_state.zig").State = null,
-    extractor_adapter: ?extractor.Adapter,
+    state: ?*const CatalogState = null,
+    rap_directory: ?[]const u8,
     mutex: std.Io.Mutex = .init,
     changed: std.Io.Condition = .init,
     jobs: std.ArrayList(Job) = .empty,
@@ -200,10 +200,13 @@ const Pool = struct {
         group.* = .{
             .pool = self,
             .path = name,
-            .dispatch = if (self.extractor_adapter) |adapter| .{
+            .dispatch = if (self.catalog) |catalog| .{
                 .context = group,
                 .enqueue = enqueue_extraction,
-                .adapter = adapter,
+                .store = self.store,
+                .catalog = catalog,
+                .state = self.state,
+                .rap_directory = self.rap_directory,
                 .visited = .init(self.allocator),
             } else null,
             .progress = self.extraction_progress.start(std.Io.Dir.path.basename(path), 0),
@@ -411,7 +414,7 @@ pub fn log(io: std.Io, comptime format: []const u8, args: anytype) void {
     stderr.file_writer.interface.flush() catch {};
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, extractor_adapter: ?extractor.Adapter, state: ?*const @import("catalog_state.zig").State) !Stats {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
     std.debug.assert(worker_count >= 1);
     var pool: Pool = .{
         .allocator = allocator,
@@ -420,7 +423,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8
         .catalog = catalog,
         .skip_existing = skip_existing,
         .state = state,
-        .extractor_adapter = extractor_adapter,
+        .rap_directory = rap_directory,
         .intake_limit = @max(1, max_threads / 4),
         .scan_progress = root.start("Scanning directories", 0),
         .iso_progress = root.start("ISO/PKG intake", 0),
@@ -478,7 +481,7 @@ test "intake gate leaves workers free for discovery and child extraction" {
         .store = null,
         .catalog = null,
         .skip_existing = false,
-        .extractor_adapter = null,
+        .rap_directory = null,
         .intake_limit = 2,
         .scan_progress = .none,
         .iso_progress = .none,

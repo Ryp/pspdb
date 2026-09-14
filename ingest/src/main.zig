@@ -1,5 +1,7 @@
 const std = @import("std");
 const ingest = @import("ingest.zig");
+const catalog_state = @import("catalog_state.zig");
+const licenses = @import("licenses.zig");
 
 const Options = struct {
     folders: []const []const u8 = &.{},
@@ -58,7 +60,7 @@ pub fn main(init: std.process.Init) !u8 {
         return 2;
     };
     if (options.help) {
-        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.pkg/.zip contents across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. ZIP ISO/PKG members decompressed in memory. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG results and checks nested extractor provenance (requires --catalog; off by default).\nPSAR/RCO/PRX/SCE/PBP/gzip files are processed automatically when --store and --catalog are set; external adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
+        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.pkg/.zip contents across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. ZIP ISO/PKG members decompressed in memory. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG results and checks nested extractor provenance (requires --catalog; off by default).\nSupported nested formats are processed automatically when --catalog is set; --store is optional. External adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
         return 0;
     }
 
@@ -78,19 +80,13 @@ pub fn main(init: std.process.Init) !u8 {
         try std.Io.Dir.cwd().createDirPath(io, path);
         break :blk try std.Io.Dir.cwd().realPathFileAlloc(io, path, init.arena.allocator());
     } else null;
-    const freshness = if (options.skip_existing) try @import("catalog_state.zig").load(init.gpa, io, catalog.?) else null;
+    const freshness = if (options.skip_existing) try catalog_state.load(init.gpa, io, catalog.?) else null;
     defer if (freshness) |state| state.deinit();
     const state = if (freshness) |*value| &value.value else null;
-    const rap_directory = @import("licenses.zig").directory_path(init.arena.allocator(), init.environ_map) catch |err| switch (err) {
+    const rap_directory = licenses.directory_path(init.arena.allocator(), init.environ_map) catch |err| switch (err) {
         error.MissingHomeDirectory => null,
         else => return err,
     };
-    const extractor_adapter: ?@import("extractor.zig").Adapter = if (catalog != null) .{
-        .store = store,
-        .catalog = catalog.?,
-        .state = state,
-        .rap_directory = rap_directory,
-    } else null;
     const live = options.progress and options.threads > 1 and (std.Io.File.stderr().isTty(io) catch false);
     const root = if (live) std.Progress.start(io, .{
         .root_name = "ISO ingestion",
@@ -100,7 +96,7 @@ pub fn main(init: std.process.Init) !u8 {
     ingest.log(io, "Ingesting {d} folders (thread cap {d}, ingest workers {d}, progress task {d})\n", .{
         options.folders.len, options.threads, worker_count, @as(usize, if (live) 1 else 0),
     });
-    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, extractor_adapter, state) catch |err| {
+    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, rap_directory, state) catch |err| {
         root.end();
         std.debug.print("pspdb-ingest: {s}\n", .{@errorName(err)});
         return 1;
