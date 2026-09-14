@@ -281,6 +281,13 @@ The API and exported `catalog.json` keep inventories in `trees[kind][sha256]`.
 Root rows use their explicit `iso` or `pkg` inventory; nested files use their
 derived extractor inventory. Inline contextual extractions retain occurrence precedence.
 
+The local server caches catalog JSON and its gzip representation, checking record
+paths, modification times, sizes, and annotation dependencies on requests so reloads
+pick up catalog changes without restarting. The first request after a change rebuilds
+the snapshot. Only viewport rows are created in the browser; search still covers
+files inside collapsed branches. Narrowing a query filters the previous matches,
+while broadening or replacing it searches the full file list.
+
 ## Static hosting / GitHub Pages
 
 ```sh

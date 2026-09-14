@@ -1,13 +1,14 @@
 import hashlib
 from http.server import ThreadingHTTPServer
 import json
+import gzip
 from pathlib import Path
 import tempfile
 import threading
 import unittest
 from urllib.error import HTTPError
 from urllib.parse import quote, urlencode
-from urllib.request import build_opener, ProxyHandler
+from urllib.request import build_opener, ProxyHandler, Request
 from unittest.mock import patch
 
 from pspdb.server import handler_for, download_index
@@ -69,6 +70,29 @@ class DownloadTests(unittest.TestCase):
             server.shutdown(); server.server_close(); thread.join()
         self.addCleanup(stop)
         self.base = f'http://127.0.0.1:{server.server_port}'
+
+    def test_cached_catalog_refreshes_and_negotiates_compression(self):
+        self.start(None)
+        with self.get('/api/catalog') as response:
+            original = response.read()
+        request = Request(self.base + '/api/catalog', headers={'Accept-Encoding': 'gzip'})
+        with self.client.open(request) as response:
+            self.assertEqual(response.headers['Content-Encoding'], 'gzip')
+            self.assertEqual(response.headers['Vary'], 'Accept-Encoding')
+            self.assertEqual(gzip.decompress(response.read()), original)
+        request = Request(self.base + '/api/catalog', headers={'Accept-Encoding': 'gzip;q=0, *;q=1'})
+        with self.client.open(request) as response:
+            self.assertIsNone(response.headers['Content-Encoding'])
+            self.assertEqual(response.read(), original)
+        path = self.catalog / 'iso' / ('a' * 64 + '.json')
+        record = json.loads(path.read_text())
+        record['metadata']['title'] = 'Changed title'
+        path.write_text(json.dumps(record))
+        with self.get('/api/catalog') as response:
+            self.assertEqual(json.load(response)['records']['iso'][0]['metadata']['title'], 'Changed title')
+        path.unlink()
+        with self.get('/api/catalog') as response:
+            self.assertNotIn('iso', json.load(response)['records'])
 
     def get(self, path):
         return self.client.open(self.base + path, timeout=5)

@@ -42,23 +42,23 @@ const result=await evaluate(`(()=>{
  check(formatSize(1024**2)==='1 MiB'&&formatSize(1024**3)==='1 GiB','Larger units');
  check(formatSize(123.456*1024**2)==='123 MiB'&&formatSize(12.3456*1024**2)==='12.3 MiB','Three significant digits');
  const sizeNode=[...nodes.values()].find(n=>n.type==='file'&&n.size>1024);
+ jump(sizeNode);
  check(rowElements.get(sizeNode.path).querySelector('.size').textContent===formatSize(sizeNode.size),'Rendered readable sizes');
  check(rowElements.get(sizeNode.path).querySelector('.size').title===number.format(sizeNode.size)+' bytes','Exact byte tooltip');
  const initial=visible.length;
- const originals=new Map(rowElements);
  const branch=Array.from(nodes.values()).find(n=>n.depth>3 && n.children.some(c=>c.type==='directory'&&c.children.length>3));
  const nested=branch.children.find(c=>c.type==='directory'&&c.children.length>3);
  const leaf=nested.children[0];
- const branchRow=rowElements.get(branch.path);
  jump(nested);
  rowElements.get(nested.path).querySelector('.toggle').click();
  check(collapsed.has(nested.path),'Nested folder should collapse');
- check(rowElements.get(leaf.path).hidden,'Nested contents should hide');
- branchRow.querySelector('.toggle').click();
- check(rowElements.get(nested.path).hidden,'Parent should hide nested folder');
- branchRow.querySelector('.toggle').click();
- check(!rowElements.get(nested.path).hidden,'Parent should restore nested folder');
- check(rowElements.get(leaf.path).hidden,'Nested collapse state must survive parent toggle');
+ check(!visible.includes(leaf),'Nested contents should hide');
+ jump(branch); rowElements.get(branch.path).querySelector('.toggle').click();
+ check(!visible.includes(nested),'Parent should hide nested folder');
+ rowElements.get(branch.path).querySelector('.toggle').click();
+ check(visible.includes(nested),'Parent should restore nested folder');
+ check(!visible.includes(leaf),'Nested collapse state must survive parent toggle');
+ jump(nested);
  check(rowElements.get(nested.path).getAttribute('aria-expanded')==='false','Disclosure aria state');
  select(nested);
  document.dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}));
@@ -71,7 +71,8 @@ const result=await evaluate(`(()=>{
  check(!rowElements.get(leaf.path).hidden,'Jump must reveal collapsed ancestors');
  check(document.getElementById('tree').getAttribute('aria-activedescendant')===leaf.id,'Active row');
  check(![...rowElements.values()].some(row=>row.querySelector('a:not(.download-link):not(.redump-link):not(.umdatabase-link)')),'No cross-tree links');
- for(const node of nodes.values()){
+ for(const node of [...nodes.values()].filter(n=>(n.redump||[]).length)){
+  jump(node);
   const links=[...rowElements.get(node.path).querySelectorAll('.redump-link')];
   check(links.length===(node.redump||[]).length,'Exact matches appear on ISO rows');
   links.forEach((link,i)=>{
@@ -83,7 +84,8 @@ const result=await evaluate(`(()=>{
    check(selected===before,'Redump click does not select or toggle tree');
   });
  }
- for(const node of nodes.values()){
+ for(const node of [...nodes.values()].filter(n=>(n.umdatabase||[]).length)){
+  jump(node);
   const links=[...rowElements.get(node.path).querySelectorAll('.umdatabase-link')];
   check(links.length===(node.umdatabase||[]).length,'UMDatabase matches appear on ISO rows');
   links.forEach((link,i)=>{
@@ -101,7 +103,6 @@ const result=await evaluate(`(()=>{
  collapsed.clear();render();select(selected || visible[0]);
  check(visible.length===initial,'Expand all restores every row');
  check(Array.from(rowElements.values()).every(r=>!r.hidden),'All expanded rows displayed');
- check(originals.size===rowElements.size && Array.from(originals).every(([p,r])=>rowElements.get(p)===r),'Rows must never be recreated by folding or jumps');
  check(Number(document.getElementById('tree').getAttribute('aria-rowcount'))===visible.length+1,'Accessible row count');
  const search=document.getElementById('tree-search');
  const query=value=>{search.value=value;search.dispatchEvent(new Event('input',{bubbles:true}));};

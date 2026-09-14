@@ -39,6 +39,7 @@ const nodes = new Map(), collapsed = new Set(), rowElements = new Map();
 const disclosures = new Map();
 let root, selected, visible = [];
 let filterNodes = null, searchTerms = [], savedTree = null;
+let searchableFiles = [];
 let searchSort = null, sortDirection = 1;
 const nameOrder = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 const highlightCache = new WeakMap();
@@ -102,7 +103,16 @@ function renderWindow() {
   }
   spacer(start * rowHeight);
   for (let index = start; index < end; index++) {
-    const node = visible[index], row = rowElements.get(node.path);
+    const node = visible[index], row = rowElements.get(node.path) || createRow(node);
+    row.classList.toggle("selected", node === selected);
+    row.setAttribute("aria-selected", String(node === selected));
+    const button = disclosures.get(node);
+    if (button) {
+      const expanded = !collapsed.has(node.path);
+      row.setAttribute("aria-expanded", String(expanded));
+      button.textContent = expanded ? "▾" : "▸";
+      button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${node.name}`);
+    }
     if (node.gamePrefix) {
       highlight(node.pathElement, filterNodes ? node.displayPath.slice(0, -label(node).length) : "");
       highlight(node.prefixElement, node.gamePrefix);
@@ -116,6 +126,15 @@ function renderWindow() {
     fragment.append(row);
   }
   spacer((visible.length - end) * rowHeight);
+  const mounted = new Set(visible.slice(start, end));
+  for (const [path] of rowElements) {
+    const node = nodes.get(path);
+    if (mounted.has(node)) continue;
+    rowElements.delete(path);
+    disclosures.delete(node);
+    for (const key of ["nameElement", "pathElement", "prefixElement", "titleElement",
+      "noteElement", "hashElement", "errorElement", "downloadCell"]) delete node[key];
+  }
   $("entries").replaceChildren(fragment);
   refreshDownloads();
 }
@@ -184,15 +203,18 @@ function sortSearch(key) {
 
 function applySearch() {
   const query = $("tree-search").value.trim();
+  const previousTerms = searchTerms;
+  const previousMatches = filterNodes;
   searchTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (query && !savedTree) savedTree = {
     collapsed: new Set(collapsed), selected, scroll: $("table-scroll").scrollTop,
   };
   if (query) {
+    const candidates = previousMatches && previousTerms.every(old => searchTerms.some(term => term.includes(old)))
+      ? previousMatches : searchableFiles;
     filterNodes = new Set();
     let files = 0;
-    for (const node of nodes.values()) {
-      if (node.type !== "file") continue;
+    for (const node of candidates) {
       if (!searchTerms.every(term => node.searchText.includes(term) || node.errorSearchText?.includes(term))) continue;
       files++;
       filterNodes.add(node);
@@ -413,9 +435,11 @@ function build(data) {
       attachExtraction(node, extractions, new Set(), null, data.trees.pkg || {});
     }
   }
+  searchableFiles = [];
   function summarize(node) {
     node.children.sort((a, b) => (a.type === b.type ? 0 : a.type === "directory" ? -1 : 1)
       || (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : 0));
+    if (node.type === "file") searchableFiles.push(node);
     for (const child of node.children) summarize(child);
     node.files = (node.type === "file" ? 1 : 0) + node.children.reduce((sum, child) => sum + child.files, 0);
     if (node.type === "directory")
@@ -439,8 +463,8 @@ function select(node, scroll = true, updateURL = true) {
   previous?.setAttribute("aria-selected", "false");
   selected = node;
   const row = rowElements.get(node.path);
-  row.classList.add("selected");
-  row.setAttribute("aria-selected", "true");
+  row?.classList.add("selected");
+  row?.setAttribute("aria-selected", "true");
   $("tree").setAttribute("aria-activedescendant", node.id);
   $("selected-path").textContent = node.path || label(node);
   $("selected-error").hidden = !node.error;
@@ -479,47 +503,26 @@ function toggle(node) {
 }
 
 function render() {
-  const previous = visible;
   visible = [];
   function walk(node) {
-    if (!filterNodes || filterNodes.has(node)) visible.push(node);
-    if (filterNodes || !collapsed.has(node.path)) for (const child of node.children) walk(child);
+    visible.push(node);
+    if (!collapsed.has(node.path)) for (const child of node.children) walk(child);
   }
-  walk(root);
+  if (filterNodes) visible = Array.from(filterNodes);
+  else walk(root);
   if (filterNodes && searchSort) visible.sort(compareSearchResults);
   windowVersion++;
-  if (rowElements.size) {
-    // Keep row identity and handlers intact, mounting only the viewport window.
-    const showing = new Set(visible);
-    for (const node of previous) {
-      if (!showing.has(node)) rowElements.get(node.path).hidden = true;
-    }
-    for (const node of visible) {
-      const row = rowElements.get(node.path);
-      if (row.hidden) row.hidden = false;
-    }
-    for (const [node, button] of disclosures) {
-      const expanded = !collapsed.has(node.path);
-      const row = rowElements.get(node.path);
-      if (row.getAttribute("aria-expanded") !== String(expanded)) {
-        row.setAttribute("aria-expanded", String(expanded));
-        button.textContent = expanded ? "▾" : "▸";
-        button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${node.name}`);
-      }
-    }
-    $("tree").setAttribute("aria-rowcount", visible.length + 1);
-    const host = $("table-scroll");
-    host.scrollTop = Math.min(host.scrollTop, Math.max(0, visible.length * rowHeight - host.clientHeight + $("tree").tHead.offsetHeight));
-    renderWindow();
-    return;
-  }
-  const showing = new Set(visible);
-  for (const node of nodes.values()) {
+  $("tree").setAttribute("aria-rowcount", visible.length + 1);
+  const host = $("table-scroll");
+  host.scrollTop = Math.min(host.scrollTop, Math.max(0, visible.length * rowHeight - host.clientHeight + $("tree").tHead.offsetHeight));
+  renderWindow();
+}
+
+function createRow(node) {
     const folder = expandable(node);
     const container = Boolean(node.extraction);
     const row = element("tr", `node ${container ? "file container" : folder ? "folder" : "file"}${node.virtual && !container ? " virtual" : ""}`);
     if (node.error) row.classList.add("extraction-failed");
-    row.hidden = !showing.has(node);
     row.id = node.id;
     row.dataset.path = node.path;
     row.setAttribute("aria-level", node.depth + 1);
@@ -623,9 +626,7 @@ function render() {
       else if (folder) toggle(node);
     };
     rowElements.set(node.path, row);
-  }
-  $("tree").setAttribute("aria-rowcount", visible.length + 1);
-  renderWindow();
+    return row;
 }
 
 function restore() {

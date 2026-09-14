@@ -1,8 +1,10 @@
 """Read-only local web browser for a catalog; no index regeneration needed."""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import gzip
 import json
 import os
+import threading
 from pathlib import Path
 import re
 import shutil
@@ -217,38 +219,79 @@ def download_index(data):
     return index
 
 
+def catalog_signature(catalog):
+    """Cheap fingerprint of every catalog record so cached responses invalidate on change."""
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(catalog):
+        dirnames.sort()
+        for name in filenames:
+            if name.endswith(".json"):
+                info = os.stat(os.path.join(dirpath, name))
+                entries.append((dirpath, name, info.st_mtime_ns, info.st_size))
+    dependencies = [Path(__file__).resolve().parents[2] / "tools" / "extractor_versions.json",
+                    Path(__file__).with_name("data") / "contextual_extractors.json",
+                    Path(__file__).with_name("data") / "redump-psx.json"]
+    for path in dependencies:
+        try:
+            info = path.stat()
+            entries.append((str(path.parent), path.name, info.st_mtime_ns, info.st_size))
+        except FileNotFoundError:
+            entries.append((str(path.parent), path.name, None, None))
+    entries.sort()
+    return tuple(entries)
+
+
 def handler_for(catalog, store=None, redump=None, umdatabase=None):
     assets = Path(__file__).with_name("web")
     catalog = Path(catalog)
     store = Path(store).resolve() if store is not None else None
-    objects = None
+    cache, lock = {}, threading.Lock()
 
-    def indexed_objects():
-        nonlocal objects
-        if objects is None:
-            objects = download_index(catalog_data(catalog))
-        return objects
+    def snapshot():
+        """Rebuild the catalog payload only when a record changes on disk; otherwise serve cache."""
+        nonlocal cache
+        with lock:
+            signature = catalog_signature(catalog)
+            if cache.get("signature") != signature:
+                data = catalog_data(catalog, redump, umdatabase)
+                data["downloads_enabled"] = store is not None
+                body = json.dumps(data).encode("utf-8")
+                cache = dict(signature=signature, body=body,
+                             gzip=gzip.compress(body, compresslevel=1),
+                             objects=download_index(data) if store is not None else None)
+            return cache
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            nonlocal objects
             request = urlsplit(self.path)
             route = request.path
+            encoding = None
             try:
                 if route == "/api/catalog":
-                    data = catalog_data(catalog, redump, umdatabase)
-                    if store is not None:
-                        objects = download_index(data)
-                    data["downloads_enabled"] = store is not None
-                    body = json.dumps(data).encode("utf-8")
+                    payload = snapshot()
                     mime = "application/json; charset=utf-8"
+                    accepted = {}
+                    for item in self.headers.get("Accept-Encoding", "").lower().split(","):
+                        coding, *parameters = item.strip().split(";")
+                        quality = 1.0
+                        for parameter in parameters:
+                            if parameter.strip().startswith("q="):
+                                try:
+                                    quality = float(parameter.strip()[2:])
+                                except ValueError:
+                                    quality = 0.0
+                        accepted[coding] = quality
+                    if accepted.get("gzip", accepted.get("*", 0)) > 0:
+                        body, encoding = payload["gzip"], "gzip"
+                    else:
+                        body = payload["body"]
                 elif route == "/api/availability" and store is not None:
                     hashes = parse_qs(request.query).get("hash", [])
                     if len(hashes) > 128:
                         self.send_error(400, "Too many hashes")
                         return
                     available = {}
-                    index = indexed_objects()
+                    index = snapshot()["objects"]
                     for digest in set(hashes):
                         available[digest] = False
                         if digest in index:
@@ -276,6 +319,10 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None):
                 return
             self.send_response(200)
             self.send_header("Content-Type", mime)
+            if route == "/api/catalog":
+                self.send_header("Vary", "Accept-Encoding")
+            if encoding:
+                self.send_header("Content-Encoding", encoding)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -288,7 +335,7 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None):
                 return
             digest, encoded = match.groups()
             name = unquote(encoded)
-            entry = indexed_objects().get(digest)
+            entry = snapshot()["objects"].get(digest)
             if entry is None or name not in entry[1]:
                 self.send_error(404)
                 return
