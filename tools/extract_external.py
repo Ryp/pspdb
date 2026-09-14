@@ -34,20 +34,21 @@ def tool_provenance(kind, tool=None):
         return dict(result, name='pspdb-pops', options=['in-memory'])
     if kind not in ('document', 'psx'):
         raise ValueError(f'Unknown extractor kind: {kind}')
-    tool = tool.resolve(strict=True)
-    if kind == 'document':
-        reported = json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30),
-                              object_pairs_hook=manifest_object)
-        manifest_fields(reported, ('name', 'options'))
-        if (reported['name'] != 'PSP-DOCUMENT.DAT' or not isinstance(reported['options'], list)
-                or any(not isinstance(option, str) for option in reported['options'])
-                or 'page-files-only:1' not in reported['options']):
-            raise ValueError('Invalid DOCUMENT helper provenance: page-only output required')
-        result.update(reported)
-    else:
-        result.update(name='PSXtract-2',
-                      options=['<parent.pbp>', 'reconstructed-disc', 'native-linux'])
     with tool.open('rb') as stream:
+        if kind == 'document':
+            command = f'/proc/self/fd/{stream.fileno()}'
+            reported = json.loads(subprocess.check_output(
+                [command, '--provenance'], pass_fds=(stream.fileno(),), text=True, timeout=30),
+                object_pairs_hook=manifest_object)
+            manifest_fields(reported, ('name', 'options'))
+            if (reported['name'] != 'PSP-DOCUMENT.DAT' or not isinstance(reported['options'], list)
+                    or any(not isinstance(option, str) for option in reported['options'])
+                    or 'page-files-only:1' not in reported['options']):
+                raise ValueError('Invalid DOCUMENT helper provenance: page-only output required')
+            result.update(reported)
+        else:
+            result.update(name='PSXtract-2',
+                          options=['<parent.pbp>', 'reconstructed-disc', 'native-linux'])
         result['sha256'] = hashlib.file_digest(stream, 'sha256').hexdigest()
     return result
 
@@ -70,11 +71,14 @@ def current_provenance():
 def extract_psx(source, output, tool):
     # Whole-PBP context belongs under DATA.BIN in the parent inventory.
     tool = tool.resolve(strict=True)
-    provenance = tool_provenance('psx', tool)
-    with tempfile.TemporaryDirectory(prefix='pspdb-psxtract-') as tmp:
+    with tool.open('rb') as binary, tempfile.TemporaryDirectory(prefix='pspdb-psxtract-') as tmp:
+        # Pin the inode across hashing and exec, including atomic helper rebuilds.
+        command = Path(f'/proc/self/fd/{binary.fileno()}')
+        provenance = tool_provenance('psx', command)
         work = Path(tmp)
-        result = subprocess.run([str(tool), str(source.resolve())], cwd=work,
-                                capture_output=True, text=True, errors='replace', timeout=900)
+        result = subprocess.run([str(command), str(source.resolve())], cwd=work,
+                                pass_fds=(binary.fileno(),), capture_output=True,
+                                text=True, errors='replace', timeout=900)
         log = result.stdout + result.stderr
         discs = sorted(work.glob('*.bin'))
         # A Redump MD5 mismatch is a known cosmetic limitation for some titles.
@@ -101,16 +105,20 @@ def extract_psx(source, output, tool):
 
 def extract_document(source, output, tool, docinfo=None):
     tool = tool.resolve(strict=True)
-    provenance = tool_provenance('document', tool)
-    command = [str(tool), str(source.resolve(strict=True)), '--output', str(output.resolve())]
-    if docinfo is not None:
-        command.extend(('--docinfo', str(docinfo.resolve(strict=True))))
-    try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired as error:
-        raise ValueError('Document extraction exceeded 120 seconds') from error
-    if result.returncode:
-        raise ValueError(result.stderr.strip() or 'Document extraction failed')
+    with tool.open('rb') as binary:
+        # Metadata, executable hash and extraction must describe the same inode.
+        executable_path = Path(f'/proc/self/fd/{binary.fileno()}')
+        provenance = tool_provenance('document', executable_path)
+        command = [str(executable_path), str(source.resolve(strict=True)), '--output', str(output.resolve())]
+        if docinfo is not None:
+            command.extend(('--docinfo', str(docinfo.resolve(strict=True))))
+        try:
+            result = subprocess.run(command, pass_fds=(binary.fileno(),),
+                                    capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired as error:
+            raise ValueError('Document extraction exceeded 120 seconds') from error
+        if result.returncode:
+            raise ValueError(result.stderr.strip() or 'Document extraction failed')
     return provenance
 
 

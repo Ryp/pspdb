@@ -497,6 +497,12 @@ Set `PSPDB_PSXTRACT` or put `pspdb-psxtract` on PATH. The native helper includes
 the exact ATRAC3 decoder; Wine and external audio-converter executables are not used.
 PSX remains a file-based helper. See [PS1 extraction setup and validation](tools/psxtract/README.md).
 
+External helper execution requires Linux `/proc/self/fd`. Ingestion holds an open
+executable descriptor across provenance queries, hashing and launch for both PSX
+and DOCUMENT, so atomic helper replacement cannot mix versions within one
+extraction. Publish helper updates atomically; modifying an executable in place
+is not protected by this descriptor pinning.
+
 Standard VMP memory-card wrappers expose their unchanged 131072-byte raw card as
 an `.mcr` child. This follows the
 [upstream wrapper layout](https://github.com/sahlberg/pop-fe/blob/d74e4ab44eedbf41abd759a8db7cd091779dea82/vmp.py):
