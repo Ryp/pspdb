@@ -13,7 +13,7 @@
     <div class="search-bar" role="search">
       <label class="search-field" for="tree-search">
         <span class="sr-only">Filter tree</span>
-        <input id="tree-search" type="search" placeholder="Search names, paths or SHA-256…" autocomplete="off" spellcheck="false" aria-controls="tree" aria-describedby="search-count" disabled>
+        <input id="tree-search" type="search" placeholder="Search names, paths, errors or SHA-256…" autocomplete="off" spellcheck="false" aria-controls="tree" aria-describedby="search-count" disabled>
         <span id="search-count" role="status"></span>
         <kbd>/</kbd>
         <button id="clear-search" aria-label="Clear filter" hidden>×</button>
@@ -32,10 +32,10 @@
       </table>
     </div>
   </main>
+  <div id="selected-error" role="status" aria-label="Extraction error" tabindex="0" hidden><span class="error-icon" aria-hidden="true">!</span><span id="selected-error-message"></span></div>
   <div class="selection-bar"><span id="selected-path"></span><span id="notice" role="status"></span></div>
   <footer>
     <span class="shortcut-help"><kbd>h</kbd> collapse / parent <kbd>j</kbd><kbd>k</kbd> move <kbd>l</kbd> expand / child <span class="extra-help">· arrows work too</span></span>
-    <span id="position" aria-live="polite"></span>
   </footer>
 </body>
 </html>

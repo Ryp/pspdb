@@ -72,7 +72,7 @@ async function refreshDownloads() {
   checkingDownloads = true;
   try {
     const query = new URLSearchParams(hashes.map(hash => ["hash", hash]));
-    const response = await fetch(`api/availability?${query}`);
+    const response = await fetch(`api/availability?${query}`, { signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const result = await response.json();
     for (const hash of hashes) availability.set(hash, result[hash] === true);
@@ -111,6 +111,7 @@ function renderWindow() {
     row.setAttribute("aria-level", filterNodes ? 1 : node.depth + 1);
     if (node.note) highlight(node.noteElement, node.note);
     if (node.hashElement) highlight(node.hashElement, node.hash.slice(0, 12));
+    if (node.error) highlight(node.errorElement, `error: ${node.error}`);
     row.setAttribute("aria-rowindex", index + 2);
     fragment.append(row);
   }
@@ -192,7 +193,7 @@ function applySearch() {
     let files = 0;
     for (const node of nodes.values()) {
       if (node.type !== "file") continue;
-      if (!searchTerms.every(term => node.searchText.includes(term))) continue;
+      if (!searchTerms.every(term => node.searchText.includes(term) || node.errorSearchText?.includes(term))) continue;
       files++;
       filterNodes.add(node);
     }
@@ -229,7 +230,7 @@ function applySearch() {
     rowElements.get(selected?.path)?.classList.remove("selected");
     rowElements.get(selected?.path)?.setAttribute("aria-selected", "false");
     $("tree").removeAttribute("aria-activedescendant");
-    $("position").textContent = "0 rows";
+    $("selected-error").hidden = true;
   }
 }
 
@@ -260,6 +261,14 @@ function expandable(node) { return node.type === "directory" || Boolean(node.ext
 function extractedName(source, path, rule) {
   if (rule === "source_stem") return source.replace(/\.[^.]*$/, "") + path.slice(path.indexOf("."));
   if (rule === "strip_suffix") return source.replace(/\.[^.]*$/, "");
+  if (rule === "decoded_suffix") {
+    let stem = source.replace(/\.[^.]*$/, "");
+    const dot = path.indexOf(".");
+    const suffix = dot < 0 ? "" : path.slice(dot);
+    if (!suffix || suffix === ".bin") return stem;
+    if (suffix === ".elf") stem = stem.replace(/\.(?:elf|prx)$/i, "");
+    return stem.endsWith(suffix) ? stem : stem + suffix;
+  }
   return path;
 }
 
@@ -277,21 +286,70 @@ function addInventory(parent, entries, extractions = {}, ancestors = new Set(), 
     if (entry.type === "directory") {
       if (!directories.has(entry.path)) directories.set(entry.path, add(directory, name));
     } else {
-      const node = add(directory, name, { type: "file", size: entry.size_bytes, hash: entry.sha256 });
-      attachExtraction(node, extractions, ancestors);
+      const node = add(directory, name, { type: "file", size: entry.size_bytes, hash: entry.sha256, redump: entry.redump || [] });
+      attachExtraction(node, extractions, ancestors, entry.extraction);
     }
   }
 }
 
-function attachExtraction(node, extractions, ancestors = new Set()) {
-  const extraction = extractions[node.hash];
-  if (!extraction || extraction.size_bytes !== node.size || ancestors.has(node.hash)) return;
+function attachExtraction(node, extractions, ancestors = new Set(), contextual = null, source = null) {
+  const extraction = contextual || (source === null ? extractions[node.hash] : source[node.hash]);
+  if (extraction === null) throw new Error(`Ambiguous non-root extraction kinds: ${node.hash}`);
+  if (!extraction || (contextual && extraction.sha256 !== node.hash) || extraction.size_bytes !== node.size || ancestors.has(extraction)) return;
   node.extraction = extraction.extractor.name;
-  addInventory(node, extraction.entries, extractions, new Set([...ancestors, node.hash]), extraction.name_rule);
+  node.extractionKind = extraction.extraction_kind;
+  node.extractionVersion = extraction.extractor.version;
+  if (extraction.error) {
+    node.error = extraction.error;
+    node.errorSearchText = `error: ${extraction.error}`.toLowerCase();
+  }
+  if (extraction.stale_extraction) node.stale_extraction = extraction.stale_extraction;
+  addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
 }
 
 function addGroup(parent, name, data = {}) {
   return add(parent, name, { ...data, virtual: true });
+}
+
+function packageSerial(metadata) {
+  const id = metadata.title_id?.trim() || metadata.content_id?.match(/^[^-]+-([A-Z0-9]{9})_/i)?.[1] || "";
+  return id.toUpperCase().replace(/^([A-Z0-9]{4})-?([0-9]{5})$/, "$1-$2");
+}
+
+function packageGroup(contentType, packageFlags) {
+  switch (contentType) {
+    case 6: return "psone_classic";
+    case 7:
+      // PSP update heuristic: package metadata entry 3, bit 4.
+      return Number.isInteger(packageFlags) && (packageFlags & 0x10) !== 0 ? "update" : null;
+    case 14: return null;
+    case 15: return "minis";
+    case 9: return "theme";
+    case 16: return "neogeo";
+    default: return "unknown";
+  }
+}
+
+function packageLabels(packages) {
+  const groups = new Map();
+  for (const pkg of packages) {
+    const metadata = pkg.metadata || {};
+    const title = metadata.title?.trim().replace(/\s+/g, " ") || "Untitled package";
+    const id = packageSerial(metadata);
+    const base = id ? `${id} ${title}` : title;
+    if (!groups.has(base)) groups.set(base, []);
+    groups.get(base).push({ pkg, id });
+  }
+  const labels = new Map();
+  for (const [base, members] of groups) {
+    const hashes = [...new Set(members.map(({ pkg }) => pkg.sha256))];
+    for (const { pkg, id } of members) {
+      let length = 8;
+      while (length < 64 && hashes.some(hash => hash !== pkg.sha256 && hash.slice(0, length) === pkg.sha256.slice(0, length))) length++;
+      labels.set(pkg.sha256, hashes.length > 1 || !id ? `${base} · ${pkg.sha256.slice(0, length)}` : base);
+    }
+  }
+  return labels;
 }
 
 function build(data) {
@@ -301,7 +359,9 @@ function build(data) {
   $("download-col").hidden = !downloadsEnabled;
   $("download-heading").hidden = !downloadsEnabled;
   $("tree").setAttribute("aria-colcount", downloadsEnabled ? "4" : "3");
-  root = { name: "", path: "", depth: -1, children: [] };
+  root = addGroup(null, "");
+  // Show the aggregate root without changing existing UMD/PSN URL paths.
+  root.name = "psp";
   const umd = addGroup(root, "umd");
   const categories = new Map();
   function mediaGroup(code) {
@@ -310,36 +370,63 @@ function build(data) {
     return categories.get(name);
   }
   const isos = data.records.iso || [];
-  const extractions = data.trees;
+  const extractions = Object.create(null), sizes = new Map();
+  for (const [kind, sources] of Object.entries(data.trees)) {
+    for (const [hash, tree] of Object.entries(sources)) {
+      if (sizes.has(hash) && sizes.get(hash) !== tree.size_bytes) throw new Error(`Conflicting source sizes: ${hash}`);
+      sizes.set(hash, tree.size_bytes);
+      if (kind === "iso" || kind === "pkg") continue;
+      extractions[hash] = hash in extractions ? null : tree;
+    }
+  }
   for (const iso of isos) {
-    const category = mediaGroup(iso.metadata.media_code);
-    const id = (iso.metadata.disc_id || iso.metadata.identifier).trim().replace(/^([A-Z]{4})-?([0-9]{5})$/, "$1-$2");
-    const identity = [id, iso.metadata.disc_version].filter(Boolean).join("/");
-    const displayName = iso.metadata.media_code === "V"
-      ? iso.metadata.title.trim()
-      : [identity, iso.metadata.title?.trim()].filter(Boolean).join(" ");
+    const metadata = iso.metadata || {};
+    const category = mediaGroup(metadata.media_code);
+    const id = (metadata.disc_id || metadata.identifier || "").trim().replace(/^([A-Z]{4})-?([0-9]{5})$/, "$1-$2");
+    const identity = [id, metadata.disc_version].filter(Boolean).join("/");
+    const displayName = metadata.media_code === "V"
+      ? metadata.title?.trim() || identity
+      : [identity, metadata.title?.trim()].filter(Boolean).join(" ");
     const node = add(category, `${iso.sha256}.iso`, {
       type: "file",
       redump: iso.redump || [], umdatabase: iso.umdatabase || [], hash: iso.sha256, size: iso.size_bytes,
       displayName,
-      gamePrefix: iso.metadata.media_code === "G" ? identity : null,
+      gamePrefix: metadata.media_code === "G" ? identity : null,
     });
-    attachExtraction(node, extractions);
+    attachExtraction(node, extractions, new Set(), null, data.trees.iso || {});
+  }
+  const packages = data.records.pkg || [];
+  if (packages.length) {
+    const psn = addGroup(root, "psn");
+    const labels = packageLabels(packages);
+    const groups = new Map([[null, psn]]);
+    for (const pkg of packages) {
+      const metadata = pkg.metadata || {};
+      const category = packageGroup(metadata.content_type, metadata.package_flags);
+      if (!groups.has(category)) groups.set(category, addGroup(psn, category));
+      const node = add(groups.get(category), `${pkg.sha256}.pkg`, {
+        type: "file", hash: pkg.sha256, size: pkg.size_bytes,
+        displayName: labels.get(pkg.sha256),
+        gamePrefix: packageSerial(metadata) || null,
+        searchMetadata: metadata.content_id || "",
+      });
+      attachExtraction(node, extractions, new Set(), null, data.trees.pkg || {});
+    }
   }
   function summarize(node) {
     node.children.sort((a, b) => (a.type === b.type ? 0 : a.type === "directory" ? -1 : 1)
       || (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : 0));
     for (const child of node.children) summarize(child);
     node.files = (node.type === "file" ? 1 : 0) + node.children.reduce((sum, child) => sum + child.files, 0);
-    if (node.type === "directory" || node === root)
+    if (node.type === "directory")
       node.size = node.children.reduce((sum, child) => sum + child.size, 0);
   }
   summarize(root);
   for (const node of nodes.values()) {
     node.displayPath = node.parent && node.parent !== root ? `${node.parent.displayPath}/${label(node)}` : label(node);
-    node.searchText = `${node.parent?.searchText || ""} ${node.name} ${node.displayName || ""} ${node.note || ""} ${node.hash || ""}`.toLowerCase();
+    node.searchText = `${node.parent?.searchText || ""} ${node.name} ${node.displayName || ""} ${node.note || ""} ${node.searchMetadata || ""} ${node.hash || ""}`.toLowerCase();
   }
-  $("catalog-count").textContent = `${isos.length} UMD images · ${number.format(root.files)} files`;
+  $("catalog-count").textContent = `${isos.length} UMD images · ${packages.length} PSN packages · ${number.format(root.files)} files`;
 }
 
 function url(node) { return "#" + node.path.split("/").map(encodeURIComponent).join("/"); }
@@ -355,10 +442,11 @@ function select(node, scroll = true, updateURL = true) {
   row.classList.add("selected");
   row.setAttribute("aria-selected", "true");
   $("tree").setAttribute("aria-activedescendant", node.id);
-  $("selected-path").textContent = node.path;
-  $("position").textContent = `${visible.indexOf(node) + 1} / ${number.format(visible.length)} rows`;
+  $("selected-path").textContent = node.path || label(node);
+  $("selected-error").hidden = !node.error;
+  $("selected-error-message").textContent = node.error ? `error: ${node.error}` : "";
   $("notice").textContent = "";
-  if (scroll) {
+  if (scroll || node.error) {
     // Scroll only vertically, preserving the user's horizontal column position.
     const host = $("table-scroll"), top = visible.indexOf(node) * rowHeight;
     const height = host.clientHeight - $("tree").tHead.offsetHeight;
@@ -397,7 +485,7 @@ function render() {
     if (!filterNodes || filterNodes.has(node)) visible.push(node);
     if (filterNodes || !collapsed.has(node.path)) for (const child of node.children) walk(child);
   }
-  for (const child of root.children) walk(child);
+  walk(root);
   if (filterNodes && searchSort) visible.sort(compareSearchResults);
   windowVersion++;
   if (rowElements.size) {
@@ -430,6 +518,7 @@ function render() {
     const folder = expandable(node);
     const container = Boolean(node.extraction);
     const row = element("tr", `node ${container ? "file container" : folder ? "folder" : "file"}${node.virtual && !container ? " virtual" : ""}`);
+    if (node.error) row.classList.add("extraction-failed");
     row.hidden = !showing.has(node);
     row.id = node.id;
     row.dataset.path = node.path;
@@ -455,8 +544,18 @@ function render() {
       node.titleElement = element("span", "", label(node).slice(node.gamePrefix.length));
       name.replaceChildren(node.pathElement, node.prefixElement, node.titleElement);
     }
-    name.title = node.extraction ? `${node.path} — extracted with ${node.extraction}`  : node.virtual ? `${node.path} — catalog grouping, not a filesystem directory` : node.path;
+    name.title = node.error ? `error: ${node.error}` : node.extraction ? `${node.path} — extracted with ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
     content.append(name);
+    if (node.error) {
+      const error = element("span", "extraction-error");
+      const icon = element("span", "error-icon", "!");
+      icon.setAttribute("aria-hidden", "true");
+      node.errorElement = element("span", "error-message", `error: ${node.error}`);
+      node.errorElement.id = `${node.id}-error`;
+      row.setAttribute("aria-describedby", node.errorElement.id);
+      error.append(icon, node.errorElement);
+      content.append(error);
+    }
     for (const [source, matches] of [["Redump", node.redump || []], ["UMDatabase", node.umdatabase || []]]) {
       for (const match of matches) {
         const redump = source === "Redump";
@@ -477,11 +576,28 @@ function render() {
       }
     }
     if (node.note) { node.noteElement = element("span", "note", node.note); content.append(node.noteElement); }
+    if (container && node.extractionKind) {
+      const tags = element("span", "extraction-tags");
+      const kind = node.extractionKind.toUpperCase();
+      tags.append(element("span", "extraction-tag", kind));
+      if (node.extractionVersion) {
+        const version = element("span", "extraction-tag", `v${node.extractionVersion}`);
+        if (node.stale_extraction) {
+          const { version: recorded, latest_version } = node.stale_extraction;
+          const message = `Outdated ${kind} subtree v${recorded} (latest is v${latest_version})`;
+          version.classList.add("outdated");
+          version.title = message;
+          version.setAttribute("aria-label", message);
+        }
+        tags.append(version);
+      }
+      content.append(tags);
+    }
     nameCell.append(content);
     const displayedSize = node.size;
     const summed = node.type === "directory";
     const bytes = element("td", "size", `${summed ? "Σ " : ""}${formatSize(displayedSize)}`);
-    bytes.title = `${number.format(displayedSize)} bytes${summed ? " — sum of all descendant files, including filtered files" : ""}`;
+    bytes.title = `${number.format(displayedSize)} bytes${summed ? " — sum of contained file sizes, excluding their extracted contents; includes filtered files" : ""}`;
     const hashCell = element("td", "hash");
     const hash = node.hash;
     if (hash) {
@@ -515,7 +631,7 @@ function render() {
 function restore() {
   let path;
   try { path = location.hash.slice(1).split("/").map(decodeURIComponent).join("/"); } catch { path = ""; }
-  jump(nodes.get(path) || root.children[0]);
+  jump(nodes.get(path) || root);
 }
 
 $("tree-search").addEventListener("input", applySearch);
@@ -535,7 +651,7 @@ document.addEventListener("keydown", event => {
       event.preventDefault(); $("tree-search").focus(); return;
     }
   }
-  if (!root || event.ctrlKey || event.metaKey || event.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
+  if (!root || event.ctrlKey || event.metaKey || event.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target === $("selected-error")) return;
   if (!visible.length) return;
   if (event.key === "Enter" && /^(BUTTON|A)$/.test(event.target.tagName)) return;
   const key = event.key;
@@ -545,7 +661,7 @@ document.addEventListener("keydown", event => {
   if (filterNodes && ["h", "l", "ArrowLeft", "ArrowRight", "Enter"].includes(key)) return;
   if (key === "h" || key === "ArrowLeft") {
     if (expandable(node) && !collapsed.has(node.path) && node.children.length) toggle(node);
-    else select(node.parent === root ? node : node.parent || node);
+    else select(node.parent || node);
   } else if (["l", "ArrowRight", "Enter"].includes(key)) {
     if (expandable(node)) {
       if (collapsed.has(node.path)) toggle(node);
