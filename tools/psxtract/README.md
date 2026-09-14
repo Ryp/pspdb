@@ -28,8 +28,8 @@ export PSPDB_PSXTRACT="$PWD/.work/pspdb-psxtract"
 ```
 
 The builder archives the pinned commits rather than using modified checkout
-files, applies the checked-in portability/audio patches, embeds upstream CUE
-resources, and records source, patch, compiler and executable provenance beside
+files, uses `tools/prepare_native.py --exact` for the checked-in portability/audio
+patches, embeds upstream CUE resources, and records source, patch, compiler and executable provenance beside
 the output. Parser, audio, PGD and decompression boundary regressions run before
 publication. Upstream GPLv3 and LGPL license notices are retained
 beside the binary. No Sony DLL is required or redistributed.

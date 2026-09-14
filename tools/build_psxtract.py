@@ -11,7 +11,6 @@ import json
 import os
 from pathlib import Path
 import platform
-import re
 import shlex
 import shutil
 import subprocess
@@ -24,6 +23,7 @@ FFMPEG_REVISION = '59dd21047e86badeb1b142dff03f18acbbd074fa'
 UPSTREAM = 'https://github.com/has207/psxtract-2'
 FFMPEG_UPSTREAM = 'https://git.ffmpeg.org/ffmpeg.git'
 ROOT = Path(__file__).resolve().parents[1]
+PREPARER = ROOT / 'tools/prepare_native.py'
 SUPPORT = ('native.h', 'native.cpp', 'atrac3.cpp', 'test_lz.cpp', 'test_auxiliary.cpp',
            'test_pbp.cpp', 'test_audio.cpp', 'test_container.cpp', 'test_pgd.cpp')
 # The x87 arithmetic and explicit float stores in the patch are an output contract.
@@ -53,19 +53,13 @@ def prepare_source(source, revision, destination, patch):
     with tarfile.open(archive) as tree:
         tree.extractall(destination, filter='data')
     archive.unlink()
+    command = [sys.executable, str(PREPARER), '--in-place', '--exact']
     if destination.name == 'psxtract':
-        # Upstream mixes CRLF and LF source files; resources must stay byte-identical.
+        # Normalize source only; embedded CUE resources must remain byte-identical.
         for path in (destination / 'src').iterdir():
             if path.suffix in ('.cpp', '.h'):
-                text = path.read_text()
-                path.write_text(text if text.endswith('\n') else text + '\n')
-    result = subprocess.run(
-        ['patch', '--batch', '--forward', '--fuzz=0', '-p1', '-i', str(patch)],
-        cwd=destination, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, text=True, timeout=60,
-    )
-    if result.returncode or re.search(r'\b(?:offset|fuzz|FAILED|Reversed)\b', result.stdout):
-        raise ValueError(f'{patch.name} did not apply exactly: {result.stdout.strip()}')
+                command.extend(('--normalize', str(path.relative_to(destination))))
+    subprocess.run(command + [str(destination), str(destination), str(patch)], check=True)
     return digest
 
 
@@ -119,7 +113,7 @@ def main():
     patch = ROOT / 'tools/patches/psxtract-native.patch'
     ff_patch = ROOT / 'tools/patches/ffmpeg-atrac3-exact.patch'
     support = ROOT / 'tools/psxtract'
-    inputs = {Path(__file__).resolve(), patch, ff_patch, *(support / name for name in SUPPORT)}
+    inputs = {Path(__file__).resolve(), PREPARER, patch, ff_patch, *(support / name for name in SUPPORT)}
     destinations = [output, output.with_name(output.name + '.LICENSE'),
                     output.with_name(output.name + '.provenance.json')]
     for destination in destinations:
@@ -205,6 +199,7 @@ def main():
                            'configure': configure[1:], 'arithmetic_cflags': list(EXACT_CFLAGS)},
                 'support_sha256': {name: sha256(support / name) for name in SUPPORT},
                 'builder_sha256': sha256(Path(__file__)), 'cue_sha256': cue_digest,
+                'preparer_sha256': sha256(PREPARER),
                 'compilers': compilers, 'link_command': link,
                 'licenses_sha256': {name: sha256(path) for name, path in license_sources.items()},
                 'executable_sha256': sha256(binary),
