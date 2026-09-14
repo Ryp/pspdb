@@ -32,8 +32,10 @@ def tool_provenance(kind, tool=None):
         return result
     if kind == 'pops':
         return dict(result, name='pspdb-pops', options=['in-memory'])
+    if kind not in ('document', 'psx'):
+        raise ValueError(f'Unknown extractor kind: {kind}')
+    tool = tool.resolve(strict=True)
     if kind == 'document':
-        tool = tool.resolve(strict=True)
         reported = json.loads(subprocess.check_output([str(tool), '--provenance'], text=True, timeout=30),
                               object_pairs_hook=manifest_object)
         manifest_fields(reported, ('name', 'options'))
@@ -42,13 +44,12 @@ def tool_provenance(kind, tool=None):
                 or 'page-files-only:1' not in reported['options']):
             raise ValueError('Invalid DOCUMENT helper provenance: page-only output required')
         result.update(reported)
-        result['sha256'] = hashlib.sha256(tool.read_bytes()).hexdigest()
-        return result
-    if kind == 'psx':
-        return dict(result, name='PSXtract-2',
-                    sha256=hashlib.sha256(tool.resolve(strict=True).read_bytes()).hexdigest(),
-                    options=['<parent.pbp>', 'reconstructed-disc', 'native-linux'])
-    raise ValueError(f'Unknown extractor kind: {kind}')
+    else:
+        result.update(name='PSXtract-2',
+                      options=['<parent.pbp>', 'reconstructed-disc', 'native-linux'])
+    with tool.open('rb') as stream:
+        result['sha256'] = hashlib.file_digest(stream, 'sha256').hexdigest()
+    return result
 
 
 def current_provenance():
