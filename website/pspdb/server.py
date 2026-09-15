@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import tempfile
+import zlib
 from time import monotonic
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
@@ -268,20 +270,86 @@ class _CatalogCache:
         self.checked_at = self.next_check = 0
         self.refreshing = False
         self.error = None
+        cache_root = os.environ.get("PSPDB_WEB_CACHE_DIR")
+        if cache_root is None:
+            cache_root = str(Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "pspdb" / "web")
+        identity = str(Path(catalog).resolve()) + ":" + str(store is not None)
+        filename = hashlib.sha256(identity.encode()).hexdigest() + ".snapshot"
+        self.cache_path = Path(cache_root).expanduser() / filename if cache_root else None
+        implementation = hashlib.sha256(
+            Path(__file__).read_bytes() + Path(__file__).with_name("redump.py").read_bytes()
+        ).hexdigest()
+        self.cache_configuration = [
+            implementation, store is not None,
+            sorted((redump or {}).items()), sorted((umdatabase or {}).items()),
+        ]
+
+    def _disk_key(self, signature):
+        encoded = json.dumps([signature, self.cache_configuration], sort_keys=True,
+                             ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest().encode("ascii")
+
+    def _payload(self, signature, body, compressed, data=None, body_digest=None):
+        if self.store is not None and data is None:
+            data = json.loads(body)
+        return dict(signature=signature, body=body, gzip=compressed,
+                    etag='"' + (body_digest or hashlib.sha256(body).hexdigest()) + '"',
+                    gzip_etag='"' + hashlib.sha256(compressed).hexdigest() + '"',
+                    objects=download_index(data) if self.store is not None else None)
+
+    def _load_disk(self, signature):
+        if self.cache_path is None:
+            return None
+        try:
+            with self.cache_path.open("rb") as stream:
+                if stream.readline(128) != b"PSPDB-WEB-1 " + self._disk_key(signature) + b"\n":
+                    return None
+                digest = stream.readline(128).strip()
+                compressed = stream.read()
+            body = gzip.decompress(compressed)
+            if digest != hashlib.sha256(body).hexdigest().encode("ascii"):
+                raise ValueError("Snapshot checksum mismatch")
+            return self._payload(signature, body, compressed, body_digest=digest.decode("ascii"))
+        except FileNotFoundError:
+            return None
+        except (OSError, EOFError, zlib.error, ValueError, KeyError, TypeError):
+            logging.getLogger(__name__).warning("Ignoring unreadable website snapshot cache", exc_info=True)
+            return None
+
+    def _save_disk(self, signature, payload):
+        temporary = None
+        try:
+            self.cache_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=self.cache_path.parent, prefix=".snapshot-", delete=False) as stream:
+                temporary = Path(stream.name)
+                stream.write(b"PSPDB-WEB-1 " + self._disk_key(signature) + b"\n")
+                stream.write(payload["etag"].strip('"').encode("ascii") + b"\n")
+                stream.write(payload["gzip"])
+            os.replace(temporary, self.cache_path)
+        except OSError:
+            logging.getLogger(__name__).warning("Unable to persist website snapshot cache", exc_info=True)
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    logging.getLogger(__name__).warning("Unable to remove temporary snapshot cache", exc_info=True)
 
     def _refresh(self):
         try:
             signature = catalog_signature(self.catalog)
             payload = self.payload
             if payload is None or payload["signature"] != signature:
-                data = catalog_data(self.catalog, self.redump, self.umdatabase)
-                data["downloads_enabled"] = self.store is not None
-                body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-                compressed = gzip.compress(body, compresslevel=1, mtime=0)
-                payload = dict(signature=signature, body=body, gzip=compressed,
-                               etag='"' + hashlib.sha256(body).hexdigest() + '"',
-                               gzip_etag='"' + hashlib.sha256(compressed).hexdigest() + '"',
-                               objects=download_index(data) if self.store is not None else None)
+                payload = self._load_disk(signature)
+                if payload is None:
+                    data = catalog_data(self.catalog, self.redump, self.umdatabase)
+                    data["downloads_enabled"] = self.store is not None
+                    body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                    compressed = gzip.compress(body, compresslevel=1, mtime=0)
+                    payload = self._payload(signature, body, compressed, data)
+                    # Never persist a mixed generation observed during active ingestion.
+                    if self.cache_path is not None and catalog_signature(self.catalog) == signature:
+                        self._save_disk(signature, payload)
         except Exception as error:
             logging.getLogger(__name__).exception("Unable to refresh catalog")
             with self.condition:

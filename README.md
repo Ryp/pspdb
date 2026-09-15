@@ -392,14 +392,24 @@ Root rows use their explicit `iso`, `pkg`, `nand` or `update` inventory; nested
 files use their derived extractor inventory. Inline contextual extractions retain occurrence precedence.
 
 The local server caches compact catalog JSON, gzip bytes and the download index
-as one coherent snapshot. Requests recheck catalog paths, modification times,
-sizes and annotation dependencies at most once every five seconds. One background
+as one coherent snapshot. Requests recheck catalog paths, modification/change times,
+sizes, inode identities and annotation dependencies at most once every five seconds. One background
 refresh runs at a time; requests can use the previous snapshot for up to 30 seconds
 after its last successful check. Cold or expired requests wait for regeneration.
 Refresh errors are logged and return HTTP 500 rather than hiding failures behind
 an indefinitely stale catalog. Conditional requests use representation-specific
 ETags, so unchanged reloads can return HTTP 304 without transferring the catalog.
 Availability checks still inspect requested store objects live.
+
+Completed, stable snapshots are also cached outside `catalog/`, under
+`$XDG_CACHE_HOME/pspdb/web` (default `~/.cache/pspdb/web`). Set
+`PSPDB_WEB_CACHE_DIR` to choose another directory, or to an empty string to disable
+disk caching. A restart reuses the compressed snapshot only when source signatures,
+annotation mappings, download mode and viewer implementation still match. Cache
+files are private, atomically replaced and checksum-checked; missing, corrupt or
+unwritable caches fall back to the authoritative catalog. Invalid catalog data
+still fails validation. A source change during generation prevents publishing that
+generation to disk. This cache is disposable, not another catalog or database.
 
 The browser constructs the tree in yielding batches, retains compact occurrence
 identities and computes paths only when needed. A Web Worker searches and sorts
@@ -418,9 +428,16 @@ showed search results in 21–64 ms versus 371–751 ms before these changes, wi
 matching result counts. Main-thread heap fell from about 2 GB to 240 MB, plus
 about 115 MB for the worker and its typed-array index. Static catalog readiness
 improved from 4.9 to 2.9 seconds; the longest main-thread task fell from 4.5 seconds
-to 225 ms. These are local measurements, not latency guarantees. A cold live
-server still scans and parses the JSON catalog; the design avoids a separate
-database/index service and trades bounded refresh delay for fast warm requests.
+to 225 ms. These are local measurements, not latency guarantees.
+
+On a later frozen catalog with 40,934 JSON files and a 155 MB response (45.5 MB
+gzip), catalog preparation took 3.81 seconds without a disk cache and 0.52 seconds
+with a matching snapshot after restart. A fresh server's first gzip response began
+in 0.54 seconds. This measurement had downloads disabled; enabling downloads also
+requires rebuilding their lookup index from the cached JSON. First builds and
+changed catalogs still require scanning and parsing the source files. The design
+avoids a separate database/index service and trades bounded refresh delay for fast
+warm requests; it does not remove the initial browser download or indexing cost.
 
 ## Static hosting / GitHub Pages
 

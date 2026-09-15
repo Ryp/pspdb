@@ -2,6 +2,7 @@ import hashlib
 from http.server import ThreadingHTTPServer
 import json
 import gzip
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -34,6 +35,9 @@ class DownloadTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        cache_environment = patch.dict(os.environ, {"PSPDB_WEB_CACHE_DIR": str(self.root / "web-cache")})
+        cache_environment.start()
+        self.addCleanup(cache_environment.stop)
         self.catalog = self.root / 'catalog'
         self.store = self.root / 'store'
         self.store.mkdir()
@@ -70,6 +74,67 @@ class DownloadTests(unittest.TestCase):
             server.shutdown(); server.server_close(); thread.join()
         self.addCleanup(stop)
         self.base = f'http://127.0.0.1:{server.server_port}'
+
+    def test_restart_preserves_downloads_and_revalidates_replaced_records(self):
+        path = self.catalog / 'iso' / ('a' * 64 + '.json')
+        record = json.loads(path.read_text())
+        record['metadata']['title'] = 'Old'
+        path.write_text(json.dumps(record))
+        self.start(self.store)
+        with self.get('/api/catalog') as response:
+            original = response.read()
+        self.start(self.store)
+        with self.get('/api/catalog') as response:
+            self.assertEqual(response.read(), original)
+        with self.get('/download/' + self.digest + '/alias.prx') as response:
+            self.assertEqual(response.read(), self.content)
+        before = path.stat()
+        record['metadata']['title'] = 'New'
+        replacement = path.with_suffix('.new')
+        replacement.write_text(json.dumps(record))
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        replacement.replace(path)
+        self.start(self.store)
+        with self.get('/api/catalog') as response:
+            self.assertEqual(json.load(response)['records']['iso'][0]['metadata']['title'], 'New')
+
+    def test_disk_snapshot_separates_annotations_and_download_mode(self):
+        first = {('b' * 40, 42): [dict(id=1, name='First association')]}
+        second = {('b' * 40, 42): [dict(id=2, name='Second association')]}
+        _CatalogCache(self.catalog, self.store, first, None).get()
+        changed = json.loads(_CatalogCache(self.catalog, self.store, second, None).get()['body'])
+        self.assertEqual(changed['records']['iso'][0]['redump'], second[('b' * 40, 42)])
+        readonly = _CatalogCache(self.catalog, None, second, None).get()
+        self.assertFalse(json.loads(readonly['body'])['downloads_enabled'])
+        self.assertIsNone(readonly['objects'])
+
+    def test_corrupt_cache_rebuilds_but_invalid_catalog_still_fails(self):
+        self.start(None)
+        with self.get('/api/catalog') as response:
+            original = response.read()
+        cached = next((self.root / 'web-cache').glob('*.snapshot'))
+        damaged = bytearray(cached.read_bytes())
+        damaged[-1] ^= 1
+        cached.write_bytes(damaged)
+        self.start(None)
+        with self.assertLogs('pspdb.server', level='WARNING'):
+            with self.get('/api/catalog') as response:
+                self.assertEqual(response.read(), original)
+        (self.catalog / 'iso' / ('a' * 64 + '.json')).write_text('{invalid')
+        self.start(None)
+        with self.assertLogs('pspdb.server', level='ERROR'):
+            with self.assertRaises(HTTPError) as raised:
+                self.get('/api/catalog')
+        self.assertEqual(raised.exception.code, 500)
+
+    def test_unwritable_optional_cache_does_not_prevent_browsing(self):
+        unusable = self.root / 'not-a-directory'
+        unusable.write_text('occupied')
+        with patch.dict(os.environ, {'PSPDB_WEB_CACHE_DIR': str(unusable)}):
+            self.start(None)
+            with self.assertLogs('pspdb.server', level='WARNING'):
+                with self.get('/api/catalog') as response:
+                    self.assertEqual(json.load(response)['records']['iso'][0]['sha256'], 'a' * 64)
 
     def test_catalog_validators_and_compression(self):
         self.start(None)
