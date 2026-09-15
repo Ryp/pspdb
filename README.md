@@ -3,7 +3,7 @@
 A catalog of PSP file paths, byte sizes, and SHA-256 hashes. Each extractor kind
 and source hash owns revisioned inventories; optional file contents live in a separate deduplicated object store.
 
-- `ingest/`: Zig ISO/PKG/ZIP ingester and ingest tests.
+- `ingest/`: Zig ISO/PKG/NAND/updater-PBP/ZIP ingester and ingest tests.
 - `website/`: Python server, browser assets, and website tests.
 - `schemas/`: shared catalog format. `catalog/` contains versioned metadata and inventories contributed through PRs.
 
@@ -14,8 +14,10 @@ Run the following commands from the repository root.
 Requires **Zig 0.16.0**, GNU **patch**, **pkg-config**, and development headers/libraries
 for **libarchive**, **OpenSSL 3**, **zlib** and **Expat**. PSAR filename-table
 decryption also requires OpenSSL's **legacy provider** for DES-CBC.
-The first build fetches pinned Zig-PSP, pspdecrypt, make-npdata, pkg2zip and
-RCOMage configuration sources.
+Zig-PSP temporarily uses the local checkout at `../sudoku-zig/Zig-PSP`
+(relative to this repository), including uncommitted changes. This is a working-tree
+dependency, not an immutable revision pin. The first build fetches pinned
+pspdecrypt, make-npdata, pkg2zip and RCOMage configuration sources.
 
 ```sh
 (cd ingest && zig build -Doptimize=ReleaseSafe)
@@ -35,15 +37,16 @@ integrity and catalog publication failures make the command exit nonzero.
 Extractor failures are recorded in JSON instead of rejecting otherwise readable
 sources. Overlapping folders are scanned as supplied, without deduplicating paths.
 
-Discovers ISO and PKG files, including members of ZIP archives. Successful ISO
+Discovers ISO and PKG files, including members of ZIP archives, plus uncompressed
+NAND dumps and firmware updater PBPs as described below. Successful ISO
 extraction requires a root `UMD_DATA.BIN`; missing or invalid metadata is recorded
 as an extraction error once source identity is established. Retail PSP/PS1 PKGs
 are decrypted by the native PKG extractor, preserving file and directory paths.
 `--store` is optional. `--threads N` caps threads (default: logical CPU
 count); `--no-progress` disables terminal progress. `--skip-existing` skips current
-ISO/PKG results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
+ISO/PKG/NAND/updater results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
 
-Filesystem discovery stays parallel. ISO/PKG intake concurrency is `max(1, N / 4)`,
+Filesystem discovery stays parallel. Root intake concurrency is `max(1, N / 4)`,
 rounded down from the configured `--threads N` cap before reserving a progress thread.
 This covers hashing, metadata parsing, and the immediate file walk, including ZIP members.
 Nested extractors share the worker pool, retain their input bytes in memory, and
@@ -86,9 +89,9 @@ the declared data length, allowing nonzero bytes after the terminator found in
 retail metadata. Unterminated strings, invalid text before the terminator, and
 structural bounds violations remain errors. Earlier revisions stay unchanged.
 
-SFO metadata is parsed in memory with the pinned Zig-PSP zSFOTool code. A
-[dependency patch](tools/patches/zig-psp-sfo-memory.md) exposes its reader and
-adds bounds validation; PSPDB only selects and validates its catalog fields.
+SFO metadata is parsed in memory by Zig-PSP's `tools/sfo/src/main.zig`.
+Its native reader validates bounds and borrows the key/data pools; PSPDB only
+selects and validates its catalog fields. No SDK source patch is applied.
 
 Metadata is read independently before file inventory/storage: `UMD_DATA.BIN`
 and both game/video `PARAM.SFO` paths. When both SFOs exist, game metadata takes
@@ -103,7 +106,7 @@ PKGs write their own versioned pairs under `catalog/pkg/v2/`. Package metadata
 includes content ID, title ID, content type, raw metadata-entry-3 `package_flags`
 (when present), and available PSP title/version/firmware fields. Whole-package
 SHA-256/SHA-1 identify the unchanged input. The website and static export retain
-the **psp** root row: its size column sums original ISO/PKG sizes without counting
+the **psp** root row: its size column sums original ISO/PKG/NAND/updater sizes without counting
 expanded contents again. Packages appear under **psn**, alongside **umd**.
 
 Generic PSP packages (content types 7, 14) appear directly under **psn**.
@@ -128,6 +131,113 @@ malformed metadata records an extraction error. Theme payloads retain their orig
 paths, including opaque PSPEDAT wrappers. Package decryption does not imply that every
 inner DRM payload is supported: nested extraction failures are recorded on their
 trees without discarding the package inventory.
+
+## NAND dumps
+
+NAND revision 1 uses the local Zig-PSP library directly. Supported raw sizes are
+34,603,008 and 69,206,016 bytes: 2,048 or 4,096 blocks, each containing 32 pages
+of 512 data bytes plus 16 spare/ECC bytes. The entire unchanged raw dump determines
+its SHA-256, SHA-1 and size. Records and inventories are written under
+`catalog/nand/v1/<raw-sha256>-ingest.json` and `<raw-sha256>-tree.json`.
+Immutable metadata contains geometry only, never key-dependent extraction results.
+
+Suffix matching is case-insensitive. Explicit `.nand` files are observed even when
+damaged or incorrectly sized; supported-size `.bin` files require an ECC-corrected
+IPL-table or IdStorage marker. Markerless `.bin` files are ignored. ZIP discovery
+remains ISO/PKG-only; compressed NAND and compressed updater PBP inputs are not recognized.
+
+For encrypted regions, set `PSPDB_NAND_FUSE_DIR`, or use the default
+`${XDG_DATA_HOME:-$HOME/.local/share}/pspdb/nand-fuses`. Each private key is named
+`<raw-sha256>.fuse` and contains exactly 16 hexadecimal digits, optionally followed
+by one LF or CRLF. No `0x` prefix or whitespace trimming is accepted. Keep key
+directories/files private (0700/0600), outside inputs, catalog and CAS.
+Key files are opened no-follow/nonblocking; their contents never enter metadata,
+provenance, filenames or logs. Missing keys allow plaintext regions to survive.
+Invalid present keys record `InvalidNandFuseId` while independent extraction continues.
+
+PRX revision 10 also uses this private fuse context to remove installed-module
+signcheck protection with the SDK's real KIRK CMD8 implementation. The derived
+key belongs to one ingestion group, is shared immutably with recursive PRX jobs,
+and is cleared only after its last job finishes. Task copies and catalog/CAS
+metadata never contain it. Ordinary PRXs are decoded unchanged first: nonzero
+signcheck bytes alone do not prove that a module needs normalization.
+When ordinary decoding fails on a signcheck candidate, missing context reports
+`MissingNandFuseId`. With a key, the extractor restores an owned copy of
+`0x80..0x150`, then revalidates the restored size/tag through the native decoder.
+Original source bytes and hashes remain unchanged. CMD8 itself does not
+authenticate; the native decoder's integrity limitations below still apply.
+Supplying the key and rerunning with `--skip-existing` retries incomplete roots
+and failed child trees; adding a key does not trigger retries within a running job.
+
+Native extraction independently reconstructs `ipl.bin`, every valid
+`idstorage/index-<physical-block>/index.bin` and live leaf, and all actual
+`lflash/flashN.img` partitions. IPL records/images/stages and formatted FAT contents
+are occurrence-scoped inline trees with shared `pspdb-nand` provenance. Unformatted
+partitions remain images. Unverified IPL plaintext is diagnostic-only and is not
+cataloged or stored. Native extraction runs with or without `--catalog`; ordinary
+extracted files use the existing recursive pipeline when a catalog is configured.
+
+`--store` persists all real extracted artifacts, including IdStorage/settings,
+but **never adds the original raw NAND**. A store-backed website applies its existing
+download policy to those artifacts. Raw downloads are unavailable unless the raw
+object independently exists in that store. No privacy filter or new access-control
+policy is applied.
+
+The website groups one full-hash observation under **firmware/nand**, labels the
+data geometry as 32/64 MiB, and displays the full 33/66 MiB raw size without descendant
+inflation. Firmware updater PBPs occupy **firmware/update**; **psn/update** is unchanged.
+Native region/inline errors retain successful siblings. Any reachable stale or failed
+decoder keeps the NAND root non-fresh and eligible for `--skip-existing` retries.
+Keys are not freshness dependencies, and incomplete retries cannot replace a
+previously successful tree.
+
+## Firmware updater PBPs
+
+Update revision 2 recognizes regular, uncompressed `.pbp` files (case-insensitive)
+with a valid PBP layout, a nonempty UTF-8 `UPDATER_VER` in `PARAM.SFO`, and a final
+`DATA.BIN` section beginning with `PSAR`. Other PBPs and malformed probes are ignored.
+Recognition does not authenticate a release or infer a model/version from its filename.
+
+The entire unchanged PBP determines its SHA-256, SHA-1 and size. Root observations
+live at `catalog/update/v2/<raw-sha256>-ingest.json` and `<raw-sha256>-tree.json`,
+with `pspdb-update` provenance. Metadata records the observed updater version,
+title and disc ID when present; `DISC_VERSION` is not the target firmware version.
+Different hashes remain distinct even when their version labels match.
+
+`metadata.updater_target` (also `updater_target` in CLI JSON) records the declared
+compatibility class from the same SFO parse: four-byte integer `BOOTABLE` (`0x0404`)
+value 1 gives `"psp"` (non-Go), and value 2 gives `"psp-go"` among released PSP
+hardware. Missing `BOOTABLE` or another valid uint32 value gives explicit `null`,
+not non-Go. Duplicate keys, wrong types and wrong integer widths reject the updater
+probe like malformed selected string metadata. Generic PBP parsing is unchanged.
+This declaration is not authenticity, payload verification or installation safety;
+unreleased/test model assignments are outside the released-hardware interpretation.
+
+Revision 1 observations remain immutable and may omit this field. After rebuilding,
+refresh into revision 2 with
+`uv run --locked ./ingest/zig-out/bin/pspdb-ingest /path/to/updaters --catalog catalog --skip-existing`.
+Omit `--store` to leave the existing CAS untouched; original PBP inputs are read-only.
+The website appends `Go` after the version when `updater_target` is `"psp-go"`; non-Go and unknown targets have no suffix.
+
+The native PBP walker emits the original section names and exact byte slices,
+including `DATA.PSP` and `DATA.BIN`. Queued sections retain the read-only source
+mapping; only the small SFO metadata buffer is copied. Immediate inventory works
+without a catalog. With a catalog, sections enter the existing recursive pipeline,
+including PSAR extraction. `--store` persists extracted artifacts, not the raw PBP.
+Root downloads require that raw object to exist independently in the store.
+
+The website places these observations under **firmware/update**, labelled
+`Update <observed version> · <short hash>`, with full-hash `.pbp` routes and raw
+sizes that do not include descendants. Nested generic PBP observations retain
+their separate inventories and freshness roles. **psn/update** is unchanged.
+Reachable extraction errors preserve successful contents and keep the updater
+eligible for `--skip-existing` retries.
+
+PRX revision 11, gzip revision 3, KL3E/KL4E revision 5 and PGD revision 4 use
+filename-independent output names in hash-keyed trees. Occurrence naming rules
+restore source-specific display/download names. This prevents catalog conflicts
+when identical firmware components occur under different names or ELF offsets.
+Historical revisions remain unchanged.
 
 ## PSN reference inventory and bounded acquisition
 
@@ -218,13 +328,13 @@ To change the ISO extractor, increment `iso` (for example, `"1"` to `"2"`) and r
 ```sh
 (cd ingest && zig build -Doptimize=ReleaseSafe)
 uv run --locked python tools/catalog_status.py --catalog catalog
-# Add --json for per-source provenance and affected ISO hashes.
+# Add --json for per-source provenance and affected ISO/PKG/NAND/updater hashes.
 ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs --catalog catalog --store /path/to/store --skip-existing
 ```
 
 The status command is read-only. It compares revisions, executable SHA-256 hashes,
 and extraction options (including the RCOMage INI digest), and follows child hashes
-to report affected ISO and PKG roots. Missing tools are reported as unavailable, never current.
+to report affected ISO, PKG, NAND and updater roots. Missing tools are reported as unavailable, never current.
 If a tool/configuration changes within the same revision, bump that extractor's
 revision before regenerating successful results; those results will not be overwritten.
 Changes to adapter behavior, naming rules, metadata parsing, or file detection also
@@ -349,8 +459,10 @@ Validate the tracked catalog without source images or external extractors:
 uv run --locked python tools/validate_catalog.py
 ```
 
-The ingest CLI tests build the current executable and generate their own ISO/PKG/ZIP
-fixtures. PKG fixtures use OpenSSL for independent AES encryption.
+The ingest CLI tests build the current executable and generate their own ISO/PKG/NAND/PBP/ZIP
+fixtures. PKG fixtures use OpenSSL for independent AES encryption; NAND fixtures
+use synthetic markers and partitions, never private dumps or fuse IDs. Updater
+fixtures exercise native PBP/PSAR recursion, retained source ownership and shared-byte naming.
 
 ```sh
 (cd ingest && zig build test)
@@ -364,7 +476,7 @@ node website/tests/tree-catalog.mjs
 ## Extractors
 
 PSAR, NPUMDIMG, nested ISO9660, RCO, PRX/~PSP, SCE, PBP, gzip, KL3E, KL4E, VMP,
-supported NPD EDAT and legacy DOCUMENT processing runs automatically during ISO/PKG/ZIP ingest
+supported NPD EDAT, fixed-key `OPNSSMP.PGD` and legacy DOCUMENT processing runs
 when a catalog is set, with or without a content store:
 
 ```sh
@@ -373,13 +485,19 @@ when a catalog is set, with or without a content store:
 
 PSMF/PMF movies and raw MPEG program streams remain opaque source files; no movie subtrees are generated.
 
-Detection uses signatures, independent of filenames. SCE borrows slices directly.
-PBP extraction and embedded PKG metadata use Zig-PSP’s PBP reader in memory, with
-borrowed slices and no temporary files. The pinned dependency receives a
-[patch exposing its memory API and fixing bounds/final-section handling](tools/patches/zig-psp-pbp-memory.md). Remaining external tools receive input bytes in private temporary
-directories, not by reopening CAS objects. Zig hashes their outputs and queues
+Detection uses signatures except that generic PGD dispatch is restricted to the
+known `OPNSSMP.PGD` basename. SCE borrows slices directly.
+PBP extraction and embedded PKG metadata use Zig-PSP's native PBP memory API,
+with borrowed slices, validated bounds, complete final-section handling and no
+temporary files. PSPDB imports the SDK source directly. Remaining external tools
+receive input bytes in private temporary directories, not by reopening CAS objects.
+Zig hashes their outputs and queues
 nested extraction using retained buffers; `--store` additionally persists those bytes.
 Temporary input/output directories are removed after the immediate walk.
+Retail PKG keys and offset AES-CTR, plus NPUMDIMG metadata hashing/signature
+verification, live in Zig-PSP's `tools/prxencrypt/pkg_crypto.zig` and
+`npumdimg_crypto.zig`. PSPDB retains container parsing and catalog policy.
+The NPUMDIMG verifier uses the SDK's shared native `kirk` module, not OpenSSL EC.
 Paired manuals retain their exact input and companion views until contextual extraction.
 An ISO is reported complete only after all its extraction jobs succeed.
 
@@ -432,23 +550,38 @@ Python adapters, embedded in the binary and run through uv.
 PRX and KL3E/KL4E decode in memory through a pinned, patched pspdecrypt library
 linked by the Zig build. They need no external helper, NAS input reread, or
 temporary output files. This links GPLv3 pspdecrypt code into the ingest binary.
-PRX supports `~PSP` modules and `PSPsysGP` firmware resources, with 183 tag values
-and layouts 0/1/2/4/5/6/9; legacy layout 8 shares the layout-0 algorithm. Coverage
-includes standard update XOR recipes and firmware index keys, including 2.50.
-Mutable KIRK state is thread-local. This is not full authentication: type-6 and
-type-9 external ECDSA signatures are not verified, and type fallback can accept
-damaged ciphertext.
+PRX revision 11 supports `~PSP` modules and `PSPsysGP` firmware resources,
+with layouts 0/1/2/4/5/6; legacy layout 8 shares the layout-0 algorithm.
+Coverage includes standard update XOR recipes and Go firmware index keys.
+Known resource tags select an exact recipe, and integrity failures are terminal.
+KIRK1 verifies the required CMAC or both ECDSA signatures before returning
+plaintext; type-6 verification uses correctly sized 21-byte curve scalars.
+Mutable KIRK state is thread-local. No unchecked payload-only fallback remains.
+Separate outer Sony signature fields are not verified: valid inner authentication
+does not establish whole-updater authenticity or installation safety.
 
 Generic layouts 3/7/10 and runtime-key-dependent PAUTH/NPDRM modules are not
 supported by the standalone PRX path. PAUTH needs the game's runtime work area;
 NPDRM can require a per-module key. Fixed XOR constants do not replace those keys.
+
+`OPNSSMP.PGD` revision 4 authenticates and decrypts the observed version-1,
+DRM-type-1 profile in memory with the fixed DNAS key. The decoder validates the
+DNAS header MAC, derived-key header, complete block-MAC table and every ciphertext
+block before publishing the exact plaintext as `OPNSSMP.EXT`, where `EXT` is
+inferred from the plaintext signature. Generic PGD filenames remain opaque; their
+key context is not inferred from matching bytes alone.
 Supported POPS executables use the native contextual decoder with their DATA.BIN sibling.
 
-PRX revision 4 decrypts and expands contained gzip/KL/2RLZ data in one extraction,
-publishing the final `module.elf` or `payload.bin` directly. The original PRX
-remains stored; decrypted compressed intermediates are neither stored nor
-cataloged. Revision-1 external and revision-2 native intermediate trees remain
-historical records. Standalone KL extractors remain at revision 2.
+PRX preserves gzip- or KL-encoded ELF as a separate recursive extraction layer.
+Occurrence names are `SOURCE.elf.gz`, `SOURCE.elf.kl3e` or `SOURCE.elf.kl4e`;
+hash-keyed trees retain generic, filename-independent payload names.
+Gzip and standalone KL identify the decoded format and use `decoded_suffix`
+occurrence naming: remove a matching compression suffix case-insensitively,
+then retain the decoded extension without duplicating an existing `.elf`.
+Missing, mismatched or suffix-only names do not prevent decoding.
+For example, the extraction chain is
+`OPNSSMP.psp` → `OPNSSMP.elf.kl4e` → `OPNSSMP.elf`.
+PRX continues to expand contained 2RLZ data directly.
 Native PRX, KL and EDAT decoders use `pspdb-ingest` provenance; contextual POPS uses `pspdb-pops`.
 
 The bounded Zig 2RLZ decoder is adapted from BenHur's libLZR 0.11, licensed
@@ -539,10 +672,11 @@ both payload sizes: 80-byte `MINIS.DAT` and 116,704-byte `ISO.BIN.DAT`.
 Original EDAT and decrypted DAT bytes are retained unchanged.
 
 For NPUMDIMG PBPs, the Zig [DATA.PSP parser](tools/patches/data-psp.md) verifies the
-SFO/content-ID signature using OpenSSL libcrypto. Generated verification reports
-are not included in the extracted file inventory.
-Install OpenSSL development headers/library when building ingest. Optional
-STARTDAT and OPNSSMP containers are exposed without decoding their contents.
+SFO/content-ID signature through Zig-PSP's native KIRK curve implementation.
+Generated verification reports are not included in the extracted file inventory.
+Other native extractors still require OpenSSL development headers/library.
+Optional STARTDAT containers remain opaque; supported fixed-key `OPNSSMP.PGD`
+children are authenticated and decoded by the separate PGD extractor.
 
 Supported PS1 POPS executables decode in memory through the linked
 [POPS decoder](tools/pops/README.md), without a helper installation or `PSPDB_POPS`.
@@ -554,6 +688,8 @@ not create a global standalone PRX result or a generated report.
 Decoded ELF payloads use `.elf`, including PSP PRX modules. Gzip and KL3E/KL4E
 trees use `decoded_suffix` to retain that format in display and download names,
 without duplicating existing `.elf` suffixes.
+Synthesized extensions are lowercase. Existing container member names and names
+retained by stripping compression suffixes preserve their original case.
 
 PSN package labels use `XXXX-12345 Title`, with the serial styled like UMD IDs; collisions receive a short SHA-256
 suffix that expands as needed. Full content IDs remain searchable. Hash-based
