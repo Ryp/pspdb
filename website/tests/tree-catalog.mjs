@@ -377,5 +377,29 @@ const defaultOrder = (await search('ancestor')).map(node=>node.path);
 assert.deepEqual((await search('ancestor','size')).map(node=>node.size), [5,10,10,10,100]);
 assert.deepEqual((await search('ancestor','size',-1)).map(node=>node.size), [100,10,10,10,5]);
 assert.deepEqual((await search('ancestor')).map(node=>node.path), defaultOrder);
+
+// Sparse results exercise candidate-only matching, including ancestor text,
+// own errors, duplicate hashes and broadening back to the complete index.
+context.refinementFixture = structuredClone(context.searchFixture);
+const unrelatedHash = '9'.repeat(64);
+context.refinementFixture.records.iso.push({sha256:unrelatedHash,size_bytes:128,metadata:{title:'Unrelated'}});
+context.refinementFixture.trees.iso[unrelatedHash] = {size_bytes:128,extractor:{name:'iso'},
+  entries:Array.from({length:128},(_,i)=>({path:`other-${i}.bin`,type:'file',size_bytes:1,
+    sha256:'abcdef00'+i.toString(16).padStart(56,'0')}))};
+await vm.runInContext('build(refinementFixture)',context);
+assert.equal((await search('ancestor')).length, 5);
+assert.deepEqual((await search('ancestor bin')).map(node=>node.name).sort(),
+  ['broken.bin','decoded.bin','one.bin','two.bin']);
+assert.deepEqual((await search('ancestor bin child')).map(node=>node.name), ['broken.bin']);
+assert.deepEqual((await search('ancestor bin')).map(node=>node.name).sort(),
+  ['broken.bin','decoded.bin','one.bin','two.bin']);
+assert.deepEqual((await search('ffffffff')).map(node=>node.name).sort(), ['one.bin','two.bin']);
+assert.deepEqual((await search(duplicateHash)).map(node=>node.name).sort(), ['one.bin','two.bin']);
+assert.equal((await search('deadbee')).length, 5);
+assert.deepEqual((await search('deadbeef')).map(node=>node.hash), [hashRoot]);
+assert.deepEqual((await search('ancestor absent')).map(node=>node.name), []);
+assert.deepEqual((await search('ancestor absent-longer')).map(node=>node.name), []);
+assert.equal((await search('ancestor')).length, 5);
+console.log('PASS: sparse refinements preserve ancestor context, own errors, duplicate hashes, hash transitions, empty results and broadening.');
 vm.runInContext('searchWorker.terminate()',context);
 console.log('PASS: asynchronous ancestor/own-hash transitions, duplicate occurrences, source-only errors and reversible sorting.');

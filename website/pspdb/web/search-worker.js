@@ -62,25 +62,36 @@ async function search(request) {
     const accepted = new Uint8Array(narrowed ? candidates.length : parents.length).fill(1);
     const inherited = narrowed ? null : new Uint8Array(parents.length);
     for (const term of terms) {
+      if (narrowed && previous.terms.includes(term)) continue;
       const matches = new Uint8Array(strings.length);
-      for (let start = 0; start < strings.length; start += 16384) {
-        for (let i = start; i < Math.min(start + 16384, strings.length); i++) matches[i] = lower[i].includes(term);
-        await pause();
-        if (version !== revision) return null;
+      // Refinements touch only surviving candidates. Memoize their strings on
+      // demand: 0 = unknown, 1 = miss, 2 = match, rather than scanning the dictionary.
+      const match = narrowed ? id => {
+        if (!matches[id]) matches[id] = lower[id].includes(term) ? 2 : 1;
+        return matches[id] === 2;
+      } : null;
+      if (!narrowed) {
+        for (let start = 0; start < strings.length; start += 16384) {
+          for (let i = start; i < Math.min(start + 16384, strings.length); i++) matches[i] = lower[i].includes(term);
+          await pause();
+          if (version !== revision) return null;
+        }
       }
       const ownHash = hashTerm(term);
       const count = narrowed ? candidates.length : parents.length;
       for (let start = 0; start < count; start += 32768) {
         for (let i = start; i < Math.min(start + 32768, count); i++) {
           const node = narrowed ? candidates[i] : i;
-          if (ownHash) accepted[i] &= matches[hashes[node]];
-          else if (narrowed) {
+          if (narrowed) {
             if (!accepted[i]) continue;
-            let found = matches[errors[node]];
-            for (let ancestor = node; !found && ancestor >= 0; ancestor = parents[ancestor])
-              found = matches[names[ancestor]] || matches[texts[ancestor]] || matches[hashes[ancestor]];
+            let found = ownHash ? match(hashes[node]) : match(errors[node]);
+            if (!ownHash) {
+              for (let ancestor = node; !found && ancestor >= 0; ancestor = parents[ancestor])
+                found = match(names[ancestor]) || match(texts[ancestor]) || match(hashes[ancestor]);
+            }
             accepted[i] = found;
-          } else {
+          } else if (ownHash) accepted[i] &= matches[hashes[node]];
+          else {
             inherited[node] = (parents[node] >= 0 && inherited[parents[node]])
               || matches[names[node]] || matches[texts[node]] || matches[hashes[node]];
             accepted[node] &= inherited[node] || matches[errors[node]];

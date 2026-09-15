@@ -417,7 +417,9 @@ an interned text/typed-array index without blocking keyboard input. Superseded
 queries are cancelled; no results are dropped or capped. Only viewport rows are
 mounted, and scaled scroll coordinates keep the final rows reachable even beyond
 browser layout-height limits. Search covers files inside collapsed branches;
-narrowing a query reuses matches while broadening searches the full index.
+narrowing a query reuses matches and checks only the surviving candidates' strings,
+memoizing repeated lookups and skipping already-satisfied terms. Broadening searches
+the full index.
 Hash-only terms (8–64 hexadecimal characters, case-insensitive) match each file's
 own SHA-256, not hashes inherited from parent containers. Matching occurrences
 remain separate; ordinary text and filename searches include ancestor context.
@@ -429,6 +431,12 @@ matching result counts. Main-thread heap fell from about 2 GB to 240 MB, plus
 about 115 MB for the worker and its typed-array index. Static catalog readiness
 improved from 4.9 to 2.9 seconds; the longest main-thread task fell from 4.5 seconds
 to 225 ms. These are local measurements, not latency guarantees.
+
+On a later 3,022,137-file snapshot, candidate-only string matching reduced median
+incremental search time over three Chromium runs: `eboot` → `eboot.bin` from
+37.5 to 13.1 ms, adding `psp_game` from 48.0 to 13.8 ms, and extending an
+eight-character hash prefix to twelve characters from 29.3 to 0.8 ms. Result counts
+matched; these timings include installing the results, not just worker execution.
 
 On a later frozen catalog with 40,934 JSON files and a 155 MB response (45.5 MB
 gzip), catalog preparation took 3.81 seconds without a disk cache and 0.52 seconds
