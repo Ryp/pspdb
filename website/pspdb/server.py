@@ -2,13 +2,16 @@
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import gzip
+import hashlib
 import json
+import logging
 import os
 import threading
 from pathlib import Path
 import re
 import shutil
 import stat
+from time import monotonic
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 
@@ -221,46 +224,113 @@ def download_index(data):
 
 
 def catalog_signature(catalog):
-    """Cheap fingerprint of every catalog record so cached responses invalidate on change."""
+    """Fingerprint source records and annotation inputs during a bounded refresh."""
     entries = []
     for dirpath, dirnames, filenames in os.walk(catalog):
         dirnames.sort()
         for name in filenames:
             if name.endswith(".json"):
                 info = os.stat(os.path.join(dirpath, name))
-                entries.append((dirpath, name, info.st_mtime_ns, info.st_size))
+                entries.append((dirpath, name, info.st_mtime_ns, info.st_ctime_ns, info.st_size, info.st_ino))
     dependencies = [Path(__file__).resolve().parents[2] / "tools" / "extractor_versions.json",
                     Path(__file__).with_name("data") / "contextual_extractors.json",
                     Path(__file__).with_name("data") / "redump-psx.json"]
     for path in dependencies:
         try:
             info = path.stat()
-            entries.append((str(path.parent), path.name, info.st_mtime_ns, info.st_size))
+            entries.append((str(path.parent), path.name, info.st_mtime_ns, info.st_ctime_ns, info.st_size, info.st_ino))
         except FileNotFoundError:
-            entries.append((str(path.parent), path.name, None, None))
+            entries.append((str(path.parent), path.name, None, None, None, None))
     entries.sort()
     return tuple(entries)
+
+
+class _CatalogCache:
+    """Single-flight snapshots, checked at most once per five seconds.
+
+    Cold requests wait for the first complete snapshot. Warm requests start one
+    background check and may use the previous snapshot for at most 30 seconds
+    after its last successful check; older requests wait. A failed check is
+    logged and makes subsequent requests fail until a successful retry, rather
+    than concealing bad catalog records behind an indefinitely stale response.
+    Payload, download index, and validators are published together, never in
+    place, so readers cannot mix generations during a refresh.
+    """
+
+    refresh_seconds = 5
+    max_stale_seconds = 30
+
+    def __init__(self, catalog, store, redump, umdatabase):
+        self.catalog, self.store = catalog, store
+        self.redump, self.umdatabase = redump, umdatabase
+        self.condition = threading.Condition()
+        self.payload = None
+        self.checked_at = self.next_check = 0
+        self.refreshing = False
+        self.error = None
+
+    def _refresh(self):
+        try:
+            signature = catalog_signature(self.catalog)
+            payload = self.payload
+            if payload is None or payload["signature"] != signature:
+                data = catalog_data(self.catalog, self.redump, self.umdatabase)
+                data["downloads_enabled"] = self.store is not None
+                body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                compressed = gzip.compress(body, compresslevel=1, mtime=0)
+                payload = dict(signature=signature, body=body, gzip=compressed,
+                               etag='"' + hashlib.sha256(body).hexdigest() + '"',
+                               gzip_etag='"' + hashlib.sha256(compressed).hexdigest() + '"',
+                               objects=download_index(data) if self.store is not None else None)
+        except Exception as error:
+            logging.getLogger(__name__).exception("Unable to refresh catalog")
+            with self.condition:
+                # Do not retain a traceback and its potentially large partial snapshot.
+                self.error = str(error)
+                self.next_check = monotonic() + self.refresh_seconds
+                self.refreshing = False
+                self.condition.notify_all()
+        else:
+            with self.condition:
+                self.payload = payload
+                self.checked_at = monotonic()
+                self.next_check = self.checked_at + self.refresh_seconds
+                self.error = None
+                self.refreshing = False
+                self.condition.notify_all()
+
+    def get(self):
+        with self.condition:
+            while True:
+                now = monotonic()
+                usable = (self.payload is not None and self.error is None
+                          and now - self.checked_at < self.max_stale_seconds)
+                if self.refreshing:
+                    if usable:
+                        return self.payload
+                    self.condition.wait()
+                    continue
+                if now < self.next_check:
+                    if self.error is not None:
+                        raise ValueError(self.error)
+                    return self.payload
+                self.refreshing = True
+                if usable:
+                    threading.Thread(target=self._refresh, name="catalog-refresh", daemon=True).start()
+                    return self.payload
+                break
+        self._refresh()
+        with self.condition:
+            if self.error is not None:
+                raise ValueError(self.error)
+            return self.payload
 
 
 def handler_for(catalog, store=None, redump=None, umdatabase=None):
     assets = Path(__file__).with_name("web")
     catalog = Path(catalog)
     store = Path(store).resolve() if store is not None else None
-    cache, lock = {}, threading.Lock()
-
-    def snapshot():
-        """Rebuild the catalog payload only when a record changes on disk; otherwise serve cache."""
-        nonlocal cache
-        with lock:
-            signature = catalog_signature(catalog)
-            if cache.get("signature") != signature:
-                data = catalog_data(catalog, redump, umdatabase)
-                data["downloads_enabled"] = store is not None
-                body = json.dumps(data).encode("utf-8")
-                cache = dict(signature=signature, body=body,
-                             gzip=gzip.compress(body, compresslevel=1),
-                             objects=download_index(data) if store is not None else None)
-            return cache
+    cache = _CatalogCache(catalog, store, redump, umdatabase)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -269,7 +339,7 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None):
             encoding = None
             try:
                 if route == "/api/catalog":
-                    payload = snapshot()
+                    payload = cache.get()
                     mime = "application/json; charset=utf-8"
                     accepted = {}
                     for item in self.headers.get("Accept-Encoding", "").lower().split(","):
@@ -283,16 +353,25 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None):
                                     quality = 0.0
                         accepted[coding] = quality
                     if accepted.get("gzip", accepted.get("*", 0)) > 0:
-                        body, encoding = payload["gzip"], "gzip"
+                        body, encoding, etag = payload["gzip"], "gzip", payload["gzip_etag"]
                     else:
-                        body = payload["body"]
+                        body, etag = payload["body"], payload["etag"]
+                    validators = (tag.strip().removeprefix("W/") for tag in
+                                  self.headers.get("If-None-Match", "").split(","))
+                    if any(tag in ("*", etag) for tag in validators):
+                        self.send_response(304)
+                        self.send_header("ETag", etag)
+                        self.send_header("Vary", "Accept-Encoding")
+                        self.send_header("Cache-Control", "private, no-cache")
+                        self.end_headers()
+                        return
                 elif route == "/api/availability" and store is not None:
                     hashes = parse_qs(request.query).get("hash", [])
                     if len(hashes) > 128:
                         self.send_error(400, "Too many hashes")
                         return
                     available = {}
-                    index = snapshot()["objects"]
+                    index = cache.get()["objects"]
                     for digest in set(hashes):
                         available[digest] = False
                         if digest in index:
@@ -301,14 +380,15 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None):
                                     available[digest] = True
                             except OSError:
                                 pass
-                    body = json.dumps(available).encode("utf-8")
+                    body = json.dumps(available, separators=(",", ":")).encode("utf-8")
                     mime = "application/json; charset=utf-8"
                 elif route.startswith("/download/") and store is not None:
                     self.download(route)
                     return
-                elif route in ("/", "/app.js", "/style.css"):
+                elif route in ("/", "/app.js", "/search-worker.js", "/style.css"):
                     filename, mime = {"/": ("index.html", "text/html"),
                                       "/app.js": ("app.js", "text/javascript"),
+                                      "/search-worker.js": ("search-worker.js", "text/javascript"),
                                       "/style.css": ("style.css", "text/css")}[route]
                     body = (assets / filename).read_bytes()
                     mime += "; charset=utf-8"
@@ -322,10 +402,11 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None):
             self.send_header("Content-Type", mime)
             if route == "/api/catalog":
                 self.send_header("Vary", "Accept-Encoding")
+                self.send_header("ETag", etag)
             if encoding:
                 self.send_header("Content-Encoding", encoding)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "private, no-cache" if route == "/api/catalog" else "no-store")
             self.end_headers()
             self.wfile.write(body)
 
@@ -336,7 +417,7 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None):
                 return
             digest, encoded = match.groups()
             name = unquote(encoded)
-            entry = snapshot()["objects"].get(digest)
+            entry = cache.get()["objects"].get(digest)
             if entry is None or name not in entry[1]:
                 self.send_error(404)
                 return

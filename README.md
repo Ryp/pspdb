@@ -278,15 +278,39 @@ entry pages named `ID.html` (for example, `E39CFE68.html`).
 UMD video labels use the SFO title when available, otherwise the observed disc
 identifier. Missing optional SFO metadata does not prevent browsing its inventory.
 The API and exported `catalog.json` keep inventories in `trees[kind][sha256]`.
-Root rows use their explicit `iso` or `pkg` inventory; nested files use their
-derived extractor inventory. Inline contextual extractions retain occurrence precedence.
+Root rows use their explicit `iso`, `pkg`, `nand` or `update` inventory; nested
+files use their derived extractor inventory. Inline contextual extractions retain occurrence precedence.
 
-The local server caches catalog JSON and its gzip representation, checking record
-paths, modification times, sizes, and annotation dependencies on requests so reloads
-pick up catalog changes without restarting. The first request after a change rebuilds
-the snapshot. Only viewport rows are created in the browser; search still covers
-files inside collapsed branches. Narrowing a query filters the previous matches,
-while broadening or replacing it searches the full file list.
+The local server caches compact catalog JSON, gzip bytes and the download index
+as one coherent snapshot. Requests recheck catalog paths, modification times,
+sizes and annotation dependencies at most once every five seconds. One background
+refresh runs at a time; requests can use the previous snapshot for up to 30 seconds
+after its last successful check. Cold or expired requests wait for regeneration.
+Refresh errors are logged and return HTTP 500 rather than hiding failures behind
+an indefinitely stale catalog. Conditional requests use representation-specific
+ETags, so unchanged reloads can return HTTP 304 without transferring the catalog.
+Availability checks still inspect requested store objects live.
+
+The browser constructs the tree in yielding batches, retains compact occurrence
+identities and computes paths only when needed. A Web Worker searches and sorts
+an interned text/typed-array index without blocking keyboard input. Superseded
+queries are cancelled; no results are dropped or capped. Only viewport rows are
+mounted, and scaled scroll coordinates keep the final rows reachable even beyond
+browser layout-height limits. Search covers files inside collapsed branches;
+narrowing a query reuses matches while broadening searches the full index.
+Hash-only terms (8–64 hexadecimal characters, case-insensitive) match each file's
+own SHA-256, not hashes inherited from parent containers. Matching occurrences
+remain separate; ordinary text and filename searches include ancestor context.
+The same worker is included in static exports; serve them over HTTP as below.
+
+On a frozen 1,654,763-file catalog, Chromium measurements on a Ryzen 9 5950X
+showed search results in 21–64 ms versus 371–751 ms before these changes, with
+matching result counts. Main-thread heap fell from about 2 GB to 240 MB, plus
+about 115 MB for the worker and its typed-array index. Static catalog readiness
+improved from 4.9 to 2.9 seconds; the longest main-thread task fell from 4.5 seconds
+to 225 ms. These are local measurements, not latency guarantees. A cold live
+server still scans and parses the JSON catalog; the design avoids a separate
+database/index service and trades bounded refresh delay for fast warm requests.
 
 ## Static hosting / GitHub Pages
 

@@ -23,7 +23,7 @@ def export_site(catalog, output, redump=None, umdatabase=None):
     assets = Path(__file__).with_name('web')
     output.mkdir(parents=True, exist_ok=True)
     (output / 'catalog.json').write_text(body + '\n', encoding='utf-8')
-    for name in ('app.js', 'style.css'):
+    for name in ('app.js', 'search-worker.js', 'style.css'):
         shutil.copyfile(assets / name, output / name)
     html = (assets / 'index.html').read_text(encoding='utf-8')
     (output / 'index.html').write_text(

@@ -47,7 +47,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(iso['umdatabase'], [{'id': '1FD42ACC', 'name': 'Disc'}])
         self.assertEqual(data['trees'], catalog_data(self.catalog)['trees'])
         self.assertEqual({p.name for p in self.output.iterdir()},
-                         {'index.html', 'app.js', 'style.css', 'catalog.json', '.nojekyll'})
+                         {'index.html', 'app.js', 'search-worker.js', 'style.css', 'catalog.json', '.nojekyll'})
         self.assertEqual(before, {p: p.read_bytes() for p in self.catalog.rglob('*.json')})
 
     def test_static_host_supports_repository_subpath(self):
@@ -65,7 +65,7 @@ class ExportTests(unittest.TestCase):
         self.assertIn('data-catalog="catalog.json"', html)
         self.assertIn('href="style.css"', html)
         self.assertIn('src="app.js"', html)
-        for asset in ('app.js', 'style.css', 'catalog.json'):
+        for asset in ('app.js', 'search-worker.js', 'style.css', 'catalog.json'):
             with client.open(base + asset) as response:
                 self.assertEqual(response.status, 200)
 
