@@ -5,7 +5,7 @@
  		(u32(bytes[2]) << 16) | (u32(bytes[3]) << 24);
  }
 +
-+// Built-in key/XOR coverage and type 9 from PPSSPP PrxDecrypter.cpp,
++// Built-in key/XOR coverage from PPSSPP PrxDecrypter.cpp,
 +// commit 35d69dd4a11632ab6633b2fada84d393541e6131.
 +// SPRX's fixed XOR is selected by decrypt_mode, not by the tag. The caller's
 +// per-module seed, when required, is separate and cannot be derived from this.
@@ -31,7 +31,7 @@
  static const u8 key_2FD30BF0[] = {0xD8, 0x58, 0x79, 0xF9, 0xA4, 0x22, 0xAF, 0x86, 0x90, 0xAC, 0xDA, 0x45, 0xCE, 0x60, 0x40, 0x3F};
  static const u8 keys02G_E[] = {0x9D, 0x09, 0xFD, 0x20, 0xF3, 0x8F, 0x10, 0x69, 0x0D, 0xB2, 0x6F, 0x00, 0xCC, 0xC5, 0x51, 0x2E};
  static const u8 keys03G_E[] = {0x4F, 0x44, 0x5C, 0x62, 0xB3, 0x53, 0xC4, 0x30, 0xFC, 0x3A, 0xA4, 0x5B, 0xEC, 0xFE, 0x51, 0xEA};
-@@ -299,1 +312,13 @@
+@@ -298,1 +311,13 @@
 +// Firmware 2.50 index.dat: JPCSP KeyVault.g_keyB8, with the actual tag.
 +// Confirmed against mesg_led SHA256 67a186d002da629d97a3a1ba4cc0c86bb39c6a32f6adb8608d9ac3a78bcd0b8f:
 +// KIRK7 slot 0x5C pre-decrypts its 144-byte schedule at ELF offset 0x3304.
@@ -45,14 +45,17 @@
 +};
 +
  static const u32 g_key_INDEXDAT1xx[] = {
-@@ -346,1 +371,2 @@
+@@ -345,1 +370,2 @@
 +	{ 0xB818624D, g_key_INDEXDAT250, 0x5C, 0x5C },
  	{ 0x07000000, g_key_INDEXDAT1xx, 0x4A },
-@@ -379,8 +392,44 @@
+@@ -379,8 +405,55 @@
  	const u8 *seed;
  };
  
 +// sceResmgr index_XXg.dat keys; each uses KIRK7 key slot 0x5C.
++// Recipes below authenticate the inner PSAR envelopes. Some also carry an
++// external type-9 signature, which is not verified here. Never replace the
++// inner CMAC or KIRK1 ECDSA check with payload-only decryption.
 +static const u8 keys_9DC14891_1[] = {0x39, 0xF7, 0xDF, 0x19, 0xD7, 0x10, 0xEA, 0x9F, 0x02, 0xDB, 0x3F, 0xB1, 0x10, 0x9F, 0x26, 0x6B};
 +static const u8 keys_9DC14891_2[] = {0x46, 0x1D, 0xC9, 0xC2, 0x1D, 0x44, 0xA6, 0x68, 0xF2, 0x06, 0x37, 0xBF, 0x62, 0xCD, 0x11, 0x9E};
 +static const u8 keys_9DC14891_3[] = {0x11, 0x0D, 0x1A, 0x4C, 0x8A, 0x19, 0x17, 0xDC, 0xD0, 0x5A, 0x65, 0x47, 0xA5, 0x03, 0x85, 0x22};
@@ -70,30 +73,38 @@
 +static const u8 keys_9DC14891_63x_01g[] = {0x57, 0xB4, 0xA6, 0x5C, 0x75, 0x2D, 0xB9, 0x4D, 0xE1, 0x67, 0xE3, 0x31, 0xBF, 0x4D, 0x70, 0xF8};
 +static const u8 keys_9DC14891_63x_02g[] = {0x29, 0x20, 0x0B, 0x22, 0xCF, 0x1F, 0xD7, 0x50, 0x64, 0xA7, 0x50, 0x20, 0xEC, 0x22, 0x6F, 0xB8};
 +static const u8 keys_9DC14891_63x_03g[] = {0x04, 0xB6, 0x9F, 0x92, 0x39, 0xEB, 0xE8, 0xB2, 0xCB, 0x38, 0x29, 0xF6, 0x41, 0x77, 0xFF, 0xAD};
++// Go mesg_led_05g ELF seeds: 6.10 @0x98EC, 6.30 @0x9B14, 6.61 @0xA78C.
++// Corresponding tags are the preceding little-endian words in each ELF.
++static const u8 keys_9DC14891_60x_05g[] = {0xAE, 0xFC, 0x72, 0x95, 0x4E, 0xB6, 0xD3, 0xCA, 0x02, 0x69, 0xB3, 0xAE, 0x8A, 0x5D, 0x7C, 0xBE};
++static const u8 keys_9DC14891_63x_05g[] = {0xF4, 0x9D, 0xB8, 0x01, 0x0F, 0xA9, 0x7D, 0x11, 0xA9, 0x00, 0x1C, 0xFB, 0x38, 0xC8, 0xF6, 0x2D};
++static const u8 keys_9DC14891_66x_05g[] = {0x0B, 0x2E, 0xA6, 0xB7, 0x9F, 0xEF, 0x29, 0xBB, 0x7C, 0x0B, 0xEE, 0x63, 0xDD, 0x34, 0xB7, 0x96};
 +
  static const TAG_INFO2 g_tagInfo2[] =
  {
-+	{ 0x0B2B90F0, keys_9DC14891_1, 0x5C, 9 },
-+	{ 0x0B2B91F0, keys_9DC14891_2, 0x5C, 9 },
-+	{ 0x0B2B92F0, keys_9DC14891_3, 0x5C, 9 },
-+	{ 0x495BE403, keys_9DC14891_26x, 0x5C, 9 },
-+	{ 0x0B2B05F0, keys_9DC14891_28x, 0x5C, 9 },
-+	{ 0x0B2B06F0, keys_9DC14891_30x, 0x5C, 9 },
-+	{ 0x0B2B08F0, keys_9DC14891_31x, 0x5C, 9 },
-+	{ 0x0B2B0AF0, keys_9DC14891_35x, 0x5C, 9 },
-+	{ 0x0B2B0BF0, keys_9DC14891_50x_01g, 0x5C, 9 },
-+	{ 0x0B2B11F0, keys_9DC14891_50x_02g, 0x5C, 9 },
-+	{ 0x0B2B1EF0, keys_9DC14891_50x_03g, 0x5C, 9 },
-+	{ 0x0B2B0CF0, keys_9DC14891_60x_01g, 0x5C, 9 },
-+	{ 0x0B2B12F0, keys_9DC14891_60x_02g, 0x5C, 9 },
-+	{ 0x0B2B1FF0, keys_9DC14891_60x_03g, 0x5C, 9 },
-+	{ 0x0B2B80F0, keys_9DC14891_63x_01g, 0x5C, 9 },
-+	{ 0x0B2B81F0, keys_9DC14891_63x_02g, 0x5C, 9 },
-+	{ 0x0B2B82F0, keys_9DC14891_63x_03g, 0x5C, 9 },
++	{ 0x0B2B90F0, keys_9DC14891_1, 0x5C, 2 },
++	{ 0x0B2B91F0, keys_9DC14891_2, 0x5C, 2 },
++	{ 0x0B2B92F0, keys_9DC14891_3, 0x5C, 2 },
++	{ 0x495BE403, keys_9DC14891_26x, 0x5C, 2 },
++	{ 0x0B2B05F0, keys_9DC14891_28x, 0x5C, 2 },
++	{ 0x0B2B06F0, keys_9DC14891_30x, 0x5C, 2 },
++	{ 0x0B2B08F0, keys_9DC14891_31x, 0x5C, 2 },
++	{ 0x0B2B0AF0, keys_9DC14891_35x, 0x5C, 2 },
++	{ 0x0B2B0BF0, keys_9DC14891_50x_01g, 0x5C, 2 },
++	{ 0x0B2B11F0, keys_9DC14891_50x_02g, 0x5C, 2 },
++	{ 0x0B2B1EF0, keys_9DC14891_50x_03g, 0x5C, 2 },
++	{ 0x0B2B0CF0, keys_9DC14891_60x_01g, 0x5C, 2 },
++	{ 0x0B2B12F0, keys_9DC14891_60x_02g, 0x5C, 2 },
++	{ 0x0B2B1FF0, keys_9DC14891_60x_03g, 0x5C, 2 },
++	{ 0x0B2B29F0, keys_9DC14891_60x_05g, 0x5C, 2 },
++	{ 0x0B2B80F0, keys_9DC14891_63x_01g, 0x5C, 6 },
++	{ 0x0B2B81F0, keys_9DC14891_63x_02g, 0x5C, 6 },
++	{ 0x0B2B82F0, keys_9DC14891_63x_03g, 0x5C, 6 },
++	{ 0x0B2B83F0, keys_9DC14891_63x_05g, 0x5C, 6 },
++	{ 0x0B2B93F0, keys_9DC14891_66x_05g, 0x5C, 2 },
  	{ 0x4C9494F0, keys660_k1, 0x43 },
  	{ 0x4C9495F0, keys660_k2, 0x43 },
  	{ 0x4C9490F0, keys660_k3, 0x43 },
-@@ -471,9 +520,13 @@
+@@ -471,9 +544,13 @@
  	{ 0x4467415D, key_22E0, 0x59 },
  	{ 0x00000000, key_21C0, 0x42 },
  	{ 0x01000000, key_2250, 0x43 },
@@ -109,7 +120,7 @@
  	{ 0x2FD30BF0, key_2FD30BF0, 0x47 },
  	{ 0xD91605F0, key_D91605F0, 0x5D, 2},
  	{ 0xD91606F0, key_D91606F0, 0x5D, 2},
-@@ -878,7 +931,7 @@
+@@ -878,7 +955,7 @@
  	return decryptSize;
  }
  
@@ -118,7 +129,7 @@
  {
  	//INFO_LOG(LOADER, "Decrypting tag %08X", readPrx32(inbuf+0xD0));
  	const auto decryptSize = static_cast<int>(readPrx32(inbuf+0xB0));
-@@ -906,6 +959,11 @@
+@@ -906,6 +983,11 @@
  	// construct the header format for a type 2 prx
  	PRXType2 type2(inbuf);
  	type2.decrypt(pti->code);
@@ -130,7 +141,7 @@
  
  	SHA_CTX ctx;
  	SHAInit(&ctx);
-@@ -968,9 +1026,12 @@
+@@ -968,9 +1050,12 @@
  	// expand the seed into a xor buffer
  	auto xorbuf = expandSeed(pti->key, pti->code, seed);
  
@@ -144,56 +155,67 @@
  
  	SHA_CTX ctx;
  	SHAInit(&ctx);
-@@ -1077,6 +1138,48 @@
- 		return -4;
- 	}
+@@ -1033,7 +1118,7 @@
+ 	// expand the seed into a xor buffer
+ 	auto xorbuf = expandSeed(pti->key, pti->code);
  
-+	return decryptSize;
-+}
-+
-+static int pspDecryptType9(const u8 *inbuf, u8 *outbuf, u32 size)
-+{
-+	const auto pti = GetTagInfo2(readPrx32(inbuf+0xD0));
-+	// Only the known resmgr tags may use the separate, non-CMAC envelope.
-+	if (!pti || pti->type != 9) return -1;
-+	if (std::any_of(inbuf+0xD4, inbuf+0x104, [](u8 x) { return x != 0; })) return -2;
-+
-+	auto xorbuf = expandSeed(pti->key, pti->code);
-+	// Type 9 excludes its external signature at 0x104..0x12C from the SHA.
-+	// With that range zeroed, its hash layout is exactly PRXType2, not Type6.
-+	PRXType2 type9(inbuf);
-+	type9.decrypt(pti->code);
-+
-+	SHA_CTX ctx;
-+	SHAInit(&ctx);
-+	SHAUpdate(&ctx, type9.tag, sizeof(type9.tag));
-+	SHAUpdate(&ctx, xorbuf.data(), 0x10);
-+	SHAUpdate(&ctx, type9.empty, sizeof(type9.empty));
-+	SHAUpdate(&ctx, type9.id, sizeof(type9.id));
-+	SHAUpdate(&ctx, type9.kirkHeader, sizeof(type9.kirkHeader));
-+	SHAUpdate(&ctx, type9.kirkMetadata, sizeof(type9.kirkMetadata));
-+	SHAUpdate(&ctx, type9.prxHeader, sizeof(type9.prxHeader));
-+	u8 sha1[0x14];
-+	SHAFinal(sha1, &ctx);
-+	if (memcmp(sha1, type9.sha1, sizeof(sha1)) != 0) return -3;
-+
-+	constexpr auto offset = sizeof(PSP_Header)-sizeof(KIRK_CMD1_HEADER)-sizeof(type9.prxHeader);
-+	KIRK_CMD1_HEADER *header = reinterpret_cast<KIRK_CMD1_HEADER *>(outbuf+offset);
-+	if (outbuf != inbuf) memcpy(outbuf, inbuf, size);
-+	memset(header, 0, sizeof(*header));
-+	memcpy(reinterpret_cast<u8*>(&header->data_size), type9.kirkMetadata, sizeof(type9.kirkMetadata));
-+	memcpy(reinterpret_cast<u8*>(header)+sizeof(*header), type9.prxHeader, sizeof(type9.prxHeader));
-+	decryptKirkHeader(reinterpret_cast<u8*>(header), type9.kirkHeader, xorbuf.cbegin()+0x10, pti->code);
-+	header->mode = 1;
-+	// This envelope has no KIRK CMAC. Like PPSSPP, we check the PRX header SHA,
-+	// but do not authenticate its separate ECDSA signature. Never fake an
-+	// ecdsa_hash flag or relax kirk_CMD1 for the existing recipes.
-+	const int decryptSize = static_cast<int>(readPrx32(inbuf+0xB0));
-+	if (kirk_CMD1_prx9(outbuf, reinterpret_cast<const u8*>(header), size - offset) != 0) return -4;
- 	return decryptSize;
- }
+-	// construct the header format for a type 2 prx
++	// Reconstruct the KIRK1 header containing both ECDSA signatures.
+ 	PRXType6 type6(inbuf);
+ 	type6.decrypt(pti->code);
  
-@@ -1126,6 +1229,22 @@
+@@ -1087,9 +1172,26 @@
+ 	u32 tag = readPrx32(inbuf+0xD0);
+ 	//INFO_LOG(LOADER, "Decrypting tag %08X", tag);
+-	// this would be significantly better if we had a log of the tags
+-	// and their appropriate prx types
+-	// since we don't know the PRX type we attempt a decrypt using all
++	const auto pti = GetTagInfo2(tag);
++	if (pti && pti->type != 0) {
++		// Explicit recipes are authoritative, including failures. In particular,
++		// a type-2 CMAC failure must never retry as type 6 or external type 9.
++		int res;
++		switch (pti->type) {
++		case 2: res = pspDecryptType2(inbuf, outbuf, size); break;
++		case 5: res = pspDecryptType5(inbuf, outbuf, size, seed); break;
++		case 6: res = pspDecryptType6(inbuf, outbuf, size); break;
++		default: return -1;
++		}
++		if (verbose) {
++			printf("Decryption %s for tag %08X with type %u\n",
++				res >= 0 ? "successful" : "failed", tag, unsigned(pti->type));
++		}
++		return res;
++	}
++	// Legacy entries without an authoritative recipe still need layout probing.
++	// Once a layout's SHA matches, any KIRK integrity failure is terminal.
+ 	auto res = pspDecryptType0(inbuf, outbuf, size);
++	if (res == -4) return res;
+ 	if (res >= 0) {
+ 		if (verbose) {
+ 			printf("Decryption successful for tag %08X with type 0\n", tag);
+@@ -1100,4 +1202,5 @@
+ 	res = pspDecryptType1(inbuf, outbuf, size);
++	if (res == -4) return res;
+ 	if (res >= 0) {
+ 		if (verbose) {
+ 			printf("Decryption successful for tag %08X with type 1\n", tag);
+@@ -1108,4 +1211,5 @@
+ 	res = pspDecryptType2(inbuf, outbuf, size);
++	if (res == -4) return res;
+ 	if (res >= 0) {
+ 		if (verbose) {
+ 			printf("Decryption successful for tag %08X with type 2\n", tag);
+@@ -1116,4 +1220,5 @@
+ 	res = pspDecryptType5(inbuf, outbuf, size, seed);
++	if (res == -4) return res;
+ 	if (res >= 0) {
+ 		if (verbose) {
+ 			printf("Decryption successful for tag %08X with type 5\n", tag);
+@@ -1124,8 +1229,17 @@
+ 	res = pspDecryptType6(inbuf, outbuf, size);
++	if (res == -4) return res;
+ 	if (res >= 0) {
  		if (verbose) {
  			printf("Decryption successful for tag %08X with type 6\n", tag);
  		}
@@ -205,55 +227,9 @@
 +		if (verbose) {
 +			printf("Decryption successful for tag %08X with type 4\n", tag);
 +		}
-+		return res;
-+	}
-+
-+	res = pspDecryptType9(inbuf, outbuf, size);
-+	if (res >= 0) {
-+		if (verbose) {
-+			printf("Decryption successful for tag %08X with type 9\n", tag);
-+		}
  	} else if (verbose) {
  		printf("Decryption failed for tag %08X\n", tag);
  	}
---- a/libkirk/kirk_engine.c
-+++ b/libkirk/kirk_engine.c
-@@ -329,6 +329,24 @@
-   return KIRK_OPERATION_SUCCESS;
- }
- 
-+// Bounded, deliberately unauthenticated payload-only operation for PRX type 9.
-+// Its external signature is not a KIRK CMAC/ECDSA header; callers must check
-+// the PRX header SHA first. Do not use this instead of kirk_CMD1 elsewhere.
-+int kirk_CMD1_prx9(u8* outbuff, const u8* inbuff, int size)
-+{
-+  const KIRK_CMD1_HEADER* header = (const KIRK_CMD1_HEADER*)inbuff;
-+  u8 key[16];
-+  AES_ctx aes;
-+  int bounds = kirk_cmd1_size(header, size);
-+  if (bounds != KIRK_OPERATION_SUCCESS) return bounds;
-+  if (is_kirk_initialized == 0) return KIRK_NOT_INITIALIZED;
-+  if (header->mode != KIRK_MODE_CMD1) return KIRK_INVALID_MODE;
-+  AES_cbc_decrypt(&aes_kirk1, inbuff, key, sizeof(key));
-+  AES_set_key(&aes, key, 128);
-+  AES_cbc_decrypt(&aes, inbuff+sizeof(*header)+header->data_offset, outbuff, header->data_size);
-+  return KIRK_OPERATION_SUCCESS;
-+}
-+
- int kirk_CMD4(u8* outbuff, u8* inbuff, int size)
- {
-   KIRK_AES128CBC_HEADER *header = (KIRK_AES128CBC_HEADER*)inbuff;
---- a/libkirk/kirk_engine.h
-+++ b/libkirk/kirk_engine.h
-@@ -194,6 +194,8 @@
- //kirk-like funcs
- int kirk_CMD0(u8* outbuff, u8* inbuff, int size, int generate_trash);
- int kirk_CMD1(u8* outbuff, u8* inbuff, int size);
-+// PRX type 9 only: bounded payload decryption without KIRK authentication.
-+int kirk_CMD1_prx9(u8* outbuff, const u8* inbuff, int size);
- 
- int kirk_CMD4(u8* outbuff, u8* inbuff, int size);
- int kirk_CMD7(u8* outbuff, u8* inbuff, int size);
 --- a/pspdecrypt_lib.cpp
 +++ b/pspdecrypt_lib.cpp
 @@ -140,5 +140,5 @@

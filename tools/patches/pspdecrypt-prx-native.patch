@@ -93,16 +93,15 @@
  	// and their appropriate prx types
 --- a/libkirk/kirk_engine.c
 +++ b/libkirk/kirk_engine.c
-@@ -32,7 +32,7 @@
+@@ -32,7 +32,6 @@
  #include "AES.h"
  #include "SHA1.h"
  
 -int g_checkEcdsa = 0;
-+static _Thread_local int g_checkEcdsa = 0;
  
  /* ------------------------- KEY VAULT ------------------------- */
  unsigned char keyvault[0x80][0x10] =
-@@ -209,13 +209,13 @@
+@@ -209,13 +208,13 @@
  }header_keys;  //small struct for temporary keeping AES & CMAC key from CMD1 header
  
  
@@ -123,7 +122,7 @@
  
  /* ------------------------- INTERNAL STUFF END ------------------------- */
  
-@@ -262,13 +262,30 @@
+@@ -262,13 +261,30 @@
    return KIRK_OPERATION_SUCCESS;
  }
  
@@ -155,7 +154,62 @@
    if(is_kirk_initialized == 0) return KIRK_NOT_INITIALIZED;
    if(header->mode != KIRK_MODE_CMD1) return KIRK_INVALID_MODE;
    
-@@ -376,6 +393,8 @@
+@@ -277,30 +293,30 @@
+   if(header->ecdsa_hash == 1)
+   {
+-    if (g_checkEcdsa) {
+-      SHA_CTX sha;
+-      KIRK_CMD1_ECDSA_HEADER* eheader = (KIRK_CMD1_ECDSA_HEADER*) inbuff;
+-      u8 kirk1_pub[40];
+-      u8 header_hash[20];u8 data_hash[20];
+-      ecdsa_set_curve(ec_p,ec_a,ec_b1,ec_N1,Gx1,Gy1);
+-      memcpy(kirk1_pub,Px1,20);
+-      memcpy(kirk1_pub+20,Py1,20);
+-      ecdsa_set_pub(kirk1_pub);
+-      //Hash the Header
+-      SHAInit(&sha);
+-      SHAUpdate(&sha, (u8*)eheader+0x60, 0x30);
+-      SHAFinal(header_hash, &sha);
+-      
+-      if(!ecdsa_verify(header_hash,eheader->header_sig_r,eheader->header_sig_s)) {
+-        return KIRK_HEADER_HASH_INVALID;
+-      }
+-      SHAInit(&sha);
+-      SHAUpdate(&sha, (u8*)eheader+0x60, size-0x60);
+-      SHAFinal(data_hash, &sha);  
+-      
+-      if(!ecdsa_verify(data_hash,eheader->data_sig_r,eheader->data_sig_s)) {
+-        return KIRK_DATA_HASH_INVALID;
+-      }
++    SHA_CTX sha;
++    KIRK_CMD1_ECDSA_HEADER* eheader = (KIRK_CMD1_ECDSA_HEADER*) inbuff;
++    u8 kirk1_pub[40];
++    u8 header_hash[20], data_hash[20];
++    const u32 cipher_size = (header->data_size + 15u) & ~15u;
++    // KIRK1's fixed public key/curve, not KIRK17's external PRX curve.
++    // Type 6 reconstructs both signatures inside this command header.
++    ecdsa_set_curve(ec_p,ec_a,ec_b1,ec_N1,Gx1,Gy1);
++    memcpy(kirk1_pub,Px1,20);
++    memcpy(kirk1_pub+20,Py1,20);
++    ecdsa_set_pub(kirk1_pub);
++    SHAInit(&sha);
++    SHAUpdate(&sha, (u8*)eheader+0x60, 0x30);
++    SHAFinal(header_hash, &sha);
++    if (!ecdsa_verify(header_hash,eheader->header_sig_r,eheader->header_sig_s)) {
++      return KIRK_HEADER_HASH_INVALID;
++    }
++    // The signed span includes metadata, predata and every CBC block.
++    // Bounds above cover this span; unrelated trailing container bytes do not.
++    SHAInit(&sha);
++    SHAUpdate(&sha, (u8*)eheader+0x60, 0x30 + header->data_offset + cipher_size);
++    SHAFinal(data_hash, &sha);
++    if (!ecdsa_verify(data_hash,eheader->data_sig_r,eheader->data_sig_s)) {
++      return KIRK_DATA_HASH_INVALID;
+     }
+   } else  {
+     int ret = kirk_CMD10(inbuff, size);
+     if(ret != KIRK_OPERATION_SUCCESS) return ret;
+@@ -376,6 +392,8 @@
    u8 cmac_data_hash[16];
    AES_ctx cmac_key;
    int chk_size;
@@ -164,7 +218,7 @@
    
    if(is_kirk_initialized == 0) return KIRK_NOT_INITIALIZED;
    if(!(header->mode == KIRK_MODE_CMD1 || header->mode == KIRK_MODE_CMD2 || header->mode == KIRK_MODE_CMD3)) return KIRK_INVALID_MODE;
-@@ -662,6 +681,16 @@
+@@ -662,6 +680,16 @@
  
  
  
@@ -232,6 +286,87 @@
  
  
  
+@@ -309,42 +309,41 @@
+-// Modified version taken from ipltool - the original check_ecdsa() failed for last IPL blocks
++// KIRK scalars and point_mul use 21-byte big-endian integers, including
++// the leading zero. The IPL-specific 20-byte routine was incompatible.
+ static int check_ecdsa(struct point *Q, u8 *R, u8 *S, u8 *hash)
+ {
+-  u8 Sinv[20];
+-  u8 e[20];
+-  u8 w1[20], w2[20];
+-  struct point r1, r2, r3;
+-  u8 rr[20];
+-
+-  memcpy(e, hash, 20);
+-  bn_reduce(e, ec_N, 20);
+-
+-  // Sinv = INV(s)
+-  bn_to_mon(S, ec_N, 20);
+-  bn_mon_inv(Sinv, S, ec_N, 20);
+-
+-  // w1 = e*Sinv
+-  bn_to_mon(e, ec_N, 20);
+-  bn_mon_mul(w1, e, Sinv, ec_N, 20);
+-  bn_from_mon(w1, ec_N, 20);
+-
+-  // w2 = R*Sinv
+-  bn_to_mon(R, ec_N, 20);
+-  bn_mon_mul(w2, R, Sinv, ec_N, 20);
+-  bn_from_mon(w2, ec_N, 20);
+-
+-  // r1 = w1*G
+-  point_mul(&r1, w1, &ec_G);
+-  // r2 = w2*Q
+-  point_mul(&r2, w2, Q);
+-  // r3 = r1+r2
+-  point_add(&r3, &r1, &r2);
+-
+-  point_from_mon(&r3);
+-  memcpy(rr, r3.x, 20);
+-  bn_reduce(rr, ec_N, 20);
+-
+-  bn_from_mon(R, ec_N, 20);
+-  bn_from_mon(S, ec_N, 20);
+-
+-  return bn_compare(rr, R, 20);
++  u8 Sinv[21], e[21], r[21], s[21], rr[21];
++  u8 w1[21], w2[21];
++  struct point p1, p2;
++
++  e[0] = r[0] = s[0] = rr[0] = 0;
++  memcpy(e + 1, hash, 20);
++  memcpy(r + 1, R, 20);
++  memcpy(s + 1, S, 20);
++  // ECDSA requires 0 < r,s < N; never reduce an invalid signature into range.
++  if (elt_is_zero(R) || elt_is_zero(S) ||
++      bn_compare(r, ec_N, 21) >= 0 || bn_compare(s, ec_N, 21) >= 0) {
++    return 0;
++  }
++  bn_reduce(e, ec_N, 21);
++
++  // Work on local copies: verification must not rewrite signature bytes.
++  bn_to_mon(r, ec_N, 21);
++  bn_to_mon(s, ec_N, 21);
++  bn_to_mon(e, ec_N, 21);
++  bn_mon_inv(Sinv, s, ec_N, 21);
++  bn_mon_mul(w1, e, Sinv, ec_N, 21);
++  bn_mon_mul(w2, r, Sinv, ec_N, 21);
++  bn_from_mon(w1, ec_N, 21);
++  bn_from_mon(w2, ec_N, 21);
++
++  point_mul(&p1, w1, &ec_G);
++  point_mul(&p2, w2, Q);
++  point_add(&p1, &p1, &p2);
++  if (point_is_zero(&p1)) return 0;
++  point_from_mon(&p1);
++  memcpy(rr + 1, p1.x, 20);
++  bn_reduce(rr, ec_N, 21);
++  bn_from_mon(r, ec_N, 21);
++
++  // Both KIRK1 and KIRK17 expect true for a valid signature.
++  return bn_compare(rr, r, 21) == 0;
+ }
 --- a/libkirk/SHA1.c
 +++ b/libkirk/SHA1.c
 @@ -380,7 +380,8 @@

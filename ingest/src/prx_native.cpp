@@ -24,8 +24,9 @@ extern "C" int pspdb_prx_decode(const uint8_t *input, size_t input_len,
         (uint32_t(input[0xb3]) << 24);
     if (expected == 0 || expected > input_len) return -2;
 
-    // Retain the backend's type/tag recipes and checks. Type-6 and type-9
-    // external ECDSA signatures are not authenticated.
+    // Known recipes fail terminally; KIRK checks CMAC or both type-6 ECDSA
+    // signatures before releasing plaintext. Separate external PRX signatures
+    // are not verified; there is no unauthenticated payload-only fallback.
     const int result = pspDecryptPRX(input, output, uint32_t(input_len), nullptr, false);
     if (result < 0) return -3;
     if (uint32_t(result) != expected) return -4;

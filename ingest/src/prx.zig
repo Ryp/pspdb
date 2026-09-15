@@ -325,6 +325,118 @@ test "PRX preserves unaligned input and rejects truncation or modified headers" 
     try std.testing.expectError(error.PrxDecryptionFailed, decode(allocator, unaligned, null));
 }
 
+// Sony updater PSAR members F0/vsh/etc/index_05g.dat (Go) and index_01g.dat
+// (standard PSP). Expected text is the independent, same-PSAR version.txt.
+// Each encrypted fixture is the complete 496-byte resource, not an executable.
+const resource_fixtures = [_]struct { encrypted: []const u8, plaintext: []const u8 }{
+    .{
+        // 610go.PBP SHA-256: b378aef0bc8576f471c1e161766b1c021ab26d4547ef3358f4214d04885f3d73
+        // Member SHA-256: c16e94dca11cf5bf3312ad939b52fdba50401c0a38ccf7ac9eee667ea52548a8
+        // Tag 0B2B29F0: type 2, including the former type-6 fallback vulnerability.
+        .encrypted = @embedFile("fixtures/prx/6.10-index_05g.dat"),
+        .plaintext = "release:6.10:\n" ++
+            "build:3745,0,3,1,0:builder@vsh-build6\n" ++
+            "system:54865@release_610,0x06010010:\n" ++
+            "vsh:p6501@release_610,v55286@release_610,20090918:\n" ++
+            "target:1:WorldWide\n",
+    },
+    .{
+        // 630go.PBP SHA-256: 7b3d4c5d3c77886d08878e3040959353d69912120177ba767a06f8063db748fe
+        // Member SHA-256: 50033620dd30e9f4f64fd977931e5bfcb4e48cf9a5e77009d6fe511e2cb52d9a
+        // Tag 0B2B83F0: type 6, with genuine Sony ECDSA signatures.
+        .encrypted = @embedFile("fixtures/prx/6.30-index_05g.dat"),
+        .plaintext = "release:6.30:\n" ++
+            "build:4530,0,3,1,0:builder@vsh-build6\n" ++
+            "system:56422@release_630,0x06030010:\n" ++
+            "vsh:p6576@release_630,v57929@release_630,20100625:\n" ++
+            "target:1:WorldWide\n",
+    },
+    .{
+        // 661go.PBP SHA-256: 0c35c813afb1e56648ac3ff43cdb86aaebc05a05d9502bc2d35b1e409fcdbaba
+        // Member SHA-256: 288b8e54366f5c67f64c5d9f1e9ac03f82b9224c1a5105a6a1629d4843f1741b
+        // Tag 0B2B93F0: the third Go seed, type 2.
+        .encrypted = @embedFile("fixtures/prx/6.61-index_05g.dat"),
+        .plaintext = resource_661_plaintext,
+    },
+    .{
+        // Standard 661.PBP SHA-256: dc23a6dabdaed40bbfaad811d1f170346b911ba9750478fe5928d9f10c94f552
+        // Member SHA-256: b9cb1d601341f474fe0bed2d06ab834a670ac5e71a5e432b317f157d67c40711
+        // Tag 0B2B90F0: retain the existing standard-resource type-2 mapping.
+        .encrypted = @embedFile("fixtures/prx/6.61-index_01g.dat"),
+        .plaintext = resource_661_plaintext,
+    },
+};
+
+const resource_661_plaintext = "release:6.61:\n" ++
+    "build:5553,0,3,1,0:builder@vsh-build6\n" ++
+    "system:58401@release_661,0x06060110:\n" ++
+    "vsh:p6621@release_661,v58692@release_661,20141113:\n" ++
+    "target:1:WorldWide\n";
+
+fn expect_resource_plaintext(encrypted: []const u8, plaintext: []const u8) !void {
+    const allocator = std.testing.allocator;
+    var storage: [497]u8 align(16) = undefined;
+    const input = storage[1..];
+    @memcpy(input, encrypted);
+    const output = try decode(allocator, input, null);
+    defer allocator.free(output);
+    try std.testing.expectEqualStrings(plaintext, output);
+    try std.testing.expectEqualSlices(u8, encrypted, input);
+
+    const extracted = try extract(allocator, input, null);
+    defer allocator.free(extracted.bytes);
+    try std.testing.expectEqualStrings(plaintext, extracted.bytes);
+    try std.testing.expectEqual(decoded_output.Format.unknown, extracted.format);
+    try std.testing.expect(extracted.content_format != .elf);
+    try std.testing.expectEqualSlices(u8, encrypted, input);
+}
+
+fn expect_resource_rejected(encrypted: []const u8) !void {
+    var input: [496]u8 = undefined;
+    @memcpy(&input, encrypted);
+    try std.testing.expectError(error.PrxDecryptionFailed, decode(std.testing.allocator, &input, null));
+    try std.testing.expectEqualSlices(u8, encrypted, &input);
+    try std.testing.expectError(error.PrxDecryptionFailed, extract(std.testing.allocator, &input, null));
+    try std.testing.expectEqualSlices(u8, encrypted, &input);
+}
+
+test "PSPsysGP Go and standard resources expose exact immutable version metadata" {
+    for (resource_fixtures) |fixture| {
+        try expect_resource_plaintext(fixture.encrypted, fixture.plaintext);
+    }
+}
+
+test "PSPsysGP header and ciphertext integrity failures cannot fall back to another recipe" {
+    for (resource_fixtures) |fixture| {
+        // Independent controls: PRX header authentication, then payload authentication.
+        // 6.10 byte 352 formerly passed type 6 after the correct type-2 CMAC failed.
+        for ([_]usize{ 0x140, 352 }) |offset| {
+            var corrupted: [496]u8 = undefined;
+            @memcpy(&corrupted, fixture.encrypted);
+            corrupted[offset] ^= 1;
+            try expect_resource_rejected(&corrupted);
+        }
+    }
+}
+
+test "PSPsysGP type 6 requires a valid ECDSA signature beyond the outer header hash" {
+    const fixture = resource_fixtures[1];
+    try expect_resource_plaintext(fixture.encrypted, fixture.plaintext);
+    var corrupted: [496]u8 = undefined;
+    @memcpy(&corrupted, fixture.encrypted);
+    corrupted[0x120] ^= 1;
+    try expect_resource_rejected(&corrupted);
+
+    // Derived from the genuine 6.30 member above: flip byte 0x120 (KIRK data
+    // signature S +8), recompute the PRX type-6 SHA-1, and AES-CBC rewrap its
+    // outer 0x60-byte header with KIRK slot 5C. Ciphertext and signed message
+    // are unchanged. Unlike the raw flip, this reaches ECDSA verification.
+    // Derived SHA-256: 99a749a8be4b176d7047991ded01f1cec529c4883b1b6548649cbdb09b7de031
+    try expect_resource_rejected(@embedFile("fixtures/prx/6.30-index_05g-bad-signature.dat"));
+    // A failed signature must not poison the native verifier's next valid job.
+    try expect_resource_plaintext(fixture.encrypted, fixture.plaintext);
+}
+
 // Test-only CMD5 counterpart with independently derived, synthetic AES keys.
 // Production owns only CMD8; no real console material belongs in fixtures.
 fn signcheck_fixture(bytes: []u8, synthetic_key_hex: []const u8) !void {
