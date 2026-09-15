@@ -151,6 +151,15 @@ const result=await evaluate(`(()=>{
  check(visible.includes(file),'Case-insensitive hash search');
  query(file.hash.slice(0,12));
  check(visible.includes(file),'Short hash search');
+ const container=[...nodes.values()].find(n=>n.hash&&n.children.length&&n.name.includes(n.hash));
+ const exactOccurrences=searchableFiles.filter(n=>n.hash===container.hash);
+ query(container.hash);
+ check(visible.length===exactOccurrences.length&&exactOccurrences.every(n=>visible.includes(n)),'Container hash finds only exact file occurrences, not descendants');
+ query(container.hash.slice(0,12).toUpperCase());
+ check(visible.includes(container)&&visible.every(n=>n.hash?.includes(container.hash.slice(0,12))),'Short container hash excludes inherited subtree matches');
+ query(container.hash);
+ query(container.name);
+ check(searchableFiles.filter(n=>n.path.startsWith(container.path+'/')).every(n=>visible.includes(n)),'Changing hash query to filename restores ancestor-text matching');
  const folder=[...nodes.values()].find(n=>n.name==='SYSDIR'&&n.children.length);
  query('SYSDIR');
  check(folder.children.filter(n=>n.type==='file').every(n=>visible.includes(n))&&!visible.includes(folder),'Folder query lists contained files without a folder row');

@@ -126,7 +126,7 @@ def derived_trees(trees):
             if digest in sizes and sizes[digest] != size:
                 raise ValueError(f'Conflicting source sizes: {digest}')
             sizes[digest] = size
-            if kind in ('iso', 'pkg'):
+            if kind in ('iso', 'pkg', 'nand', 'update'):
                 continue
             if digest in derived:
                 ambiguous.add(digest)
@@ -210,7 +210,8 @@ def download_index(data):
 
     for kind, records in data["records"].items():
         for record in records:
-            add(record["sha256"], record["size_bytes"], f'{record["sha256"]}.{kind}', kind=kind)
+            suffix = 'pbp' if kind == 'update' else kind
+            add(record["sha256"], record["size_bytes"], f'{record["sha256"]}.{suffix}', kind=kind)
     for sources in data["trees"].values():
         for tree in sources.values():
             for entry in tree["entries"]:

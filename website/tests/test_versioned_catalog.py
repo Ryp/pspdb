@@ -110,6 +110,24 @@ class RoleCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Ambiguous legacy'):
             catalog_data(self.root)
 
+    def test_update_observation_does_not_compete_with_generic_pbp_bytes(self):
+        parent, root_only = 'b'*64, 'c'*64
+        self.write_pair('update', self.digest, [dict(type='directory', path='updater-only')])
+        self.write_pair('update', root_only, [])
+        self.write_pair('pbp', self.digest, [dict(type='directory', path='nested-only')])
+        self.write_pair('pkg', parent, [
+            dict(type='file', path='EBOOT.PBP', sha256=self.digest, size_bytes=42),
+            dict(type='file', path='root-only.pbp', sha256=root_only, size_bytes=42),
+        ])
+        data = catalog_data(self.root)
+        from pspdb.server import derived_trees, download_index
+        derived = derived_trees(data['trees'])
+        self.assertEqual(derived[self.digest]['entries'], [dict(type='directory', path='nested-only')])
+        self.assertNotIn(root_only, derived)
+        self.assertEqual(data['trees']['update'][self.digest]['entries'],
+                         [dict(type='directory', path='updater-only')])
+        self.assertIn(f'{root_only}.pbp', download_index(data)[root_only][1])
+
     def test_conflicting_source_sizes_are_rejected_across_roles(self):
         self.write_pair('iso', self.digest, [])
         self.write_pair('iso9660', self.digest, [], size=43)

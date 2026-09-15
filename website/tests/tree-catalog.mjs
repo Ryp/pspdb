@@ -22,7 +22,7 @@ function catalog(isos) {
 }
 context.fixture = catalog(['a','b'].map(char=>({sha256:char.repeat(64),metadata,entries,size_bytes:2048,redump:char==='a'?[{id:123,name:'Example'}]:[]})));
 vm.runInContext('build(fixture)', context);
-const nodes = JSON.parse(vm.runInContext('JSON.stringify(root.children[0].children[0].children.map(n=>({label:label(n),hash:n.hash,redump:n.redump,path:n.path,file:n.children[0].hash})))', context));
+const nodes = JSON.parse(vm.runInContext('JSON.stringify(nodes.get("umd/game").children.map(n=>({label:label(n),hash:n.hash,redump:n.redump,path:n.path,file:n.children[0].hash})))', context));
 assert.equal(nodes.length, 2);
 assert.equal(nodes[0].label, 'ULJS-00009/1.00 AI Shogi');
 assert.equal(nodes[1].label, 'ULJS-00009/1.00 AI Shogi');
@@ -36,15 +36,15 @@ console.log('PASS: independent ISO roots, identical inventories, metadata labels
 
 context.videoFixture = catalog([{size_bytes:2048,sha256:'d'.repeat(64),metadata:{identifier:'ICE_AGE   ',title:'Ice Age',media_code:'V'},entries:[]}]);
 vm.runInContext('build(videoFixture)', context);
-assert.equal(vm.runInContext('label(root.children[0].children[0].children[0])', context), 'Ice Age');
-assert.equal(vm.runInContext('root.children[0].children[0].children[0].hash', context), 'd'.repeat(64));
+assert.equal(vm.runInContext('label(nodes.get("umd/video").children[0])', context), 'Ice Age');
+assert.equal(vm.runInContext('nodes.get("umd/video").children[0].hash', context), 'd'.repeat(64));
 console.log('PASS: video label uses its SFO title and retains its hash.');
 
 context.untitledVideoFixture = catalog([{size_bytes:2048,sha256:'d'.repeat(64),
   metadata:{identifier:'UMDV-00001',media_code:'V'},entries}]);
 vm.runInContext('build(untitledVideoFixture)', context);
 const untitledVideo = JSON.parse(vm.runInContext(`JSON.stringify((()=> {
-  const node = root.children[0].children[0].children[0];
+  const node = nodes.get("umd/video").children[0];
   return {label:label(node),path:node.path,child:node.children[0].name};
 })())`, context));
 assert.deepEqual(untitledVideo, {label:'UMDV-00001',path:'umd/video/'+'d'.repeat(64)+'.iso',child:'UMD_DATA.BIN'});
@@ -77,7 +77,7 @@ context.fixture.trees.prx = {
   ]},
 };
 vm.runInContext('build(fixture)', context);
-const expanded = JSON.parse(vm.runInContext(`JSON.stringify(root.children[0].children[0].children.map(iso=>({
+const expanded = JSON.parse(vm.runInContext(`JSON.stringify(nodes.get("umd/game").children.map(iso=>({
   size:iso.size, source:iso.children[0].hash, type:iso.children[0].type,
   expandable:expandable(iso.children[0]), children:iso.children[0].children.length,
   leaf:iso.children[0].children[0].children[0].hash,
@@ -170,7 +170,7 @@ context.contextFixture = catalog([{sha256:'3'.repeat(64),size_bytes:100,metadata
   {path:'WRONG.PSP',type:'file',sha256:'5'.repeat(64),size_bytes:14,extraction:inlineTree},
 ]}]);
 vm.runInContext('build(contextFixture)',context);
-const scoped = JSON.parse(vm.runInContext(`JSON.stringify(root.children[0].children[0].children[0].children.map(n=>({name:n.name,hash:n.hash,children:n.children.map(c=>({name:c.name,hash:c.hash}))})))`,context));
+const scoped = JSON.parse(vm.runInContext(`JSON.stringify(nodes.get("umd/game").children[0].children.map(n=>({name:n.name,hash:n.hash,children:n.children.map(c=>({name:c.name,hash:c.hash}))})))`,context));
 assert.deepEqual(scoped.find(n=>n.name==='DATA.PSP').children,[{name:'DATA.gz',hash:payloadHash}]);
 for (const name of ['DATA.BIN','OTHER.PSP','WRONG.PSP']) assert.deepEqual(scoped.find(n=>n.name===name).children,[]);
 console.log('PASS: PBP-scoped output attaches only to its matching DATA.PSP occurrence.');
@@ -267,3 +267,56 @@ conflictingFixture.trees.iso9660[roleHash].size_bytes++;
 context.conflictingFixture = conflictingFixture;
 assert.throws(()=>vm.runInContext('build(conflictingFixture)',context),/Conflicting source sizes/);
 console.log('PASS: ambiguous byte references and cross-role size conflicts fail explicitly; inline extraction overrides lookup.');
+
+// Updater roots and generic PBP occurrences can observe the same bytes independently.
+const updaterHash = 'a'.repeat(64), variantHash = 'b'.repeat(64), missingTreeHash = 'c'.repeat(64);
+const updateRecord = (sha256, size_bytes, metadata = {}) => ({sha256, size_bytes, metadata});
+const updateTree = (size_bytes, name) => ({
+  size_bytes, extractor:{name:'pspdb-update', version:'1', options:[]}, entries:[roleLeaf(name)],
+});
+context.updaterFixture = {
+  records:{
+    update:[
+      updateRecord(updaterHash, 42, {updater_version:'6.61', title:'System Software', disc_id:'UCJS10041'}),
+      updateRecord(variantHash, 43, {updater_version:'6.61', title:'System Software Variant', disc_id:'UCJS10041'}),
+      updateRecord(missingTreeHash, 44),
+    ],
+    pkg:[{sha256:parentHash, size_bytes:100, metadata:{content_type:7, package_flags:0x10}}],
+  },
+  trees:{
+    update:{[updaterHash]:updateTree(42, 'DATA.BIN'), [variantHash]:updateTree(43, 'DATA.BIN')},
+    pbp:{
+      [updaterHash]:{size_bytes:42, extractor:{name:'pbp'}, entries:[roleLeaf('generic-only.bin')]},
+      [missingTreeHash]:{size_bytes:44, extractor:{name:'pbp'}, entries:[roleLeaf('generic-fallback.bin')]},
+    },
+    pkg:{[parentHash]:{size_bytes:100, extractor:{name:'pkg'}, entries:[
+      {path:'EBOOT.PBP',type:'file',size_bytes:42,sha256:updaterHash},
+    ]}},
+  },
+};
+vm.runInContext('build(updaterFixture)',context);
+const updaterRoles = JSON.parse(vm.runInContext(`JSON.stringify((() => {
+  const updates = nodes.get('firmware/update');
+  return {
+    roots:updates.children.map(node=>({
+      hash:node.hash, size:node.size, path:node.path, url:url(node),
+      children:node.children.map(child=>child.name),
+    })).sort((a,b)=>a.hash.localeCompare(b.hash)),
+    total:updates.size,
+    nested:nodes.get('psn/update/'+'8'.repeat(64)+'.pkg/EBOOT.PBP').children.map(node=>node.name),
+    search:nodes.get('firmware/update/'+'a'.repeat(64)+'.pbp').searchText,
+  };
+})())`,context));
+assert.deepEqual(updaterRoles.roots, [
+  {hash:updaterHash, size:42, path:`firmware/update/${updaterHash}.pbp`,
+    url:`#firmware/update/${updaterHash}.pbp`, children:['DATA.BIN']},
+  {hash:variantHash, size:43, path:`firmware/update/${variantHash}.pbp`,
+    url:`#firmware/update/${variantHash}.pbp`, children:['DATA.BIN']},
+  {hash:missingTreeHash, size:44, path:`firmware/update/${missingTreeHash}.pbp`,
+    url:`#firmware/update/${missingTreeHash}.pbp`, children:[]},
+]);
+assert.equal(updaterRoles.total, 129);
+assert.deepEqual(updaterRoles.nested, ['generic-only.bin']);
+for (const term of ['6.61', 'system software', 'ucjs10041', updaterHash])
+  assert.ok(updaterRoles.search.includes(term));
+console.log('PASS: updater variants retain full raw identities, sizes, searchable metadata and root-specific inventories beside generic PBP and PSN update roles.');

@@ -201,6 +201,10 @@ function sortSearch(key) {
   select(selected, false, false);
 }
 
+function isHashSearchTerm(term) {
+  return /^[0-9a-f]{8,64}$/.test(term);
+}
+
 function applySearch() {
   const query = $("tree-search").value.trim();
   const previousTerms = searchTerms;
@@ -210,12 +214,15 @@ function applySearch() {
     collapsed: new Set(collapsed), selected, scroll: $("table-scroll").scrollTop,
   };
   if (query) {
-    const candidates = previousMatches && previousTerms.every(old => searchTerms.some(term => term.includes(old)))
+    const candidates = previousMatches && previousTerms.every(old => searchTerms.some(term =>
+      term.includes(old) && isHashSearchTerm(term) === isHashSearchTerm(old)))
       ? previousMatches : searchableFiles;
     filterNodes = new Set();
     let files = 0;
     for (const node of candidates) {
-      if (!searchTerms.every(term => node.searchText.includes(term) || node.errorSearchText?.includes(term))) continue;
+      if (!searchTerms.every(term => isHashSearchTerm(term)
+        ? node.hash?.toLowerCase().includes(term)
+        : node.searchText.includes(term) || node.errorSearchText?.includes(term))) continue;
       files++;
       filterNodes.add(node);
     }
@@ -397,7 +404,7 @@ function build(data) {
     for (const [hash, tree] of Object.entries(sources)) {
       if (sizes.has(hash) && sizes.get(hash) !== tree.size_bytes) throw new Error(`Conflicting source sizes: ${hash}`);
       sizes.set(hash, tree.size_bytes);
-      if (kind === "iso" || kind === "pkg") continue;
+      if (kind === "iso" || kind === "pkg" || kind === "nand" || kind === "update") continue;
       extractions[hash] = hash in extractions ? null : tree;
     }
   }
@@ -435,6 +442,32 @@ function build(data) {
       attachExtraction(node, extractions, new Set(), null, data.trees.pkg || {});
     }
   }
+  const firmware = addGroup(root, "firmware");
+  const nandGroup = addGroup(firmware, "nand");
+  const updateGroup = addGroup(firmware, "update");
+  const nands = data.records.nand || [];
+  for (const nand of nands) {
+    const metadata = nand.metadata || {};
+    const validGeometry = metadata.page_bytes === 512 && metadata.spare_bytes === 16
+      && metadata.pages_per_block === 32 && (metadata.blocks === 2048 || metadata.blocks === 4096)
+      && nand.size_bytes === metadata.blocks * 32 * 528;
+    const node = add(nandGroup, `${nand.sha256}.nand`, {
+      type: "file", hash: nand.sha256, size: nand.size_bytes,
+      displayName: validGeometry ? `${metadata.blocks / 64} MiB NAND · ${nand.sha256.slice(0, 12)}` : null,
+    });
+    attachExtraction(node, extractions, new Set(), null, data.trees.nand || {});
+  }
+  const updates = data.records.update || [];
+  for (const update of updates) {
+    const metadata = update.metadata || {};
+    const version = metadata.updater_version?.trim();
+    const node = add(updateGroup, `${update.sha256}.pbp`, {
+      type: "file", hash: update.sha256, size: update.size_bytes,
+      displayName: version ? `Update ${version}${metadata.updater_target === "psp-go" ? " Go" : ""} · ${update.sha256.slice(0, 12)}` : null,
+      searchMetadata: [metadata.title, metadata.disc_id].filter(Boolean).join(" "),
+    });
+    attachExtraction(node, extractions, new Set(), null, data.trees.update || {});
+  }
   searchableFiles = [];
   function summarize(node) {
     node.children.sort((a, b) => (a.type === b.type ? 0 : a.type === "directory" ? -1 : 1)
@@ -450,7 +483,7 @@ function build(data) {
     node.displayPath = node.parent && node.parent !== root ? `${node.parent.displayPath}/${label(node)}` : label(node);
     node.searchText = `${node.parent?.searchText || ""} ${node.name} ${node.displayName || ""} ${node.note || ""} ${node.searchMetadata || ""} ${node.hash || ""}`.toLowerCase();
   }
-  $("catalog-count").textContent = `${isos.length} UMD images · ${packages.length} PSN packages · ${number.format(root.files)} files`;
+  $("catalog-count").textContent = `${isos.length} UMD images · ${packages.length} PSN packages · ${nands.length} NAND dumps · ${updates.length} updater PBPs · ${number.format(root.files)} files`;
 }
 
 function url(node) { return "#" + node.path.split("/").map(encodeURIComponent).join("/"); }
