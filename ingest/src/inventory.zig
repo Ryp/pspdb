@@ -90,9 +90,14 @@ pub const Entry = struct {
     }
 };
 
+pub const RootKind = enum { iso, pkg, nand, update };
+
 pub const Result = struct {
     size_bytes: u64,
-    kind: enum { iso, pkg } = .iso,
+    kind: RootKind = .iso,
+    nand_blocks: ?u32 = null,
+    updater_version: ?[]const u8 = null,
+    updater_target: ?sfo.UpdateTarget = null,
     content_id: []u8 = &.{},
     content_type: u32 = 0,
     package_flags: ?u32 = null,

@@ -1,5 +1,6 @@
 //! In-memory KL3E/KL4E decoding using the pinned, bounds-checked pspdecrypt decoder.
 const std = @import("std");
+const decoded_output = @import("decoded.zig");
 
 extern fn decompress_kle_bounded(output: [*]u8, output_size: c_int, input: [*]const u8, input_size: c_int, is_kl4e: c_int) c_int;
 
@@ -52,6 +53,11 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
         // Shrink in place when supported; callers must be able to free the slice.
         return allocator.realloc(output, decoded);
     }
+}
+
+pub fn extract(allocator: std.mem.Allocator, bytes: []const u8) !decoded_output.Output {
+    const output = try decode(allocator, bytes);
+    return .{ .bytes = output, .format = decoded_output.identify(output) };
 }
 
 test "direct-copy KL variants use exact storage and leave input untouched" {

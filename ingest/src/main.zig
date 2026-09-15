@@ -2,6 +2,7 @@ const std = @import("std");
 const ingest = @import("ingest.zig");
 const catalog_state = @import("catalog_state.zig");
 const licenses = @import("licenses.zig");
+const nand_fuses = @import("nand_fuses.zig");
 
 const Options = struct {
     folders: []const []const u8 = &.{},
@@ -60,7 +61,7 @@ pub fn main(init: std.process.Init) !u8 {
         return 2;
     };
     if (options.help) {
-        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash .iso/.pkg/.zip contents across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. ZIP ISO/PKG members decompressed in memory. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes file objects to the existing SHA-256 store layout.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG results and checks nested extractor provenance (requires --catalog; off by default).\nSupported nested formats are processed automatically when --catalog is set; --store is optional. External adapters run through uv.\n--threads caps all application threads (default: available logical CPUs).\n", .{});
+        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash ISO/PKG/NAND/update inputs across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. Accept .iso/.pkg/.nand, recognized raw NAND .bin files, and updater .pbp files with PARAM.SFO UPDATER_VER and a final PSAR section. ZIP ISO/PKG members are decompressed in memory; ZIP NAND/PBP members are not ingested. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes extracted file objects to the existing SHA-256 store layout, never original NAND dumps or updater PBPs.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG/NAND/update results and checks nested extractor provenance (requires --catalog; off by default).\nSupported nested formats are processed automatically when --catalog is set; --store is optional. External adapters run through uv.\nPSPDB_NAND_FUSE_DIR overrides the private hash-keyed NAND fuse directory (default: $XDG_DATA_HOME/pspdb/nand-fuses or $HOME/.local/share/pspdb/nand-fuses).\n--threads caps all application threads (default: available logical CPUs).\n", .{});
         return 0;
     }
 
@@ -87,16 +88,20 @@ pub fn main(init: std.process.Init) !u8 {
         error.MissingHomeDirectory => null,
         else => return err,
     };
+    const nand_fuse_directory = nand_fuses.directory_path(init.arena.allocator(), init.environ_map) catch |err| switch (err) {
+        error.MissingHomeDirectory => null,
+        else => return err,
+    };
     const live = options.progress and options.threads > 1 and (std.Io.File.stderr().isTty(io) catch false);
     const root = if (live) std.Progress.start(io, .{
-        .root_name = "ISO ingestion",
+        .root_name = "ISO/PKG/NAND/update ingestion",
         .initial_delay_ns = .fromMilliseconds(50),
     }) else std.Progress.Node.none;
     const worker_count = options.threads - @as(usize, if (live) 1 else 0);
     ingest.log(io, "Ingesting {d} folders (thread cap {d}, ingest workers {d}, progress task {d})\n", .{
         options.folders.len, options.threads, worker_count, @as(usize, if (live) 1 else 0),
     });
-    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, rap_directory, state) catch |err| {
+    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, rap_directory, nand_fuse_directory, state) catch |err| {
         root.end();
         std.debug.print("pspdb-ingest: {s}\n", .{@errorName(err)});
         return 1;
@@ -131,4 +136,5 @@ test {
     _ = @import("zip.zig");
     _ = ingest;
     _ = @import("catalog.zig");
+    _ = nand_fuses;
 }

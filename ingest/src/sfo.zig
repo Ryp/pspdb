@@ -11,14 +11,46 @@ pub const Metadata = struct {
 
 /// Select catalog fields from Zig-PSP's parsed SFO. Values still borrow bytes.
 pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) !Metadata {
-    return parseImpl(allocator, bytes, null);
+    return parseImpl(allocator, bytes, null, null);
 }
 
 pub fn parsePkg(allocator: std.mem.Allocator, bytes: []const u8, title_owner: *[]u8) !Metadata {
-    return parseImpl(allocator, bytes, title_owner);
+    return parseImpl(allocator, bytes, title_owner, null);
 }
 
-fn parseImpl(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u8) !Metadata {
+/// Declared compatibility class among released PSP hardware, not authenticity.
+pub const UpdateTarget = enum { psp, @"psp-go" };
+
+pub const UpdateMetadata = struct {
+    metadata: Metadata,
+    updater_version: []const u8,
+    updater_target: ?UpdateTarget,
+};
+
+/// Root updater recognition alone selects UPDATER_VER and typed BOOTABLE.
+/// Generic SFO/PBP consumers retain their validation of unrelated fields.
+pub fn parseUpdate(allocator: std.mem.Allocator, bytes: []const u8) !UpdateMetadata {
+    var fields: UpdateFields = .{};
+    const metadata = try parseImpl(allocator, bytes, null, &fields);
+    const value = fields.version orelse return error.MissingUpdaterVersion;
+    if (value.len == 0) return error.MissingUpdaterVersion;
+    return .{
+        .metadata = metadata,
+        .updater_version = value,
+        .updater_target = if (fields.bootable) |bootable| switch (bootable) {
+            1 => .psp,
+            2 => .@"psp-go",
+            else => null,
+        } else null,
+    };
+}
+
+const UpdateFields = struct {
+    version: ?[]const u8 = null,
+    bootable: ?u32 = null,
+};
+
+fn parseImpl(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u8, update: ?*UpdateFields) !Metadata {
     if (bytes.len == 0) return .{};
     const parsed = @import("zig_psp_sfo").readSFO(allocator, bytes) catch |err| switch (err) {
         error.OutOfMemory => return err,
@@ -28,32 +60,50 @@ fn parseImpl(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u
     var result: Metadata = .{};
     for (parsed.table) |entry| {
         const key = parsed.key(entry);
-        inline for (.{ .{ "DISC_ID", "disc_id" }, .{ "DISC_VERSION", "disc_version" }, .{ "TITLE", "title" }, .{ "PSP_SYSTEM_VER", "required_firmware" } }) |field| {
-            if (std.mem.eql(u8, key, field[0])) {
+        if (update) |fields| {
+            if (std.mem.eql(u8, key, "BOOTABLE")) {
                 const data = parsed.data(entry);
-                if (entry.data_fmt != .UTF8 or data.len == 0 or @field(result, field[1]) != null) return error.InvalidSfo;
-                const end = std.mem.indexOfScalar(u8, data, 0) orelse return error.InvalidSfo;
-                const text = data[0..end];
-                if (!std.unicode.utf8ValidateSlice(text)) {
-                    // Some retail PS1 SFOs use CP1252 trademark in otherwise ASCII TITLE.
-                    // Normalize catalog text only; the original SFO object is untouched.
-                    if (!std.mem.eql(u8, key, "TITLE") or title_owner == null) return error.InvalidSfo;
-                    var length: usize = 0;
-                    for (text) |c| {
-                        if (c >= 128 and c != 0x99) return error.InvalidSfo;
-                        length += if (c == 0x99) @as(usize, 3) else 1;
-                    }
-                    const normalized = try allocator.alloc(u8, length);
-                    var pos: usize = 0;
-                    for (text) |c| {
-                        if (c == 0x99) { @memcpy(normalized[pos..][0..3], "™"); pos += 3; }
-                        else { normalized[pos] = c; pos += 1; }
-                    }
-                    title_owner.?.* = normalized;
-                    result.title = normalized;
-                } else @field(result, field[1]) = text;
+                if (entry.data_fmt != .Int32 or data.len != 4 or fields.bootable != null) return error.InvalidSfo;
+                fields.bootable = std.mem.readInt(u32, data[0..4], .little);
+                continue;
             }
         }
+        const target: *?[]const u8 = selected: {
+            inline for (.{ .{ "DISC_ID", "disc_id" }, .{ "DISC_VERSION", "disc_version" }, .{ "TITLE", "title" }, .{ "PSP_SYSTEM_VER", "required_firmware" } }) |field| {
+                if (std.mem.eql(u8, key, field[0])) break :selected &@field(result, field[1]);
+            }
+            if (std.mem.eql(u8, key, "UPDATER_VER")) {
+                if (update) |fields| break :selected &fields.version;
+            }
+            continue;
+        };
+        const data = parsed.data(entry);
+        if (entry.data_fmt != .UTF8 or data.len == 0 or target.* != null) return error.InvalidSfo;
+        const end = std.mem.indexOfScalar(u8, data, 0) orelse return error.InvalidSfo;
+        const text = data[0..end];
+        if (!std.unicode.utf8ValidateSlice(text)) {
+            // Some retail PS1 SFOs use CP1252 trademark in otherwise ASCII TITLE.
+            // Normalize catalog text only; the original SFO object is untouched.
+            if (!std.mem.eql(u8, key, "TITLE") or title_owner == null) return error.InvalidSfo;
+            var length: usize = 0;
+            for (text) |c| {
+                if (c >= 128 and c != 0x99) return error.InvalidSfo;
+                length += if (c == 0x99) @as(usize, 3) else 1;
+            }
+            const normalized = try allocator.alloc(u8, length);
+            var pos: usize = 0;
+            for (text) |c| {
+                if (c == 0x99) {
+                    @memcpy(normalized[pos..][0..3], "™");
+                    pos += 3;
+                } else {
+                    normalized[pos] = c;
+                    pos += 1;
+                }
+            }
+            title_owner.?.* = normalized;
+            target.* = normalized;
+        } else target.* = text;
     }
     return result;
 }
@@ -134,13 +184,13 @@ test "Zig-PSP SFO rejects malformed tables, keys, values and duplicate metadata"
         }
         try std.testing.expectError(error.InvalidSfo, parse(allocator, &bytes));
     }
+
     var bytes = fixture();
     for (0..bytes.len) |length| {
         if (length == 0) continue; // Missing metadata is supported.
         try std.testing.expectError(error.InvalidSfo, parse(allocator, bytes[0..length]));
     }
 }
-
 
 test "PKG title normalizes legacy trademark without changing source" {
     var bytes = fixture();

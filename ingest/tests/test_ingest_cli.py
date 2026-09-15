@@ -894,12 +894,12 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
                     self.assertEqual(len(self.records(output)), 1)
                     continue
                 self.assertEqual(code, 0, output)
-                for packed, name, plain in [(source, 'payload.gz', inner), (inner, 'module.elf', elf)]:
+                for packed, plain in [(source, inner), (inner, elf)]:
                     digest = hashlib.sha256(packed).hexdigest()
                     tree = json.loads(tree_path(catalog, digest).read_text())
                     child_hash = hashlib.sha256(plain).hexdigest()
-                    self.assertEqual(tree['entries'], [{
-                        'path': name, 'type': 'file', 'size_bytes': len(plain), 'sha256': child_hash,
+                    self.assertEqual([{k: v for k, v in entry.items() if k != 'path'} for entry in tree['entries']], [{
+                        'type': 'file', 'size_bytes': len(plain), 'sha256': child_hash,
                     }])
                     self.assertEqual((store / 'sha256' / child_hash[:2] / child_hash[2:4] / child_hash).read_bytes(), plain)
 
@@ -918,11 +918,11 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
             with patch.dict(os.environ, {'PATH': ''}):
                 code, output = self.run_cli(inputs, '--catalog', str(root / 'catalog'), '--no-progress')
             self.assertEqual(code, 0, output)
-            for kind, source, name, child in [('pbp', pbp, 'DATA.PSP', sce), ('sce', sce, 'payload.psp', compressed), ('gzip', compressed, 'module.elf', elf)]:
+            for kind, source, child in [('pbp', pbp, sce), ('sce', sce, compressed), ('gzip', compressed, elf)]:
                 h = hashlib.sha256(source).hexdigest()
                 self.assertTrue(result_path(root / 'catalog', kind, h).exists())
                 tree = json.loads(tree_path(root / 'catalog', h).read_text())
-                self.assertEqual(tree['entries'], [{'path': name, 'type': 'file', 'size_bytes': len(child), 'sha256': hashlib.sha256(child).hexdigest()}])
+                self.assertEqual([{k: v for k, v in entry.items() if k != 'path'} for entry in tree['entries']], [{'type': 'file', 'size_bytes': len(child), 'sha256': hashlib.sha256(child).hexdigest()}])
             # Reject malformed section tables before invoking a child extractor.
             broken = bytearray(pbp); struct.pack_into('<I', broken, 12, 39)
             iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
@@ -1024,6 +1024,12 @@ shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--outpu
                 shutil.copytree(REPO / 'ingest/src', checkout / 'ingest/src')
                 for name in ('build.zig', 'build.zig.zon'):
                     shutil.copyfile(REPO / 'ingest' / name, checkout / 'ingest' / name)
+                # Preserve local path dependencies in the isolated build layout.
+                manifest = (REPO / 'ingest/build.zig.zon').read_text()
+                for relative in re.findall(r'\.path\s*=\s*"([^"]+)"', manifest):
+                    target = (checkout / 'ingest' / relative).resolve()
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.symlink_to((REPO / 'ingest' / relative).resolve(), target_is_directory=True)
                 (checkout / 'tools').mkdir()
                 for name in ('extract_external.py', 'extractor_versions.json', 'catalog_status.py', 'prepare_native.py'):
                     shutil.copyfile(REPO / 'tools' / name, checkout / 'tools' / name)

@@ -13,7 +13,10 @@ import unittest
 import zipfile
 
 from unittest.mock import patch
-from test_ingest_cli import BINARY, REPO, result_path, tree_path, snapshot
+if __package__:
+    from .test_ingest_cli import BINARY, REPO, result_path, tree_path, snapshot, GAME_UMD
+else:
+    from test_ingest_cli import BINARY, REPO, result_path, tree_path, snapshot, GAME_UMD
 
 PSP_KEY = '07f2c68290b50d2c33818d709b60e62b'
 PS3_KEY = '2e7b71d7c9c9a14ea3221f188828b8f8'
@@ -248,7 +251,6 @@ class PkgCliTests(unittest.TestCase):
                 self.assertFalse(list((catalog/'document').rglob('*-ingest.json')))
 
     def test_same_iso_bytes_keep_root_and_nested_cache_roles_separate(self):
-        from test_ingest_cli import GAME_UMD
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); inputs = base/'inputs'; inputs.mkdir()
             catalog, store = base/'catalog', base/'store'

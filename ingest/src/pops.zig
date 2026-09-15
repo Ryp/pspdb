@@ -1,4 +1,5 @@
 const std = @import("std");
+const decoded_output = @import("decoded.zig");
 
 extern fn pspdb_pops_decode(psp: [*]const u8, psp_len: usize, data_bin: [*]const u8, data_bin_len: usize, output: [*]u8, output_len: usize) c_int;
 
@@ -32,4 +33,9 @@ pub fn decode(allocator: std.mem.Allocator, psp_bytes: []const u8, data_bin_byte
         return error.UnexpectedPopsPayload;
     }
     return allocator.realloc(output, size);
+}
+
+pub fn extract(allocator: std.mem.Allocator, psp_bytes: []const u8, data_bin_bytes: []const u8) !decoded_output.Output {
+    const output = try decode(allocator, psp_bytes, data_bin_bytes);
+    return .{ .bytes = output, .format = decoded_output.identify(output) };
 }

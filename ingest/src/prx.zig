@@ -1,29 +1,33 @@
 const std = @import("std");
+const decoded_output = @import("decoded.zig");
 
 const gzip_decoder = @import("gzip.zig");
 const kle = @import("kle.zig");
 const lzr_decoder = @import("lzr.zig");
 
 const prx_encrypt = @import("zig_psp_prx_encrypt");
+const kirk = @import("kirk");
 
 extern fn pspdb_prx_decode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) c_int;
 
 const max_decoded_size = 64 << 20;
 
-/// Decrypt a ~PSP module or PSPsysGP resource and expand any gzip/KL/LZR payload.
-/// The caller owns the result; input may be unaligned and is never changed.
-/// Uses upstream's type fallback and integrity checks, not full authentication:
-/// Type-6 and type-9 ECDSA signatures are not authenticated.
-pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
+const Decrypted = struct {
+    bytes: []u8,
+    elf_size: ?usize,
+};
+
+/// Decrypt a ~PSP module or PSPsysGP resource. The caller owns the exact
+/// KIRK-declared payload; input may be unaligned and is never changed.
+fn decrypt_plain(allocator: std.mem.Allocator, bytes: []const u8) !Decrypted {
     if (bytes.len < 0x150) return error.InvalidPrx;
     const module = std.mem.startsWith(u8, bytes, "~PSP");
     if (!module and !std.mem.startsWith(u8, bytes, "PSPsysGP")) return error.InvalidPrx;
     if (bytes.len > std.math.maxInt(c_int)) return error.InvalidPrxSize;
     const expected = std.mem.readInt(u32, bytes[0xb0..0xb4], .little);
     if (expected == 0 or expected > bytes.len) return error.InvalidPrxSize;
-    const elf_size = std.mem.readInt(u32, bytes[0x28..0x2c], .little);
-    // PSPsysGP shares KIRK offsets, but not the module compression fields.
     const attributes = if (module) std.mem.readInt(u16, bytes[6..8], .little) else 0;
+    const elf_size: ?usize = if (attributes & 1 != 0) @intCast(std.mem.readInt(u32, bytes[0x28..0x2c], .little)) else null;
 
     // Upstream reconstructs KIRK headers in this buffer before decrypting over
     // them. Keep its full workspace until it finishes; never shrink an intermediate.
@@ -37,13 +41,106 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
         -4 => return error.PrxSizeMismatch,
         else => if (result <= 0 or result != expected) return error.PrxSizeMismatch,
     }
-    if (try expand_payload(allocator, output[0..expected], if (attributes & 1 != 0) elf_size else null)) |expanded| {
-        allocator.free(output);
+    return .{ .bytes = try allocator.realloc(output, expected), .elf_size = elf_size };
+}
+
+const check_keys0 = [16]u8{ 0x71, 0xf6, 0xa8, 0x31, 0x1e, 0xe0, 0xff, 0x1e, 0x50, 0xba, 0x6c, 0xd2, 0x98, 0x2d, 0xd6, 0x2d };
+const check_keys1 = [16]u8{ 0xaa, 0x85, 0x4d, 0xb0, 0xff, 0xca, 0x47, 0xeb, 0x38, 0x7f, 0xd7, 0xe4, 0x3d, 0x62, 0xb0, 0x10 };
+
+fn decrypt(allocator: std.mem.Allocator, bytes: []const u8, console_key: ?*const kirk.Cmd8Key) !Decrypted {
+    // Nonzero signcheck bytes are only a heuristic: ordinary signed PRX types
+    // can use this region too. Never transform an envelope that already decodes.
+    return decrypt_plain(allocator, bytes) catch |err| switch (err) {
+        error.InvalidPrxSize, error.PrxDecryptionFailed, error.PrxSizeMismatch => blk: {
+            if (bytes.len > std.math.maxInt(c_int) or !std.mem.startsWith(u8, bytes, "~PSP") or std.mem.allEqual(u8, bytes[0xd4..0x12c], 0)) return err;
+            const key = console_key orelse return error.MissingNandFuseId;
+            var command: [0x14 + 0xd0]u8 = @splat(0);
+            std.mem.writeInt(u32, command[0..4], 5, .little);
+            std.mem.writeInt(u32, command[0x0c..0x10], 0x100, .little);
+            std.mem.writeInt(u32, command[0x10..0x14], 0xd0, .little);
+            for (bytes[0x80..0x150], command[0x14..], 0..) |byte, *target, i| target.* = byte ^ check_keys1[i % 16];
+            _ = try kirk.cmd8(key, &command, command[0x14..]);
+            const plain = command[0x14..];
+            for (plain, 0..) |*byte, i| byte.* ^= check_keys0[i % 16];
+            // The native decoder requires separate contiguous input/workspace.
+            // Keep the borrowed source and its CAS identity untouched.
+            const normalized = try allocator.dupe(u8, bytes);
+            defer allocator.free(normalized);
+            @memcpy(normalized[0x80..0x110], plain[0x40..0xd0]);
+            @memcpy(normalized[0x110..0x150], plain[0..0x40]);
+            // CMD8 is not authenticated. Recheck sizes and run the ordinary
+            // PRX integrity checks; never publish the normalized header alone.
+            break :blk try decrypt_plain(allocator, normalized);
+        },
+        else => return err,
+    };
+}
+
+fn expand(allocator: std.mem.Allocator, payload: Decrypted) ![]u8 {
+    errdefer allocator.free(payload.bytes);
+    if (try expand_payload(allocator, payload.bytes, payload.elf_size)) |expanded| {
+        allocator.free(payload.bytes);
         return expanded;
     }
     // Uncompressed envelopes may include data beyond elf_size (e.g. update PRXs).
     // Preserve the complete KIRK-declared payload rather than truncating it.
-    return allocator.realloc(output, expected);
+    return payload.bytes;
+}
+
+/// Byte-only decoder used by tests and nested codec handling.
+pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, console_key: ?*const kirk.Cmd8Key) ![]u8 {
+    return expand(allocator, try decrypt(allocator, bytes, console_key));
+}
+
+fn preserveEncodedElf(allocator: std.mem.Allocator, payload: Decrypted) !?decoded_output.Output {
+    const size = payload.elf_size orelse return null;
+    const format: decoded_output.Format = if (std.mem.startsWith(u8, payload.bytes, "\x1f\x8b\x08"))
+        .gzip
+    else if (std.mem.startsWith(u8, payload.bytes, "KL3E"))
+        .kl3e
+    else if (std.mem.startsWith(u8, payload.bytes, "KL4E"))
+        .kl4e
+    else
+        return null;
+    if (size == 0 or size > max_decoded_size) return error.InvalidPrxSize;
+    const probe = try allocator.alloc(u8, size);
+    defer allocator.free(probe);
+    const consumed = switch (format) {
+        .gzip => blk: {
+            const member = gzip_decoder.decode_member_info(payload.bytes, probe) catch |err| return switch (err) {
+                error.GzipOutputTooSmall => error.PrxSizeMismatch,
+                else => err,
+            };
+            if (member.written != size) return error.PrxSizeMismatch;
+            break :blk member.consumed;
+        },
+        .kl3e, .kl4e => blk: {
+            const written = kle.decodeInto(payload.bytes, probe) catch |err| return switch (err) {
+                error.KleOutputTooSmall => error.PrxSizeMismatch,
+                else => err,
+            };
+            if (written != size) return error.PrxSizeMismatch;
+            break :blk payload.bytes.len;
+        },
+        else => unreachable,
+    };
+    if (!decoded_output.isPspElf(probe)) return error.UnexpectedPrxPayload;
+    return .{
+        .bytes = try allocator.realloc(payload.bytes, consumed),
+        .format = format,
+        .content_format = .elf,
+    };
+}
+
+/// Preserve encoded ELF payloads so recursive codec extraction owns expansion.
+pub fn extract(allocator: std.mem.Allocator, bytes: []const u8, console_key: ?*const kirk.Cmd8Key) !decoded_output.Output {
+    const payload = try decrypt(allocator, bytes, console_key);
+    if (preserveEncodedElf(allocator, payload) catch |err| {
+        allocator.free(payload.bytes);
+        return err;
+    }) |output| return output;
+    const output = try expand(allocator, payload);
+    return .{ .bytes = output, .format = decoded_output.identify(output) };
 }
 
 fn expand_payload(allocator: std.mem.Allocator, payload: []const u8, declared_size: ?usize) !?[]u8 {
@@ -152,15 +249,56 @@ fn signed_fixture(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
     return output.toOwnedSlice();
 }
 
+test "PRX extraction exposes a gzip-encoded ELF for recursive decoding" {
+    const allocator = std.testing.allocator;
+    var payload: [52]u8 = @splat(0);
+    @memcpy(payload[0..7], "\x7fELF\x01\x01\x01");
+    std.mem.writeInt(u16, payload[16..18], 0xffa0, .little);
+    std.mem.writeInt(u16, payload[18..20], 8, .little);
+    std.mem.writeInt(u32, payload[20..24], 1, .little);
+    std.mem.writeInt(u16, payload[40..42], 52, .little);
+    const fixture = try signed_fixture(allocator, &payload);
+    defer allocator.free(fixture);
+    const output = try extract(allocator, fixture, null);
+    defer allocator.free(output.bytes);
+    try std.testing.expectEqual(decoded_output.Format.gzip, output.format);
+    try std.testing.expectEqual(decoded_output.Format.elf, output.content_format.?);
+    try std.testing.expect(std.mem.startsWith(u8, output.bytes, "\x1f\x8b\x08"));
+    const expanded = try gzip_decoder.decode(allocator, output.bytes);
+    defer allocator.free(expanded);
+    try std.testing.expectEqualSlices(u8, &payload, expanded[0..payload.len]);
+}
+
+test "PRX extraction preserves KL-encoded ELF for recursive decoding" {
+    const allocator = std.testing.allocator;
+    var elf: [52]u8 = @splat(0);
+    @memcpy(elf[0..7], "\x7fELF\x01\x01\x01");
+    std.mem.writeInt(u16, elf[16..18], 0xffa0, .little);
+    std.mem.writeInt(u16, elf[18..20], 8, .little);
+    std.mem.writeInt(u32, elf[20..24], 1, .little);
+    std.mem.writeInt(u16, elf[40..42], 52, .little);
+    var encoded: [4 + 5 + elf.len]u8 = undefined;
+    @memcpy(encoded[0..4], "KL3E");
+    encoded[4] = 0x80;
+    std.mem.writeInt(u32, encoded[5..9], elf.len, .big);
+    @memcpy(encoded[9..], &elf);
+    const owned = try allocator.dupe(u8, &encoded);
+    const output = (try preserveEncodedElf(allocator, .{ .bytes = owned, .elf_size = elf.len })).?;
+    defer allocator.free(output.bytes);
+    try std.testing.expectEqual(decoded_output.Format.kl3e, output.format);
+    try std.testing.expectEqual(decoded_output.Format.elf, output.content_format.?);
+    try std.testing.expectEqualSlices(u8, &encoded, output.bytes);
+}
+
 test "PRX rejects truncated headers and impossible declared sizes" {
     var bytes: [0x150]u8 = @splat(0);
     @memcpy(bytes[0..4], "~PSP");
-    try std.testing.expectError(error.InvalidPrx, decode(std.testing.allocator, bytes[0..0x14f]));
-    try std.testing.expectError(error.InvalidPrxSize, decode(std.testing.allocator, &bytes));
+    try std.testing.expectError(error.InvalidPrx, decode(std.testing.allocator, bytes[0..0x14f], null));
+    try std.testing.expectError(error.InvalidPrxSize, decode(std.testing.allocator, &bytes, null));
     std.mem.writeInt(u32, bytes[0xb0..0xb4], bytes.len + 1, .little);
-    try std.testing.expectError(error.InvalidPrxSize, decode(std.testing.allocator, &bytes));
+    try std.testing.expectError(error.InvalidPrxSize, decode(std.testing.allocator, &bytes, null));
     std.mem.writeInt(u32, bytes[0xb0..0xb4], std.math.maxInt(u32), .little);
-    try std.testing.expectError(error.InvalidPrxSize, decode(std.testing.allocator, &bytes));
+    try std.testing.expectError(error.InvalidPrxSize, decode(std.testing.allocator, &bytes, null));
 }
 
 test "PRX preserves unaligned input and rejects truncation or modified headers" {
@@ -172,7 +310,7 @@ test "PRX preserves unaligned input and rejects truncation or modified headers" 
     defer allocator.free(storage);
     const unaligned = storage[1..];
     @memcpy(unaligned, fixture);
-    const output = try decode(allocator, unaligned);
+    const output = try decode(allocator, unaligned, null);
     defer allocator.free(output);
     try std.testing.expectEqualSlices(u8, fixture, unaligned);
     try std.testing.expectEqual(std.mem.readInt(u32, fixture[0x28..0x2c], .little), output.len);
@@ -182,9 +320,59 @@ test "PRX preserves unaligned input and rejects truncation or modified headers" 
     try std.testing.expect(std.mem.allEqual(u8, output[payload.len..], 0));
 
     // Missing CBC padding previously let libkirk read a block beyond the file.
-    try std.testing.expectError(error.PrxDecryptionFailed, decode(allocator, unaligned[0 .. unaligned.len - 1]));
+    try std.testing.expectError(error.PrxDecryptionFailed, decode(allocator, unaligned[0 .. unaligned.len - 1], null));
     unaligned[0x0a] ^= 1;
-    try std.testing.expectError(error.PrxDecryptionFailed, decode(allocator, unaligned));
+    try std.testing.expectError(error.PrxDecryptionFailed, decode(allocator, unaligned, null));
+}
+
+// Test-only CMD5 counterpart with independently derived, synthetic AES keys.
+// Production owns only CMD8; no real console material belongs in fixtures.
+fn signcheck_fixture(bytes: []u8, synthetic_key_hex: []const u8) !void {
+    var aes_key: [16]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&aes_key, synthetic_key_hex);
+    const aes = std.crypto.core.aes.Aes128.initEnc(aes_key);
+    var header: [0xd0]u8 = undefined;
+    @memcpy(header[0..0x40], bytes[0x110..0x150]);
+    @memcpy(header[0x40..], bytes[0x80..0x110]);
+    for (&header, 0..) |*byte, i| byte.* ^= check_keys0[i % 16];
+    var iv: [16]u8 = @splat(0);
+    var offset: usize = 0;
+    while (offset < header.len) : (offset += 16) {
+        for (&iv, header[offset..][0..16]) |*byte, source| byte.* ^= source;
+        aes.encrypt(&iv, &iv);
+        for (iv, bytes[0x80 + offset ..][0..16], 0..) |byte, *target, i| target.* = byte ^ check_keys1[i];
+    }
+}
+
+test "signchecked PRX needs context, preserves source and rejects the wrong console" {
+    const allocator = std.testing.allocator;
+    const fixture = try signed_fixture(allocator, "\x7fELF console-bound immutable input");
+    defer allocator.free(fixture);
+    const expected = try decode(allocator, fixture, null);
+    defer allocator.free(expected);
+    var key = kirk.Cmd8Key.init(0x0000123456789abc);
+    defer key.deinit();
+    // Supplying console context must not transform an ordinary signed module.
+    const ordinary = try decode(allocator, fixture, &key);
+    defer allocator.free(ordinary);
+    try std.testing.expectEqualSlices(u8, expected, ordinary);
+    try signcheck_fixture(fixture, "17023593ab51acb2490a119e31e9424f");
+    const original = try allocator.dupe(u8, fixture);
+    defer allocator.free(original);
+    try std.testing.expectError(error.MissingNandFuseId, decode(allocator, fixture, null));
+    var wrong = kirk.Cmd8Key.init(0x0000123456789abd);
+    defer wrong.deinit();
+    if (decode(allocator, fixture, &wrong)) |unexpected| {
+        allocator.free(unexpected);
+        return error.AcceptedWrongConsole;
+    } else |err| switch (err) {
+        error.InvalidPrxSize, error.PrxDecryptionFailed, error.PrxSizeMismatch => {},
+        else => return err,
+    }
+    const output = try decode(allocator, fixture, &key);
+    defer allocator.free(output);
+    try std.testing.expectEqualSlices(u8, expected, output);
+    try std.testing.expectEqualSlices(u8, original, fixture);
 }
 
 test "concurrent PRX jobs retain independent KIRK state and owned results" {
@@ -193,15 +381,22 @@ test "concurrent PRX jobs retain independent KIRK state and owned results" {
     defer allocator.free(first);
     const second = try signed_fixture(allocator, "\x7fELF second concurrent PRX");
     defer allocator.free(second);
-    const first_plain = try decode(allocator, first);
+    const first_plain = try decode(allocator, first, null);
     defer allocator.free(first_plain);
-    const second_plain = try decode(allocator, second);
+    const second_plain = try decode(allocator, second, null);
     defer allocator.free(second_plain);
+    var first_key = kirk.Cmd8Key.init(0x0000123456789abc);
+    defer first_key.deinit();
+    var second_key = kirk.Cmd8Key.init(0x0000123456789abd);
+    defer second_key.deinit();
+    try signcheck_fixture(first, "17023593ab51acb2490a119e31e9424f");
+    try signcheck_fixture(second, "27940573ab6a6c91d14a717fdb04e1b3");
 
     const Worker = struct {
         start: *std.atomic.Value(bool),
         input: []const u8,
         expected: []const u8,
+        key: *const kirk.Cmd8Key,
         failure: ?anyerror = null,
 
         fn run(self: *@This()) void {
@@ -213,7 +408,7 @@ test "concurrent PRX jobs retain independent KIRK state and owned results" {
 
         fn check(self: *@This()) !void {
             for (0..4) |_| {
-                const decoded = try decode(std.heap.page_allocator, self.input);
+                const decoded = try decode(std.heap.page_allocator, self.input, self.key);
                 defer std.heap.page_allocator.free(decoded);
                 if (!std.mem.eql(u8, self.expected, decoded)) return error.ConcurrentPrxMismatch;
             }
@@ -233,6 +428,7 @@ test "concurrent PRX jobs retain independent KIRK state and owned results" {
                 .start = &start,
                 .input = if (index % 2 == 0) first else second,
                 .expected = if (index % 2 == 0) first_plain else second_plain,
+                .key = if (index % 2 == 0) &first_key else &second_key,
             };
             threads[index] = try std.Thread.spawn(.{}, Worker.run, .{worker});
             spawned += 1;

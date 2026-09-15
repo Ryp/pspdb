@@ -6,6 +6,7 @@ const inventory = @import("inventory.zig");
 const memory = @import("bytes.zig");
 const CatalogState = @import("catalog_state.zig").State;
 const catalog_io = @import("catalog.zig");
+const nand = @import("zig_psp_nand");
 
 pub const Stats = struct {
     directories: usize = 0,
@@ -40,6 +41,7 @@ const SharedZip = struct {
 
 const Member = struct {
     path: []const u8,
+    kind: enum { iso, pkg },
     source: *SharedZip,
     entry: std.zip.Iterator.Entry,
     name: []const u8,
@@ -48,14 +50,15 @@ const Extraction = struct { group: *Group, task: processor.Task };
 const JobKind = std.meta.Tag(Job);
 const Job = union(enum) {
     directory: []const u8,
-    iso: []const u8,
+    root: struct { path: []const u8, kind: inventory.RootKind },
     zip: []const u8,
     member: Member,
     extraction: Extraction,
 
     fn path(self: Job) []const u8 {
         return switch (self) {
-            .directory, .iso, .zip => |name| name,
+            .directory, .zip => |name| name,
+            .root => |root| root.path,
             .member => |member| member.path,
             .extraction => |extraction| extraction.task.name,
         };
@@ -63,14 +66,15 @@ const Job = union(enum) {
 
     fn is_intake(self: Job) bool {
         return switch (self) {
-            .iso, .member => true,
+            .root, .member => true,
             else => false,
         };
     }
 
     fn deinit(self: Job, allocator: std.mem.Allocator) void {
         switch (self) {
-            .directory, .iso, .zip => |name| allocator.free(name),
+            .directory, .zip => |name| allocator.free(name),
+            .root => |root| allocator.free(root.path),
             .member => |member| {
                 allocator.free(member.path);
                 member.source.release();
@@ -80,7 +84,7 @@ const Job = union(enum) {
     }
 };
 
-/// Completion follows the ISO's work; memory ownership follows byte views.
+/// Completion follows the source's work; memory ownership follows byte views.
 /// pending/counts/failure are protected by the pool mutex. The intake alone
 /// writes result, before surrendering its initial pending reference.
 const Group = struct {
@@ -104,6 +108,7 @@ const Pool = struct {
     skip_existing: bool,
     state: ?*const CatalogState = null,
     rap_directory: ?[]const u8,
+    nand_fuse_directory: ?[]const u8,
     mutex: std.Io.Mutex = .init,
     changed: std.Io.Condition = .init,
     jobs: std.ArrayList(Job) = .empty,
@@ -114,7 +119,7 @@ const Pool = struct {
     intake_candidates: usize = 0,
     stats: Stats = .{},
     scan_progress: std.Progress.Node,
-    iso_progress: std.Progress.Node,
+    intake_progress: std.Progress.Node,
     extraction_progress: std.Progress.Node,
 
     fn enqueue(self: *Pool, job: Job) !void {
@@ -129,7 +134,7 @@ const Pool = struct {
 
     fn add_intake_candidate(self: *Pool) void {
         self.intake_candidates += 1;
-        self.iso_progress.setEstimatedTotalItems(self.intake_candidates);
+        self.intake_progress.setEstimatedTotalItems(self.intake_candidates);
     }
 
     // Extraction is preferred, then discovery, then intake below the cap.
@@ -168,7 +173,7 @@ const Pool = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         self.outstanding -= 1;
-        if (kind == .iso or kind == .member) self.intake_active -= 1;
+        if (kind == .root or kind == .member) self.intake_active -= 1;
         if (kind == .directory) {
             self.directories_pending -= 1;
             if (self.directories_pending == 0) {
@@ -199,28 +204,76 @@ const Pool = struct {
                 };
                 break :blk stat.kind;
             } else entry.kind;
-            if (kind == .directory or (kind == .file and (is_iso(entry.name) or is_pkg(entry.name) or is_zip(entry.name)))) {
-                const child = try std.Io.Dir.path.join(self.allocator, &.{ path, entry.name });
-                const job: Job = if (kind == .directory)
-                    .{ .directory = child }
-                else if (is_zip(entry.name))
-                    .{ .zip = child }
-                else
-                    .{ .iso = child };
-                self.enqueue(job) catch |err| {
-                    self.allocator.free(child);
-                    return err;
-                };
-            } else {
+            if (kind == .sym_link) {
                 self.mutex.lockUncancelable(self.io);
-                if (kind == .sym_link) self.stats.symlinks += 1 else self.stats.ignored += 1;
+                self.stats.symlinks += 1;
                 self.mutex.unlock(self.io);
+                continue;
             }
+            var root_kind = explicit_root_kind(entry.name);
+            if (kind == .file) {
+                const probe_kind: ?ProbeKind = if (is_bin(entry.name)) .nand else if (std.ascii.endsWithIgnoreCase(entry.name, ".pbp")) .update else null;
+                if (probe_kind) |candidate| {
+                    const recognized = self.probe_root(dir, entry.name, candidate) catch |err| {
+                        self.fail(entry.name, err);
+                        continue;
+                    };
+                    if (recognized) root_kind = switch (candidate) {
+                        .nand => .nand,
+                        .update => .update,
+                    };
+                }
+            }
+            if (kind != .directory and (kind != .file or (root_kind == null and !is_zip(entry.name)))) {
+                self.mutex.lockUncancelable(self.io);
+                self.stats.ignored += 1;
+                self.mutex.unlock(self.io);
+                continue;
+            }
+            const child = try std.Io.Dir.path.join(self.allocator, &.{ path, entry.name });
+            const job: Job = if (kind == .directory)
+                .{ .directory = child }
+            else if (is_zip(entry.name))
+                .{ .zip = child }
+            else
+                .{ .root = .{ .path = child, .kind = root_kind.? } };
+            self.enqueue(job) catch |err| {
+                self.allocator.free(child);
+                return err;
+            };
         }
         self.mutex.lockUncancelable(self.io);
         self.stats.directories += 1;
         self.scan_progress.setCompletedItems(self.stats.directories);
         self.mutex.unlock(self.io);
+    }
+
+    const ProbeKind = enum { nand, update };
+
+    fn probe_root(self: *Pool, directory: std.Io.Dir, name: []const u8, kind: ProbeKind) !bool {
+        // A directory entry can change after enumeration; never follow it or
+        // block on a substituted FIFO before checking the open descriptor.
+        const descriptor = try std.posix.openat(directory.handle, name, .{
+            .ACCMODE = .RDONLY,
+            .NOFOLLOW = true,
+            .NONBLOCK = true,
+            .CLOEXEC = true,
+        }, 0);
+        const file: std.Io.File = .{ .handle = descriptor, .flags = .{ .nonblocking = true } };
+        defer file.close(self.io);
+        const info = try file.stat(self.io);
+        if (info.kind != .file) return false;
+        switch (kind) {
+            .nand => _ = nand.blockCount(info.size) catch return false,
+            .update => if (info.size < 40) return false,
+        }
+        const size = std.math.cast(usize, info.size) orelse return error.FileTooLarge;
+        const mapping = try std.posix.mmap(null, size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, file.handle, 0);
+        defer std.posix.munmap(mapping);
+        return switch (kind) {
+            .nand => nand.probe(mapping),
+            .update => try processor.probe_update(self.allocator, mapping),
+        };
     }
 
     fn create_group(self: *Pool, path: []const u8) !*Group {
@@ -269,7 +322,7 @@ const Pool = struct {
         if (!finished) return;
         defer {
             group.progress.end();
-            if (group.dispatch) |*dispatch| dispatch.visited.deinit();
+            if (group.dispatch) |*dispatch| dispatch.deinit();
             if (group.result) |result| result.deinit(self.allocator);
             self.allocator.free(group.path);
             self.allocator.destroy(group);
@@ -302,13 +355,13 @@ const Pool = struct {
 
     fn process(self: *Pool, job: Job) !void {
         const path = job.path();
-        const progress = self.iso_progress.start(std.Io.Dir.path.basename(path), 0);
+        const progress = self.intake_progress.start(std.Io.Dir.path.basename(path), 0);
         defer progress.end();
         const group = try self.create_group(path);
         const dispatch = if (group.dispatch) |*value| value else null;
         group.result = (switch (job) {
             .member => |member| self.process_zip_member(member, dispatch),
-            .iso => processor.process_file(self.allocator, self.io, path, self.store, self.skip_cache(), dispatch),
+            .root => |root| processor.process_file(self.allocator, self.io, path, root.kind, self.store, self.skip_cache(), dispatch, self.nand_fuse_directory),
             else => unreachable,
         }) catch |err| {
             self.complete(group, .{}, err);
@@ -329,18 +382,18 @@ const Pool = struct {
         var found: usize = 0;
         while (try iterator.next()) |entry| {
             const name = try source.archive.name(entry);
-            if (!is_iso(name) and !is_pkg(name)) {
+            const kind: @FieldType(Member, "kind") = if (is_iso(name)) .iso else if (is_pkg(name)) .pkg else {
                 self.mutex.lockUncancelable(self.io);
                 self.stats.ignored_members += 1;
                 self.mutex.unlock(self.io);
                 continue;
-            }
+            };
             const label = try std.fmt.allocPrint(self.allocator, "{s}!{s}", .{ path, name });
             errdefer self.allocator.free(label);
             self.mutex.lockUncancelable(self.io);
             defer self.mutex.unlock(self.io);
             try self.jobs.append(self.allocator, .{
-                .member = .{ .path = label, .source = source, .entry = entry, .name = name },
+                .member = .{ .path = label, .kind = kind, .source = source, .entry = entry, .name = name },
             });
             source.retain();
             found += 1;
@@ -359,7 +412,10 @@ const Pool = struct {
         const bytes = try member.source.archive.read(member.entry, member.name, self.allocator);
         const input = try memory.Owner.take_allocated(self.allocator, bytes);
         defer input.release();
-        return if (is_pkg(member.name)) processor.process_pkg_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch) else processor.process_iso_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch);
+        return switch (member.kind) {
+            .iso => processor.process_iso_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch),
+            .pkg => processor.process_pkg_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch),
+        };
     }
 
     fn extract(self: *Pool, extraction: Extraction) void {
@@ -397,8 +453,9 @@ const Pool = struct {
             log(self.io, "{s}\n", .{line});
             return;
         }
-        if (result.kind == .pkg) {
-            const line = std.json.Stringify.valueAlloc(self.allocator, .{
+        // JSON escapes control characters in labels and preserves unknown fields.
+        const line = switch (result.kind) {
+            .pkg => std.json.Stringify.valueAlloc(self.allocator, .{
                 .source = path,
                 .kind = "pkg",
                 .content_id = result.content_id,
@@ -408,28 +465,49 @@ const Pool = struct {
                 .entry_count = result.entries.len,
                 .stored_objects = result.stored,
                 .reused_objects = result.reused,
-            }, .{}) catch return;
-            defer self.allocator.free(line);
-            log(self.io, "{s}\n", .{line});
-            return;
-        }
-        // JSON escapes control characters in labels and preserves unknown fields.
-        const line = std.json.Stringify.valueAlloc(self.allocator, .{
-            .source = path,
-            .identifier = result.record.identifier,
-            .uid = result.record.uid,
-            .type_code = result.record.type_code,
-            .media_code = result.record.media_code,
-            .media = result.record.mediaDescription(),
-            .extra = result.record.extra,
-            .umd_data_bytes = result.umd_bytes.len,
-            .iso_bytes = result.size_bytes,
-            .sha256 = &result.sha256,
-            .sha1 = &result.sha1,
-            .entry_count = result.entries.len,
-            .stored_objects = result.stored,
-            .reused_objects = result.reused,
-        }, .{}) catch |err| {
+            }, .{}),
+            .nand => std.json.Stringify.valueAlloc(self.allocator, .{
+                .source = path,
+                .kind = "nand",
+                .nand_bytes = result.size_bytes,
+                .blocks = result.nand_blocks.?,
+                .sha256 = &result.sha256,
+                .sha1 = &result.sha1,
+                .entry_count = result.entries.len,
+                .stored_objects = result.stored,
+                .reused_objects = result.reused,
+            }, .{}),
+            .update => std.json.Stringify.valueAlloc(self.allocator, .{
+                .source = path,
+                .kind = "update",
+                .updater_version = result.updater_version,
+                .updater_target = result.updater_target,
+                .title = result.metadata.title,
+                .disc_id = result.metadata.disc_id,
+                .update_bytes = result.size_bytes,
+                .sha256 = &result.sha256,
+                .sha1 = &result.sha1,
+                .entry_count = result.entries.len,
+                .stored_objects = result.stored,
+                .reused_objects = result.reused,
+            }, .{}),
+            .iso => std.json.Stringify.valueAlloc(self.allocator, .{
+                .source = path,
+                .identifier = result.record.identifier,
+                .uid = result.record.uid,
+                .type_code = result.record.type_code,
+                .media_code = result.record.media_code,
+                .media = result.record.mediaDescription(),
+                .extra = result.record.extra,
+                .umd_data_bytes = result.umd_bytes.len,
+                .iso_bytes = result.size_bytes,
+                .sha256 = &result.sha256,
+                .sha1 = &result.sha1,
+                .entry_count = result.entries.len,
+                .stored_objects = result.stored,
+                .reused_objects = result.reused,
+            }, .{}),
+        } catch |err| {
             self.fail(path, err);
             return;
         };
@@ -443,7 +521,7 @@ const Pool = struct {
             defer self.finish(std.meta.activeTag(job));
             switch (job) {
                 .directory => |path| self.scan(path) catch |err| self.fail(path, err),
-                .iso, .member => self.process(job) catch |err| self.fail(job.path(), err),
+                .root, .member => self.process(job) catch |err| self.fail(job.path(), err),
                 .extraction => |extraction| self.extract(extraction),
                 .zip => |path| self.process_zip(path) catch |err| self.fail(path, err),
             }
@@ -459,7 +537,7 @@ pub fn log(io: std.Io, comptime format: []const u8, args: anytype) void {
     stderr.file_writer.interface.flush() catch {};
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, nand_fuse_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
     std.debug.assert(worker_count >= 1);
     var pool: Pool = .{
         .allocator = allocator,
@@ -469,13 +547,14 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8
         .skip_existing = skip_existing,
         .state = state,
         .rap_directory = rap_directory,
+        .nand_fuse_directory = nand_fuse_directory,
         .intake_limit = @max(1, max_threads / 4),
         .scan_progress = root.start("Scanning directories", 0),
-        .iso_progress = root.start("ISO/PKG intake", 0),
-        .extraction_progress = root.start("Pending ISO extractions", 0),
+        .intake_progress = root.start("ISO/PKG/NAND/update intake", 0),
+        .extraction_progress = root.start("Pending source extractions", 0),
     };
     defer pool.scan_progress.end();
-    defer pool.iso_progress.end();
+    defer pool.intake_progress.end();
     defer pool.extraction_progress.end();
     defer {
         for (pool.jobs.items) |job| job.deinit(allocator);
@@ -513,10 +592,15 @@ fn is_zip(name: []const u8) bool {
     return std.ascii.endsWithIgnoreCase(name, ".zip");
 }
 
-test "discovery uses only a case-insensitive ISO extension" {
-    try std.testing.expect(is_iso("game.iSo"));
-    try std.testing.expect(!is_iso("game.iso.part"));
-    try std.testing.expect(!is_iso("game.zip"));
+fn is_bin(name: []const u8) bool {
+    return std.ascii.endsWithIgnoreCase(name, ".bin");
+}
+
+fn explicit_root_kind(name: []const u8) ?inventory.RootKind {
+    if (is_iso(name)) return .iso;
+    if (is_pkg(name)) return .pkg;
+    if (std.ascii.endsWithIgnoreCase(name, ".nand")) return .nand;
+    return null;
 }
 
 test "intake gate leaves workers free for discovery and child extraction" {
@@ -527,16 +611,17 @@ test "intake gate leaves workers free for discovery and child extraction" {
         .catalog = null,
         .skip_existing = false,
         .rap_directory = null,
+        .nand_fuse_directory = null,
         .intake_limit = 2,
         .scan_progress = .none,
-        .iso_progress = .none,
+        .intake_progress = .none,
         .extraction_progress = .none,
     };
     defer pool.jobs.deinit(pool.allocator);
-    try pool.jobs.append(pool.allocator, .{ .iso = "one.iso" });
+    try pool.jobs.append(pool.allocator, .{ .root = .{ .path = "one.iso", .kind = .iso } });
     // Selection inspects only tags; these payloads are never executed or destroyed.
     try pool.jobs.append(pool.allocator, .{ .member = undefined });
-    try pool.jobs.append(pool.allocator, .{ .iso = "three.pkg" });
+    try pool.jobs.append(pool.allocator, .{ .root = .{ .path = "three.pkg", .kind = .pkg } });
     pool.outstanding = 3;
     const first = pool.take_ready().?;
     try std.testing.expect(first.is_intake());

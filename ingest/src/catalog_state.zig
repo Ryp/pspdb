@@ -5,6 +5,8 @@ pub const State = struct {
     fresh_trees: std.json.ArrayHashMap(std.json.ArrayHashMap(bool)),
     fresh_isos: std.json.ArrayHashMap(bool),
     fresh_pkgs: std.json.ArrayHashMap(bool) = .{},
+    fresh_nands: std.json.ArrayHashMap(bool) = .{},
+    fresh_updates: std.json.ArrayHashMap(bool) = .{},
 };
 
 pub fn load(allocator: std.mem.Allocator, io: std.Io, root: []const u8) !std.json.Parsed(State) {

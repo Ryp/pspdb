@@ -10,17 +10,17 @@ offset/size fields at 0x30/0x34. It bounds-checks optional data and exposes STAR
 when present at 0x5a0, retaining the container unchanged. It does not decode
 STARTDAT images or decrypt OPNSSMP. Unknown/reserved bytes remain in DATA.PSP.
 
-Signature verification hashes the PBP PARAM.SFO bytes followed by the complete
-48-byte content-ID field. OpenSSL libcrypto verifies the raw 20-byte r/20-byte s
-ECDSA signature on the KIRK command 0x11 curve using the NPUMDIMG public key.
+Zig-PSP's `tools/prxencrypt/npumdimg_crypto.zig` hashes the PBP PARAM.SFO bytes
+followed by the complete 48-byte content-ID field. Its shared `kirk` module
+verifies the raw 20-byte r/20-byte s ECDSA signature on the KIRK command 0x11
+curve using the NPUMDIMG public key.
 Curve constants follow [libkirk](https://github.com/hrydgard/ppsspp/blob/master/ext/libkirk/kirk_engine.c);
 layout, signed scope and public key follow [Hykem's sign_np](https://github.com/ErikPshat/sign_np-hykem/blob/master/sign_np.c)
 and its adjacent sign_np.h. No private key or signing operation is used.
 
-Builds require OpenSSL development headers and libcrypto in addition to libarchive.
-The custom curve uses OpenSSL's low-level EC interface; no EC arithmetic is
-implemented in PSPDB. Objects are allocated separately for each verification,
-so concurrent ingestion does not share mutable crypto state.
+This verification path is pure Zig and allocation-free. Curve arithmetic and
+validation live in Zig-PSP, with all per-call state local; PSPDB contains only
+the format adapter. Other native extractors still require OpenSSL and libcrypto.
 
 PBP extraction verifies this format before emitting any optional
 OPNSSMP.PGD/STARTDAT children. Signature failure fails the input's ingest.
@@ -30,8 +30,9 @@ The signature covers neither flags nor the whole ISO/PKG: a passing check must
 not be presented as authentication of those bytes. Also, historical PSP signing
 keys have been recovered, so validity is not proof of official Sony authorship.
 
-Echochrome NPUG80135 verified with independent Python integer EC arithmetic and
-with the production Zig/OpenSSL implementation. Signed SHA-1:
+The Echochrome NPUG80135 reference signature was checked with independent Python
+integer EC arithmetic and OpenSSL; Zig-PSP now retains it as a native verifier
+regression. Signed SHA-1:
 `d294c6860cc56de9b5b0e0b76a42ff50f9c78abc`.
 Unit tests cover that signature vector, altered digest/signature, zero signature,
 truncated headers, invalid optional ranges, endian handling and borrowed slices.

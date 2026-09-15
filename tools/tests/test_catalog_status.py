@@ -12,7 +12,7 @@ class CatalogStatusTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        self.revisions = {'iso': '2', 'gzip': '3', 'pbp': '1', 'iso9660': '3', 'pkg': '1'}
+        self.revisions = {'iso': '2', 'gzip': '3', 'pbp': '1', 'iso9660': '3', 'pkg': '1', 'nand': '1', 'update': '1'}
         self.patch = patch.object(extract_external, 'VERSIONS', self.revisions)
         self.patch.start(); self.addCleanup(self.patch.stop)
         self.current = {kind: extract_external.tool_provenance(kind) for kind in self.revisions}
@@ -28,6 +28,30 @@ class CatalogStatusTests(unittest.TestCase):
                              for i, child in enumerate(children)])
         path.write_text(json.dumps(tree))
         return path
+
+    def write_nand(self, digest, child='d'*64):
+        path = self.write('nand', '1', digest)
+        tree = json.loads(path.read_text())
+        decoder = self.current['nand']
+        stages = dict(sha256='c'*64, size_bytes=42, extractor=decoder, name_rule='identity',
+                      entries=[dict(path='stage2.bin', type='file', sha256=child, size_bytes=42)])
+        images = dict(sha256='b'*64, size_bytes=42, extractor=decoder, name_rule='identity',
+                      entries=[dict(path='images/0000.bin', type='file', sha256='c'*64,
+                                    size_bytes=42, extraction=stages)])
+        tree['entries'] = [dict(path='ipl.bin', type='file', sha256='b'*64,
+                                size_bytes=42, extraction=images)]
+        path.write_text(json.dumps(tree))
+        return path
+
+    def test_native_pgd_provenance_keeps_completed_package_fresh(self):
+        self.revisions['pgd'] = '4'
+        root, child = 'a'*64, 'b'*64
+        self.write('pkg', '1', root, [child])
+        self.write('pgd', '4', child,
+                   provenance=dict(name='pspdb-ingest', version='4', options=[]))
+        report = catalog_status(self.root)
+        self.assertEqual(report['fresh_pkgs'], {root: True})
+        self.assertEqual(report['stale'], [])
 
     def test_failed_descendant_is_retryable_without_invalidating_successful_siblings(self):
         root, failed, sibling = 'a'*64, 'b'*64, 'c'*64
@@ -88,6 +112,110 @@ class CatalogStatusTests(unittest.TestCase):
         self.assertEqual(report['fresh_pkgs'], {})
         self.write('gzip', '3', child)
         self.assertEqual(catalog_status(self.root, self.current)['fresh_pkgs'], {root: True})
+
+    def test_update_and_same_hash_pbp_track_only_their_own_descendants(self):
+        root, package, wrapper, root_child, pbp_child = (char*64 for char in 'abcde')
+        self.write('update', '1', root, [wrapper])
+        self.write('gzip', '3', wrapper, [root_child])
+        self.write('gzip', '3', root_child)
+        self.write('pbp', '1', root, [pbp_child])
+        self.write('gzip', '3', pbp_child)
+        self.write('pkg', '1', package, [root])
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_updates'], {root: True})
+        self.assertEqual(report['fresh_pkgs'], {package: True})
+
+        for failure in ('stale', 'error'):
+            with self.subTest(failure=failure):
+                path = self.write('gzip', '3', root_child)
+                tree = json.loads(path.read_text())
+                if failure == 'stale':
+                    tree['extractor']['options'] = ['obsolete']
+                else:
+                    tree['error'] = 'InvalidGzip'
+                path.write_text(json.dumps(tree))
+                report = catalog_status(self.root, self.current)
+                self.assertEqual(report['affected_updates'], [root])
+                self.assertEqual(report['fresh_updates'], {})
+                self.assertEqual(report['fresh_trees']['update'], {root: True})
+                self.assertEqual(report['fresh_trees']['pbp'], {root: True})
+                self.assertEqual(report['fresh_pkgs'], {package: True})
+
+        self.write('gzip', '3', root_child)
+        self.write('gzip', '3', pbp_child, provenance=dict(self.current['gzip'], options=['obsolete']))
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_updates'], {root: True})
+        self.assertEqual(report['affected_updates'], [])
+        self.assertEqual(report['affected_pkgs'], [package])
+        self.assertEqual(report['fresh_pkgs'], {})
+
+    def test_missing_update_tree_is_not_replaced_by_same_hash_pbp(self):
+        root, package = 'a'*64, 'b'*64
+        self.write('update', '1', root).unlink()
+        self.write('pbp', '1', root)
+        self.write('pkg', '1', package, [root])
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['affected_updates'], [root])
+        self.assertEqual(report['fresh_updates'], {})
+        self.assertEqual(report['fresh_trees']['pbp'], {root: True})
+        self.assertEqual(report['fresh_pkgs'], {package: True})
+        self.assertEqual([(item['kind'], item['reason']) for item in report['stale']],
+                         [('update', 'missing tree')])
+
+    def test_nand_native_tree_tracks_only_its_generic_descendants(self):
+        root, unrelated, inline_parent, child = 'a'*64, 'e'*64, 'b'*64, 'd'*64
+        self.write_nand(root, child)
+        self.write('gzip', '3', child)
+        self.write('gzip', '2', inline_parent)
+        self.write('iso', '2', unrelated, [root])
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['fresh_nands'], {root: True})
+        self.assertEqual(report['affected_nands'], [])
+        self.assertEqual(report['fresh_isos'], {unrelated: True})
+        self.assertEqual([item['sha256'] for item in report['stale']], [inline_parent])
+
+        self.write('gzip', '3', child, provenance=dict(self.current['gzip'], options=['obsolete']))
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['affected_nands'], [root])
+        self.assertEqual(report['fresh_nands'], {})
+        self.assertEqual(report['fresh_trees']['nand'], {root: True})
+        self.assertEqual(report['fresh_isos'], {unrelated: True})
+        self.assertEqual(report['affected_isos'], [])
+        self.assertEqual({item['sha256'] for item in report['stale']}, {inline_parent, child})
+
+        self.write('gzip', '3', child)
+        self.assertEqual(catalog_status(self.root, self.current)['fresh_nands'], {root: True})
+
+    def test_nand_native_errors_and_full_provenance_are_occurrence_scoped(self):
+        root, sibling = 'a'*64, 'e'*64
+        path = self.write_nand(root)
+        self.write_nand(sibling)
+        self.write('gzip', '3', 'd'*64)
+        before = path.read_text()
+        self.assertEqual(catalog_status(self.root, self.current)['fresh_nands'],
+                         {root: True, sibling: True})
+        mutations = {
+            'error': ('extraction failed', lambda inline: inline.update(error='InvalidIplStage2')),
+            'revision': ('contextual extractor changed',
+                         lambda inline: inline['extractor'].update(version='2')),
+            'options': ('contextual extractor changed',
+                        lambda inline: inline['extractor'].update(options=['diagnostic'])),
+        }
+        for label, (reason, mutate) in mutations.items():
+            with self.subTest(label=label):
+                tree = json.loads(before)
+                inline = tree['entries'][0]['extraction']['entries'][0]['extraction']
+                mutate(inline)
+                path.write_text(json.dumps(tree))
+                report = catalog_status(self.root, self.current)
+                self.assertEqual(report['affected_nands'], [root])
+                self.assertEqual(report['fresh_nands'], {sibling: True})
+                self.assertEqual(report['fresh_trees']['nand'], {sibling: True})
+                self.assertEqual([(item['sha256'], item['reason']) for item in report['stale']],
+                                 [(root, reason)])
+        path.write_text(before)
+        self.assertEqual(catalog_status(self.root, self.current)['fresh_nands'],
+                         {root: True, sibling: True})
 
     def test_stale_root_iso_does_not_taint_same_hash_iso9660_or_parent_pkg(self):
         digest, package = 'a'*64, 'b'*64

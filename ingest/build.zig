@@ -10,24 +10,38 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // Patch an output copy; never mutate Zig's dependency cache.
     const sdk = b.dependency("zig_psp", .{ .target = target, .optimize = optimize });
-    const patch_pbp = b.addSystemCommand(&.{ "patch", "--silent", "--output" });
-    const pbp_source = patch_pbp.addOutputFileArg("pbp.zig");
-    patch_pbp.addFileArg(sdk.path("tools/pbp/src/main.zig"));
-    patch_pbp.addFileArg(b.path("../tools/patches/zig-psp-pbp-memory.patch"));
+    const kirk = b.createModule(.{
+        .root_source_file = sdk.path("tools/prxencrypt/kirk.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    module.addImport("kirk", kirk);
+    module.addImport("zig_psp_nand", b.createModule(.{
+        .root_source_file = sdk.path("tools/nand/nand.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "kirk", .module = kirk }},
+    }));
+    module.addImport("zig_psp_npumdimg_crypto", b.createModule(.{
+        .root_source_file = sdk.path("tools/prxencrypt/npumdimg_crypto.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "kirk", .module = kirk }},
+    }));
+    module.addImport("zig_psp_pkg_crypto", b.createModule(.{
+        .root_source_file = sdk.path("tools/prxencrypt/pkg_crypto.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
     module.addImport("zig_psp_pbp", b.createModule(.{
-        .root_source_file = pbp_source,
+        .root_source_file = sdk.path("tools/pbp/src/main.zig"),
         .target = target,
         .optimize = optimize,
     }));
 
-    const patch_sfo = b.addSystemCommand(&.{ "patch", "--silent", "--output" });
-    const sfo_source = patch_sfo.addOutputFileArg("sfo.zig");
-    patch_sfo.addFileArg(sdk.path("tools/sfo/src/main.zig"));
-    patch_sfo.addFileArg(b.path("../tools/patches/zig-psp-sfo-memory.patch"));
     module.addImport("zig_psp_sfo", b.createModule(.{
-        .root_source_file = sfo_source,
+        .root_source_file = sdk.path("tools/sfo/src/main.zig"),
         .target = target,
         .optimize = optimize,
     }));
@@ -55,11 +69,13 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/prx_native.cpp"), .flags = &.{"-std=c++17"} });
     module.addCSourceFile(.{ .file = b.path("src/pops_native.cpp"), .flags = &.{"-std=c++17"} });
     module.addCSourceFile(.{ .file = b.path("src/psar_native.cpp"), .flags = &.{ "-std=c++17", "-fno-strict-aliasing" } });
+    module.addCSourceFile(.{ .file = b.path("src/pgd_native.c"), .flags = &.{"-std=c11"} });
     module.link_libcpp = true;
     module.addImport("zig_psp_prx_encrypt", b.createModule(.{
         .root_source_file = sdk.path("tools/prxencrypt/prx_encrypt.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{.{ .name = "kirk", .module = kirk }},
     }));
 
     const npdata = b.dependency("make_npdata", .{});
@@ -186,7 +202,7 @@ pub fn build(b: *std.Build) void {
         run.addArgs(args);
     }
 
-    b.step("run", "Hash and store files from ISO and ZIP inputs").dependOn(&run.step);
+    b.step("run", "Hash and store extracted files from ISO/PKG/NAND/updater PBP and ZIP ISO/PKG inputs").dependOn(&run.step);
 
     const tests = b.addTest(.{ .root_module = module });
     b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(tests).step);

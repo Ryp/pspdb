@@ -2,8 +2,7 @@
 //! Format reference: mmozeiko/pkg2zip pkg2zip.c (header, entry table, AES-CTR).
 const std = @import("std");
 const memory = @import("bytes.zig");
-const psp_key = [_]u8{ 0x07, 0xf2, 0xc6, 0x82, 0x90, 0xb5, 0x0d, 0x2c, 0x33, 0x81, 0x8d, 0x70, 0x9b, 0x60, 0xe6, 0x2b };
-const ps3_key = [_]u8{ 0x2e, 0x7b, 0x71, 0xd7, 0xc9, 0xc9, 0xa1, 0x4e, 0xa3, 0x22, 0x1f, 0x18, 0x88, 0x28, 0xb8, 0xf8 };
+const crypto = @import("zig_psp_pkg_crypto");
 
 fn integer(comptime T: type, bytes: []const u8, offset: usize) !T {
     if (offset > bytes.len or @sizeOf(T) > bytes.len - offset) return error.InvalidPkg;
@@ -57,31 +56,28 @@ pub const Package = struct {
         return result;
     }
 
-    fn decrypt(self: Package, offset: usize, output: []u8, key: [16]u8) !void {
+    fn decrypt(self: Package, offset: usize, output: []u8, key: crypto.Key) !void {
         if (offset % 16 != 0 or offset > self.encrypted.len or output.len > self.encrypted.len - offset) return error.InvalidPkg;
-        var counter: [16]u8 = undefined;
-        std.mem.writeInt(u128, &counter, std.mem.readInt(u128, &self.iv, .big) +% (offset / 16), .big);
-        const cipher = std.crypto.core.aes.Aes128.initEnc(key);
-        std.crypto.core.modes.ctr(@TypeOf(cipher), cipher, output, self.encrypted[offset..][0..output.len], counter, .big);
+        crypto.crypt(key, &self.iv, offset, self.encrypted[offset..][0..output.len], output);
     }
 
     const Entry = struct {
         name: []u8,
         offset: usize,
         size: usize,
-        key: [16]u8,
+        key: crypto.Key,
         directory: bool,
     };
 
     fn entry(self: Package, allocator: std.mem.Allocator, index: usize) !Entry {
         var raw: [32]u8 = undefined;
-        try self.decrypt(self.table + index * 32, &raw, psp_key);
+        try self.decrypt(self.table + index * 32, &raw, .psp);
         const no: usize = try integer(u32, &raw, 0);
         const ns: usize = try integer(u32, &raw, 4);
         const offset = std.math.cast(usize, try integer(u64, &raw, 8)) orelse return error.InvalidPkg;
         const size = std.math.cast(usize, try integer(u64, &raw, 16)) orelse return error.InvalidPkg;
         if (ns == 0 or ns > 4096 or offset % 16 != 0 or offset > self.encrypted.len or size > self.encrypted.len - offset) return error.InvalidPkg;
-        const key = if (raw[24] == 0x90) psp_key else ps3_key;
+        const key = crypto.entryKey(raw[24]);
         const name = try allocator.alloc(u8, ns);
         errdefer allocator.free(name);
         try self.decrypt(no, name, key);

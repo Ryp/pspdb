@@ -114,7 +114,7 @@ def catalog_status(root, current=None, unavailable=None, *, contextual_kinds=Non
             else:
                 trees.pop(node, None)
             selected[node] = revision
-            if kind not in ('iso', 'pkg'):
+            if kind not in ('iso', 'pkg', 'nand', 'update'):
                 extractors[digest].add(node)
     def nested_entries(tree):
         inventory = {entry['path']: entry for entry in tree['entries']}
@@ -171,9 +171,15 @@ def catalog_status(root, current=None, unavailable=None, *, contextual_kinds=Non
                 queue.append(parent)
     roots = {node for node in records if node[0] == 'iso'}
     packages = {node for node in records if node[0] == 'pkg'}
+    nands = {node for node in records if node[0] == 'nand'}
+    updates = {node for node in records if node[0] == 'update'}
     return {'provenance': current, 'unavailable': unavailable, 'stale': stale,
             'affected_isos': sorted(digest for _, digest in roots & affected),
             'affected_pkgs': sorted(digest for _, digest in packages & affected),
+            'affected_nands': sorted(digest for _, digest in nands & affected),
+            'affected_updates': sorted(digest for _, digest in updates & affected),
+            'fresh_updates': {digest: True for _, digest in sorted(updates - affected)},
+            'fresh_nands': {digest: True for _, digest in sorted(nands - affected)},
             'fresh_pkgs': {digest: True for _, digest in sorted(packages - affected)},
             'fresh_trees': fresh, 'fresh_isos': {digest: True for _, digest in sorted(roots - affected)}}
 
@@ -202,10 +208,16 @@ def main():
                 print(f"       {item['unavailable']}")
         print(f"{len(report['stale'])} trees need attention; {len(report['affected_isos'])} affected ISO roots.")
         print(f"{len(report['affected_pkgs'])} affected PKG roots.")
+        print(f"{len(report['affected_nands'])} affected NAND roots.")
+        print(f"{len(report['affected_updates'])} affected updater PBP roots.")
         for digest in report['affected_pkgs']:
             print(f'  pkg {digest}')
         for digest in report['affected_isos']:
             print(f'  iso {digest}')
+        for digest in report['affected_nands']:
+            print(f'  nand {digest}')
+        for digest in report['affected_updates']:
+            print(f'  update {digest}')
     return 0
 
 

@@ -6,8 +6,14 @@ pub const State = @import("catalog_state.zig").State;
 pub const Cache = struct { root: []const u8, state: *const State };
 
 /// Only skip roots whose own result and reachable derived results are current.
-pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: [64]u8, size: u64, kind: []const u8) !bool {
-    const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-ingest.json", .{ cache.root, kind, if (std.mem.eql(u8, kind, "pkg")) revisions.pkg else revisions.iso, digest });
+pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: [64]u8, size: u64, kind: inventory.RootKind) !bool {
+    const revision = switch (kind) {
+        .iso => revisions.iso,
+        .pkg => revisions.pkg,
+        .nand => revisions.nand,
+        .update => revisions.update,
+    };
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}/v{s}/{s}-ingest.json", .{ cache.root, @tagName(kind), revision, digest });
     defer allocator.free(path);
     const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .unlimited) catch |err| switch (err) {
         error.FileNotFound => return false,
@@ -18,39 +24,114 @@ pub fn contains(allocator: std.mem.Allocator, io: std.Io, cache: Cache, digest: 
     const parsed = std.json.parseFromSlice(Identity, allocator, bytes, .{ .ignore_unknown_fields = true }) catch return error.CatalogConflict;
     defer parsed.deinit();
     const record = parsed.value;
-    if (!std.mem.eql(u8, record.kind, kind) or record.schema_version != 1 or
+    if (!std.mem.eql(u8, record.kind, @tagName(kind)) or record.schema_version != 1 or
         !std.mem.eql(u8, record.sha256, &digest) or record.size_bytes != size) return error.CatalogConflict;
-    return if (std.mem.eql(u8, kind, "pkg")) cache.state.fresh_pkgs.map.contains(&digest) else cache.state.fresh_isos.map.contains(&digest);
+    return switch (kind) {
+        .iso => cache.state.fresh_isos.map.contains(&digest),
+        .pkg => cache.state.fresh_pkgs.map.contains(&digest),
+        .nand => cache.state.fresh_nands.map.contains(&digest),
+        .update => cache.state.fresh_updates.map.contains(&digest),
+    };
 }
 
-/// One complete inventory per exact ISO. Neither the UID nor an inventory hash
-/// participates in identity. No machine-local source/store paths are published.
+pub fn nand_provenance() @import("extractor.zig").Provenance {
+    return .{ .name = "pspdb-nand", .version = revisions.nand, .options = &.{} };
+}
+
+/// Publish one observation per exact source. No private source or key paths.
 pub fn publish(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: inventory.Result) !void {
-    const fields = result.metadata;
-    if (result.kind == .pkg) {
-        const Metadata = struct {
-            content_id: []const u8,
-            content_type: u32,
-            package_flags: ?u32,
-            title_id: []const u8,
-            disc_id: ?[]const u8,
-            disc_version: ?[]const u8,
-            title: ?[]const u8,
-            required_firmware: ?[]const u8,
-        };
-        const record = .{
-            .kind = "pkg",
-            .schema_version = @as(u32, 1),
-            .sha256 = @as([]const u8, &result.sha256),
-            .sha1 = @as([]const u8, &result.sha1),
-            .size_bytes = result.size_bytes,
-            .metadata = if (result.has_metadata) @as(?Metadata, .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware }) else null,
-        };
-        const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries, .@"error" = result.@"error" };
-        try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);
-        try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "ingest", record);
-        return;
+    switch (result.kind) {
+        .iso => try publish_iso(allocator, io, root, result),
+        .pkg => try publish_pkg(allocator, io, root, result),
+        .nand => try publish_nand(allocator, io, root, result),
+        .update => try publish_update(allocator, io, root, result),
     }
+}
+
+fn publish_update(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: inventory.Result) !void {
+    const Metadata = struct {
+        updater_version: ?[]const u8,
+        updater_target: std.json.Value,
+        title: ?[]const u8,
+        disc_id: ?[]const u8,
+    };
+    const record = .{
+        .kind = "update",
+        .schema_version = @as(u32, 1),
+        .sha256 = @as([]const u8, &result.sha256),
+        .sha1 = @as([]const u8, &result.sha1),
+        .size_bytes = result.size_bytes,
+        .metadata = if (result.has_metadata) @as(?Metadata, .{
+            .updater_version = result.updater_version,
+            // Explicit null survives the catalog's omission of optional fields.
+            .updater_target = if (result.updater_target) |target| .{ .string = @tagName(target) } else .null,
+            .title = result.metadata.title,
+            .disc_id = result.metadata.disc_id,
+        }) else null,
+    };
+    const tree = .{
+        .kind = "tree",
+        .schema_version = @as(u32, 1),
+        .sha256 = record.sha256,
+        .size_bytes = record.size_bytes,
+        .extractor = .{ .name = "pspdb-update", .version = revisions.update, .options = [0][]const u8{} },
+        .entries = result.entries,
+        .@"error" = result.@"error",
+    };
+    try write_record(allocator, io, root, "update", revisions.update, &result.sha256, "tree", tree);
+    try write_record(allocator, io, root, "update", revisions.update, &result.sha256, "ingest", record);
+}
+
+fn publish_nand(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: inventory.Result) !void {
+    const Geometry = struct { page_bytes: u32 = 512, spare_bytes: u32 = 16, pages_per_block: u32 = 32, blocks: u32 };
+    const record = .{
+        .kind = "nand",
+        .schema_version = @as(u32, 1),
+        .sha256 = @as([]const u8, &result.sha256),
+        .sha1 = @as([]const u8, &result.sha1),
+        .size_bytes = result.size_bytes,
+        .metadata = if (result.nand_blocks) |blocks| @as(?Geometry, .{ .blocks = blocks }) else null,
+    };
+    const tree = .{
+        .kind = "tree",
+        .schema_version = @as(u32, 1),
+        .sha256 = record.sha256,
+        .size_bytes = record.size_bytes,
+        .extractor = nand_provenance(),
+        .entries = result.entries,
+        .@"error" = result.@"error",
+    };
+    try write_record(allocator, io, root, "nand", revisions.nand, &result.sha256, "tree", tree);
+    try write_record(allocator, io, root, "nand", revisions.nand, &result.sha256, "ingest", record);
+}
+
+fn publish_pkg(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: inventory.Result) !void {
+    const fields = result.metadata;
+    const Metadata = struct {
+        content_id: []const u8,
+        content_type: u32,
+        package_flags: ?u32,
+        title_id: []const u8,
+        disc_id: ?[]const u8,
+        disc_version: ?[]const u8,
+        title: ?[]const u8,
+        required_firmware: ?[]const u8,
+    };
+    const record = .{
+        .kind = "pkg",
+        .schema_version = @as(u32, 1),
+        .sha256 = @as([]const u8, &result.sha256),
+        .sha1 = @as([]const u8, &result.sha1),
+        .size_bytes = result.size_bytes,
+        .metadata = if (result.has_metadata) @as(?Metadata, .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware }) else null,
+    };
+    const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries, .@"error" = result.@"error" };
+    try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);
+    try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "ingest", record);
+}
+
+fn publish_iso(allocator: std.mem.Allocator, io: std.Io, root: []const u8, result: inventory.Result) !void {
+    const fields = result.metadata;
     const Metadata = struct {
         identifier: []const u8,
         umd_uid: []const u8,
@@ -184,7 +265,7 @@ fn equal(a: std.json.Value, b: std.json.Value) bool {
 
 /// Publish external extractor metadata and the same inventory shape as ISO.
 pub fn publish_extraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []inventory.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8, failure: ?[]const u8) !void {
-    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp") or std.mem.eql(u8, kind, "edat")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "decoded_suffix" else null;
+    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp") or std.mem.eql(u8, kind, "edat") or std.mem.eql(u8, kind, "pgd")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "decoded_suffix" else null;
     const tree = .{
         .kind = "tree",
         .schema_version = @as(u32, 1),

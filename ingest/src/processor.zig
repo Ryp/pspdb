@@ -1,12 +1,14 @@
 const std = @import("std");
 
 const containers = @import("containers.zig");
+const decoded_output = @import("decoded.zig");
 const gzip = @import("gzip.zig");
 const prx = @import("prx.zig");
 const pops = @import("pops.zig");
 const kle = @import("kle.zig");
 const npumdimg = @import("npumdimg.zig");
 const edat = @import("edat.zig");
+const pgd = @import("pgd.zig");
 const psar = @import("psar.zig");
 const rco = @import("rco.zig");
 const catalog_io = @import("catalog.zig");
@@ -16,6 +18,9 @@ const revisions = @import("extractor_versions");
 const licenses = @import("licenses.zig");
 const memory = @import("bytes.zig");
 const iso = @import("iso_reader.zig");
+const nand = @import("zig_psp_nand");
+const kirk = @import("kirk");
+const nand_fuses = @import("nand_fuses.zig");
 const extractor = @import("extractor.zig");
 const external_extractor = @import("external_extractor.zig");
 const CatalogState = @import("catalog_state.zig").State;
@@ -41,7 +46,7 @@ pub const Task = struct {
     }
 };
 
-/// Shared by one ISO's jobs; only discovery deduplication needs this lock.
+/// Shared by root and descendant jobs; only discovery deduplication needs this lock.
 /// enqueue takes ownership of a task on success only.
 pub const Dispatch = struct {
     context: *anyopaque,
@@ -50,11 +55,19 @@ pub const Dispatch = struct {
     catalog: []const u8,
     state: ?*const CatalogState = null,
     rap_directory: ?[]const u8 = null,
+    // Initialized before the root queues descendants; immutable until the last
+    // group job completes. Never copied into tasks or serialized as provenance.
+    prx_key: ?kirk.Cmd8Key = null,
     mutex: std.Io.Mutex = .init,
     visited: std.AutoHashMap([64]u8, void),
 
+    pub fn deinit(self: *Dispatch) void {
+        if (self.prx_key) |*key| key.deinit();
+        self.visited.deinit();
+    }
+
     fn inspect(self: *Dispatch, allocator: std.mem.Allocator, io: std.Io, name: []const u8, input: memory.View, hash: [64]u8) !void {
-        const kind = extractor.detect(input.bytes) orelse return;
+        const kind = extractor.detect_named(name, input.bytes) orelse return;
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
         const visited = try self.visited.getOrPut(hash);
@@ -77,10 +90,16 @@ fn orchestrator(kind: extractor.Kind) extractor.Provenance {
 // Only memory-backed decoder/parser errors cross this boundary. I/O and queue
 // callbacks mark their inventory fatal before unwinding through a parser.
 fn extraction_error(inventory: *Inventory, err: anyerror) ![]const u8 {
+    var failure: ?[]const u8 = null;
+    try record_failure(inventory, &failure, err);
+    return failure.?;
+}
+
+fn record_failure(inventory: *Inventory, failure: *?[]const u8, err: anyerror) !void {
     if (inventory.fatal or err == error.OutOfMemory or err == error.CryptoFailure) return err;
     inventory.counts.extraction_errors += 1;
     std.debug.print("Extraction error: {s}\n", .{@errorName(err)});
-    return inventory.allocator.dupe(u8, @errorName(err));
+    if (failure.* == null) failure.* = try inventory.allocator.dupe(u8, @errorName(err));
 }
 
 const SourceHashes = struct { sha256: [64]u8, sha1: [40]u8 };
@@ -139,7 +158,7 @@ pub fn process_iso(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, 
 pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
     const hashes = hash_source(bytes);
     if (catalog) |root| {
-        if (try catalog_io.contains(allocator, io, root, hashes.sha256, bytes.len, "iso")) return null;
+        if (try catalog_io.contains(allocator, io, root, hashes.sha256, bytes.len, .iso)) return null;
     }
     var result = read_metadata(allocator, bytes) catch |err| return try source_error(allocator, bytes, hashes, .iso, err);
     errdefer result.deinit(allocator);
@@ -163,7 +182,7 @@ pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
 pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
     const hashes = hash_source(bytes);
     if (cache) |value| {
-        if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, "pkg")) return null;
+        if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, .pkg)) return null;
     }
     if (bytes.len == 0) return try source_error(allocator, bytes, hashes, .pkg, error.EmptyFile);
     const package = pkg.Package.init(bytes) catch |err| return try source_error(allocator, bytes, hashes, .pkg, err);
@@ -217,6 +236,288 @@ fn read_pkg_metadata(allocator: std.mem.Allocator, package: pkg.Package) !Result
     }
     return result;
 }
+
+fn parse_update_pbp(bytes: []const u8) !@import("zig_psp_pbp").Pbp {
+    const pbp = try containers.parse_pbp(bytes);
+    if (!std.mem.startsWith(u8, pbp.get("DATA.BIN").?, "PSAR")) return error.InvalidUpdaterPsar;
+    return pbp;
+}
+
+/// Recognition is intentionally cheaper than PSAR reconstruction. Malformed
+/// probes are ignored; allocation failures must still abort discovery.
+pub fn probe_update(allocator: std.mem.Allocator, bytes: []const u8) !bool {
+    const pbp = parse_update_pbp(bytes) catch return false;
+    _ = sfo.parseUpdate(allocator, pbp.get("PARAM.SFO").?) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return false,
+    };
+    return true;
+}
+
+fn read_update_metadata(allocator: std.mem.Allocator, pbp: @import("zig_psp_pbp").Pbp, size: usize) !Result {
+    var result: Result = .{ .kind = .update, .size_bytes = size };
+    errdefer result.deinit(allocator);
+    // Summary and publication outlive the mapping, unlike queued section views.
+    result.pbp_sfo_bytes = try allocator.dupe(u8, pbp.get("PARAM.SFO").?);
+    const metadata = try sfo.parseUpdate(allocator, result.pbp_sfo_bytes);
+    result.metadata = metadata.metadata;
+    result.updater_version = metadata.updater_version;
+    result.updater_target = metadata.updater_target;
+    return result;
+}
+
+/// The original PBP is an observation, never a new CAS object. SDK section
+/// slices share the retained source mapping through ordinary recursive tasks.
+pub fn process_update_checked(allocator: std.mem.Allocator, io: std.Io, input: memory.View, store: ?[]const u8, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
+    const bytes = input.bytes;
+    const hashes = hash_source(bytes);
+    if (cache) |value| {
+        if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, .update)) return null;
+    }
+    const pbp = parse_update_pbp(bytes) catch |err| return try source_error(allocator, bytes, hashes, .update, err);
+    var result = read_update_metadata(allocator, pbp, bytes.len) catch |err| return try source_error(allocator, bytes, hashes, .update, err);
+    errdefer result.deinit(allocator);
+    result.sha256 = hashes.sha256;
+    result.sha1 = hashes.sha1;
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .owner = input.owner, .paths = .init(allocator) };
+    defer inventory.deinit();
+    // Parsing already validated every section. Walk failures can only come
+    // from our consumer and must never become durable malformed-input errors.
+    try pbp.walk(&inventory, Inventory.emit);
+    result.entries = try inventory.finish_result(&result.@"error");
+    result.stored = inventory.counts.stored;
+    result.reused = inventory.counts.reused;
+    result.extraction_errors = inventory.counts.extraction_errors;
+    return result;
+}
+
+/// A NAND is an immutable root observation. Native reconstructions are separate
+/// attempts; only real extracted files, never the raw source, enter the CAS.
+pub fn process_nand_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, cache: ?catalog_io.Cache, dispatch: ?*Dispatch, nand_fuse_directory: ?[]const u8) !?Result {
+    const hashes = hash_source(bytes);
+    if (cache) |value| {
+        if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, .nand)) return null;
+    }
+    const blocks = nand.asBlocks(bytes) catch |err| return try source_error(allocator, bytes, hashes, .nand, err);
+    var result = Result{
+        .kind = .nand,
+        .size_bytes = bytes.len,
+        .sha256 = hashes.sha256,
+        .sha1 = hashes.sha1,
+        .nand_blocks = @intCast(blocks.len),
+    };
+    errdefer result.deinit(allocator);
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .paths = .init(allocator) };
+    defer inventory.deinit();
+    var fuse_id: ?u64 = null;
+    defer std.crypto.secureZero(u8, std.mem.asBytes(&fuse_id));
+    if (nand_fuse_directory) |directory| {
+        fuse_id = nand_fuses.read_fuse(io, directory, hashes.sha256) catch |err| switch (err) {
+            error.InvalidNandFuseId => blk: {
+                try record_failure(&inventory, &result.@"error", err);
+                break :blk null;
+            },
+            else => return err,
+        };
+    }
+    if (dispatch) |queue| {
+        std.debug.assert(queue.prx_key == null);
+        if (fuse_id) |id| queue.prx_key = kirk.Cmd8Key.init(id);
+    }
+    var diagnostics: std.Io.Writer.Discarding = .init(&.{});
+    ingest_nand_ipl(&inventory, blocks, &diagnostics.writer) catch |err| {
+        try record_failure(&inventory, &result.@"error", err);
+    };
+    nand.idstorage.walk(allocator, blocks, fuse_id, &diagnostics.writer, &inventory, NandIdStorage.emit) catch |err| {
+        try record_failure(&inventory, &result.@"error", err);
+    };
+    ingest_nand_lflash(&inventory, bytes, fuse_id, &diagnostics.writer) catch |err| {
+        try record_failure(&inventory, &result.@"error", err);
+    };
+    result.entries = try inventory.finish_result(&result.@"error");
+    result.stored = inventory.counts.stored;
+    result.reused = inventory.counts.reused;
+    result.extraction_errors = inventory.counts.extraction_errors;
+    return result;
+}
+
+fn nand_child(parent: *Inventory) Inventory {
+    return .{ .allocator = parent.allocator, .io = parent.io, .store = parent.store, .dispatch = parent.dispatch, .paths = .init(parent.allocator) };
+}
+
+// Explicit native parents receive contextual trees, not a competing hash-only
+// generic extraction. Suppression is scoped to this one emission.
+fn emit_nand_parent(inventory: *Inventory, path: []const u8, input: memory.View) !usize {
+    const previous = inventory.suppress_dispatch;
+    inventory.suppress_dispatch = path;
+    defer inventory.suppress_dispatch = previous;
+    const index = inventory.entries.items.len;
+    try inventory.emit_view(path, input);
+    return index;
+}
+
+fn ingest_nand_ipl(inventory: *Inventory, blocks: []const nand.Block, writer: *std.Io.Writer) !void {
+    const selected = try nand.findIpl(blocks);
+    const bytes = try nand.reconstructIpl(inventory.allocator, blocks, selected, writer);
+    // Reconstruction failures above are regional; everything below is either
+    // explicitly caught on the real parent or an infrastructure failure.
+    errdefer inventory.fatal = true;
+    const input = try memory.Owner.take_allocated(inventory.allocator, bytes);
+    defer input.release();
+    const index = try emit_nand_parent(inventory, "ipl.bin", input);
+    var child = nand_child(inventory);
+    defer child.deinit();
+    var failure: ?[]const u8 = null;
+    defer if (failure) |message| inventory.allocator.free(message);
+    var consumer = NandIpl{ .inventory = &child };
+    defer consumer.deinit();
+    nand.ipl.walk(inventory.allocator, input.bytes, writer, &consumer, NandIpl.emit) catch |err| {
+        try record_failure(&child, &failure, err);
+    };
+    try consumer.finish_image();
+    try inventory.attach_inline(&inventory.entries.items[index], &child, catalog_io.nand_provenance(), "identity", &failure);
+}
+
+const NandIpl = struct {
+    inventory: *Inventory,
+    pending: ?struct {
+        image_index: usize,
+        entry_index: usize,
+        inventory: Inventory,
+        failure: ?[]const u8 = null,
+    } = null,
+
+    fn deinit(self: *NandIpl) void {
+        if (self.pending) |*pending| {
+            pending.inventory.deinit();
+            if (pending.failure) |message| self.inventory.allocator.free(message);
+        }
+    }
+
+    fn finish_image(self: *NandIpl) !void {
+        if (self.pending) |*pending| {
+            try self.inventory.attach_inline(&self.inventory.entries.items[pending.entry_index], &pending.inventory, catalog_io.nand_provenance(), "identity", &pending.failure);
+            pending.inventory.deinit();
+            self.pending = null;
+        }
+    }
+
+    fn emit(self: *NandIpl, event: nand.ipl.Event) anyerror!void {
+        // Even callback errors named like format errors must escape the SDK and
+        // the regional catch, never become an apparently durable partial root.
+        errdefer self.inventory.fatal = true;
+        switch (event) {
+            .artifact => |artifact| {
+                if (artifact.kind == .image) try self.finish_image();
+                if (!artifact.publishable) return;
+                const view = try memory.Owner.take_allocated(self.inventory.allocator, try self.inventory.allocator.dupe(u8, artifact.bytes));
+                defer view.release();
+                var path_buffer: [64]u8 = undefined;
+                switch (artifact.kind) {
+                    .record, .image => {
+                        const directory = if (artifact.kind == .record) "records" else "images";
+                        if (!self.inventory.paths.contains(directory)) try self.inventory.emit_view(directory, null);
+                        const path = try std.fmt.bufPrint(&path_buffer, "{s}/{d:0>4}.bin", .{ directory, artifact.index });
+                        if (artifact.kind == .image and !artifact.reset_write) {
+                            const index = try emit_nand_parent(self.inventory, path, view);
+                            self.pending = .{ .image_index = artifact.index, .entry_index = index, .inventory = nand_child(self.inventory) };
+                        } else {
+                            try self.inventory.emit_view(path, view);
+                        }
+                    },
+                    .stage2, .stage3, .kernel_keys => {
+                        const pending = if (self.pending) |*value| value else return error.InvalidNandIplEvent;
+                        if (pending.image_index != artifact.index) return error.InvalidNandIplEvent;
+                        const path = switch (artifact.kind) {
+                            .stage2 => "stage2.bin",
+                            .stage3 => "stage3.bin",
+                            .kernel_keys => "kernel-keys.bin",
+                            else => unreachable,
+                        };
+                        try pending.inventory.emit_view(path, view);
+                    },
+                }
+            },
+            .failure => |failure| {
+                const pending = if (self.pending) |*value| value else return error.InvalidNandIplEvent;
+                if (pending.image_index != failure.image_index) return error.InvalidNandIplEvent;
+                try record_failure(&pending.inventory, &pending.failure, failure.reason);
+            },
+        }
+    }
+};
+
+const NandIdStorage = struct {
+    fn emit(inventory: *Inventory, region: nand.idstorage.Region) anyerror!void {
+        errdefer inventory.fatal = true;
+        // Region's fixed byte array has the same length and alignment as this
+        // slice allocation. Adoption consumes it on success and failure.
+        const input = try memory.Owner.take_allocated(inventory.allocator, region.data[0..]);
+        defer input.release();
+        if (!inventory.paths.contains("idstorage")) try inventory.emit_view("idstorage", null);
+        var directory_buffer: [64]u8 = undefined;
+        const directory = try std.fmt.bufPrint(&directory_buffer, "idstorage/index-{d:0>4}", .{region.index_block});
+        try inventory.emit_view(directory, null);
+        var path_buffer: [96]u8 = undefined;
+        try inventory.emit_view(try std.fmt.bufPrint(&path_buffer, "{s}/index.bin", .{directory}), .{ .owner = input.owner, .bytes = region.index() });
+        var leaves = region.leaves();
+        while (leaves.next()) |leaf| {
+            try inventory.emit_view(try std.fmt.bufPrint(&path_buffer, "{s}/{x:0>4}.bin", .{ directory, leaf.id }), .{ .owner = input.owner, .bytes = leaf.bytes });
+        }
+    }
+};
+
+fn ingest_nand_lflash(inventory: *Inventory, raw: []const u8, fuse_id: ?u64, writer: *std.Io.Writer) !void {
+    const image = try nand.lflash.reconstruct(inventory.allocator, raw, fuse_id, writer);
+    errdefer inventory.fatal = true;
+    const partitions = image.partitions;
+    const count = image.count;
+    const input = try memory.Owner.take_allocated(inventory.allocator, image.bytes);
+    defer input.release();
+    try inventory.emit_view("lflash", null);
+    for (partitions[0..count], 0..) |partition, index| {
+        var path_buffer: [64]u8 = undefined;
+        const path = try std.fmt.bufPrint(&path_buffer, "lflash/flash{d}.img", .{index});
+        const view = memory.View{ .owner = input.owner, .bytes = input.bytes[partition.first_sector * 512 ..][0 .. partition.sector_count * 512] };
+        if (partition.formatted) {
+            try ingest_nand_partition(inventory, path, view, writer);
+        } else {
+            try inventory.emit_view(path, view);
+        }
+    }
+}
+
+// The actual partition adapter also serves compact synthetic FAT regressions:
+// never retain the SDK FileView or its temporary validated cluster-chain slice.
+fn ingest_nand_partition(inventory: *Inventory, path: []const u8, input: memory.View, writer: *std.Io.Writer) !void {
+    errdefer inventory.fatal = true;
+    const index = try emit_nand_parent(inventory, path, input);
+    var child = nand_child(inventory);
+    child.pair_documents = true;
+    child.owner = input.owner;
+    defer child.deinit();
+    var failure: ?[]const u8 = null;
+    defer if (failure) |message| inventory.allocator.free(message);
+    nand.fat.walk(inventory.allocator, input.bytes, writer, &child, NandFat.emit) catch |err| {
+        try record_failure(&child, &failure, err);
+    };
+    try child.extract_documents();
+    try inventory.attach_inline(&inventory.entries.items[index], &child, catalog_io.nand_provenance(), "identity", &failure);
+}
+
+const NandFat = struct {
+    fn emit(inventory: *Inventory, path: []const u8, file: ?nand.fat.FileView) anyerror!void {
+        errdefer inventory.fatal = true;
+        const contents = file orelse return inventory.emit_view(path, null);
+        if (contents.contiguous()) |bytes| {
+            try inventory.emit_view(path, .{ .owner = inventory.owner.?, .bytes = bytes });
+        } else {
+            const view = try memory.Owner.take_allocated(inventory.allocator, try contents.copy(inventory.allocator));
+            defer view.release();
+            try inventory.emit_view(path, view);
+        }
+    }
+};
 
 /// Ingest owns names, inventory records, hashes and store writes. The reader
 /// only lends paths and payloads for the duration of emit.
@@ -350,10 +651,11 @@ const Inventory = struct {
 
     fn decode_context(self: *Inventory, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8, output: *?external_extractor.Output) !extractor.Provenance {
         if (kind == .pops) {
-            const bytes = try pops.decode(self.allocator, input, companion);
-            const view = try memory.Owner.take_allocated(self.allocator, bytes);
+            const output_value = try pops.extract(self.allocator, input, companion);
+            const view = try memory.Owner.take_allocated(self.allocator, output_value.bytes);
             defer view.release();
-            try self.emit_view(if (std.mem.startsWith(u8, bytes, "\x7fELF")) "module.elf" else "payload.gz", view);
+            var name_buffer: [4096]u8 = undefined;
+            try self.emit_view(try decodedOutputName(kind, output_value.format, output_value.content_format, &name_buffer), view);
             return .{ .name = "pspdb-pops", .version = revisions.pops, .options = &.{"in-memory"} };
         }
         if (kind == .document) {
@@ -379,6 +681,13 @@ const Inventory = struct {
             };
             break :blk orchestrator(kind);
         };
+        try self.attach_inline(entry, &child, provenance, if (kind == .pops) "source_stem" else "identity", &failure);
+        if (output) |*value| entry.extraction.?.owned_provenance = value.take_provenance();
+    }
+
+    // Takes the finalized child entries and its first error only on success.
+    fn attach_inline(self: *Inventory, entry: *Entry, child: *Inventory, provenance: extractor.Provenance, name_rule: []const u8, failure: *?[]const u8) !void {
+        errdefer self.fatal = true;
         const tree = try self.allocator.create(InlineExtraction);
         errdefer self.allocator.destroy(tree);
         const source_hash = try self.allocator.dupe(u8, &entry.sha256.?);
@@ -387,12 +696,12 @@ const Inventory = struct {
             .sha256 = source_hash,
             .size_bytes = entry.size_bytes.?,
             .extractor = provenance,
-            .name_rule = if (kind == .pops) "source_stem" else "identity",
-            .entries = try child.finish_result(&failure),
-            .@"error" = failure,
-            .owned_provenance = if (output != null) output.?.take_provenance() else null,
+            .name_rule = name_rule,
+            .entries = try child.finish_result(failure),
+            .@"error" = failure.*,
         };
         entry.extraction = tree;
+        failure.* = null;
         self.counts.stored += child.counts.stored;
         self.counts.reused += child.counts.reused;
         self.counts.extraction_errors += child.counts.extraction_errors;
@@ -444,7 +753,63 @@ const Inventory = struct {
     }
 };
 
-/// Process only this extraction's immediate tree. Descendants go to Dispatch.
+/// Hash-keyed trees must not depend on the filename of the first occurrence.
+/// The catalog's name_rule restores occurrence-specific names when rendered.
+fn decodedOutputName(kind: extractor.Kind, format: decoded_output.Format, content_format: ?decoded_output.Format, buffer: []u8) ![]const u8 {
+    if (kind == .gzip) return "payload.bin";
+    if (kind == .prx and (format == .gzip or format == .kl3e or format == .kl4e)) {
+        if (content_format) |content|
+            return std.fmt.bufPrint(buffer, "payload.{s}.{s}", .{ content.extension(), format.extension() });
+    }
+    if (kind == .npumdimg) return "disc.iso";
+    return switch (format) {
+        .elf => "module.elf",
+        .gzip => "payload.gz",
+        .kl3e => "payload.kl3e",
+        .kl4e => "payload.kl4e",
+        .psp => "payload.psp",
+        .unknown => "payload.bin",
+        .iso => "disc.iso",
+    };
+}
+
+test "KL extraction accepts absent mismatched and empty-stem suffixes" {
+    const allocator = std.testing.allocator;
+    const Queue = struct {
+        fn enqueue(_: *anyopaque, _: Task) !void {
+            return error.UnexpectedTask;
+        }
+    };
+    var context: u8 = 0;
+    var dispatch = Dispatch{
+        .context = &context,
+        .enqueue = Queue.enqueue,
+        .store = null,
+        .catalog = "unused",
+        .visited = .init(allocator),
+    };
+    defer dispatch.deinit();
+    for ([_]extractor.Kind{ .kl3e, .kl4e }) |kind| {
+        var encoded = "KL3E\x80\x00\x00\x00\x03abc".*;
+        if (kind == .kl4e) encoded[2] = '4';
+        const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &encoded));
+        defer input.release();
+        const suffix_only = if (kind == .kl3e) ".kl3e" else ".kl4e";
+        const mismatched = if (kind == .kl3e) "module.kl4e" else "module.kl3e";
+        for ([_][]const u8{ "DATA", mismatched, suffix_only }) |name| {
+            var inventory = Inventory{ .allocator = allocator, .io = std.testing.io, .store = null, .dispatch = null, .paths = .init(allocator) };
+            defer inventory.deinit();
+            var output: ?external_extractor.Output = null;
+            _ = try execute_task(allocator, .{ .name = name, .input = input, .hash = hash_source(&encoded).sha256, .kind = kind }, &dispatch, &inventory, &output);
+            try std.testing.expectEqual(@as(usize, 1), inventory.entries.items.len);
+            const entry = inventory.entries.items[0];
+            try std.testing.expectEqualStrings("payload.bin", entry.path);
+            try std.testing.expectEqual(@as(u64, 3), entry.size_bytes.?);
+            try std.testing.expectEqualStrings(&hash_source("abc").sha256, &entry.sha256.?);
+        }
+    }
+}
+
 pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispatch: *Dispatch) !Counts {
     if (dispatch.state) |state| {
         if (state.fresh_trees.map.getPtr(@tagName(task.kind))) |fresh| {
@@ -503,30 +868,25 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
             };
             const view = try memory.Owner.take_allocated(allocator, bytes);
             defer view.release();
-            try inventory.emit_view("payload.DAT", view);
+            try inventory.emit_view("payload.dat", view);
             break :blk .{ .name = "pspdb-ingest", .version = revisions.edat };
         },
-        .gzip, .prx, .kl3e, .kl4e, .npumdimg => blk: {
-            const bytes = try switch (task.kind) {
-                .gzip => gzip.decode(allocator, task.input.bytes),
-                .prx => prx.decode(allocator, task.input.bytes),
-                .kl3e, .kl4e => kle.decode(allocator, task.input.bytes),
-                .npumdimg => npumdimg.decode(allocator, task.input.bytes),
+        .gzip, .prx, .kl3e, .kl4e, .pgd, .npumdimg => blk: {
+            const output_value = try switch (task.kind) {
+                .gzip => gzip.extract(allocator, task.input.bytes),
+                .prx => prx.extract(allocator, task.input.bytes, if (dispatch.prx_key) |*key| key else null),
+                .kl3e, .kl4e => kle.extract(allocator, task.input.bytes),
+                .pgd => pgd.extract(allocator, task.input.bytes),
+                .npumdimg => npumdimg.extract(allocator, task.input.bytes),
                 else => unreachable,
             };
-            const view = try memory.Owner.take_allocated(allocator, bytes);
+            const view = try memory.Owner.take_allocated(allocator, output_value.bytes);
             defer view.release();
-            const name: []const u8 = if (task.kind == .npumdimg)
-                "disc.iso"
-            else if (std.mem.startsWith(u8, bytes, "\x7fELF"))
-                "module.elf"
-            else if (task.kind != .prx and std.mem.startsWith(u8, bytes, "\x1f\x8b\x08"))
-                "payload.gz"
-            else
-                "payload.bin";
+            var name_buffer: [4096]u8 = undefined;
+            const name = try decodedOutputName(task.kind, output_value.format, output_value.content_format, &name_buffer);
             try inventory.emit_view(name, view);
             const revision = switch (task.kind) {
-                inline .gzip, .prx, .kl3e, .kl4e, .npumdimg => |kind| @field(revisions, @tagName(kind)),
+                inline .gzip, .prx, .kl3e, .kl4e, .pgd, .npumdimg => |kind| @field(revisions, @tagName(kind)),
                 else => unreachable,
             };
             break :blk .{ .name = "pspdb-ingest", .version = revision };
@@ -746,11 +1106,16 @@ fn validate_path(name: []const u8) !void {
 
 /// Open and map one image read-only; optional outputs go only to the store.
 /// V1 targets POSIX: direct mmap avoids an implicit whole-file heap fallback.
-pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, store: ?[]const u8, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
-    const file = try std.Io.Dir.cwd().openFile(io, path, .{
-        .mode = .read_only,
-        .follow_symlinks = false,
-    });
+pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, kind: model.RootKind, store: ?[]const u8, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch, nand_fuse_directory: ?[]const u8) !?Result {
+    // Recheck the opened descriptor without following symlinks or blocking on
+    // a FIFO substituted after discovery.
+    const descriptor = try std.posix.openat(std.Io.Dir.cwd().handle, path, .{
+        .ACCMODE = .RDONLY,
+        .NOFOLLOW = true,
+        .NONBLOCK = true,
+        .CLOEXEC = true,
+    }, 0);
+    const file: std.Io.File = .{ .handle = descriptor, .flags = .{ .nonblocking = true } };
     defer file.close(io);
 
     const stat = try file.stat(io);
@@ -764,10 +1129,12 @@ pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, 
         break :blk try memory.Owner.take_mapped(allocator, mapping);
     };
     defer input.release();
-    const result = if (std.ascii.endsWithIgnoreCase(path, ".pkg"))
-        try process_pkg_checked(allocator, io, input.bytes, store, catalog, dispatch)
-    else
-        try process_iso_checked(allocator, io, input.bytes, store, catalog, dispatch);
+    const result = switch (kind) {
+        .iso => try process_iso_checked(allocator, io, input.bytes, store, catalog, dispatch),
+        .pkg => try process_pkg_checked(allocator, io, input.bytes, store, catalog, dispatch),
+        .nand => try process_nand_checked(allocator, io, input.bytes, store, catalog, dispatch, nand_fuse_directory),
+        .update => try process_update_checked(allocator, io, input, store, catalog, dispatch),
+    };
     errdefer if (result) |value| value.deinit(allocator);
     const after = try file.stat(io);
     if (stat.size != after.size or stat.mtime.nanoseconds != after.mtime.nanoseconds or stat.ctime.nanoseconds != after.ctime.nanoseconds) return error.SourceChanged;
@@ -805,7 +1172,7 @@ test "failed queue publication permits retry with input retained past its parent
         .catalog = "unused",
         .visited = .init(allocator),
     };
-    defer dispatch.visited.deinit();
+    defer dispatch.deinit();
     {
         const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, "PSARinput"));
         defer input.release();
@@ -841,7 +1208,7 @@ test "native descendants outlive their parent and never reread their source from
         .catalog = root,
         .visited = .init(allocator),
     };
-    defer dispatch.visited.deinit();
+    defer dispatch.deinit();
     // Two native SCE wrappers: the second borrows a subrange of the first.
     const payload = "~SCE\x08\x00\x00\x00~SCE\x08\x00\x00\x00plain";
     const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, payload));
@@ -863,6 +1230,277 @@ test "native descendants outlive their parent and never reread their source from
     const counts = try process_task(allocator, io, child, &dispatch);
     try std.testing.expectEqual(@as(usize, 1), counts.stored);
     try std.testing.expectEqual(null, queue.task);
+}
+
+fn nand_test_pbp(title: []const u8) [640]u8 {
+    var bytes: [640]u8 = @splat(0);
+    @memcpy(bytes[0..4], "\x00PBP");
+    std.mem.writeInt(u32, bytes[4..8], 0x10000, .little);
+    std.mem.writeInt(u32, bytes[8..12], 40, .little);
+    for (1..8) |index| std.mem.writeInt(u32, bytes[8 + index * 4 ..][0..4], bytes.len, .little);
+    const metadata = bytes[40..];
+    @memcpy(metadata[0..4], "\x00PSF");
+    std.mem.writeInt(u32, metadata[4..8], 0x101, .little);
+    std.mem.writeInt(u32, metadata[8..12], 36, .little);
+    // Put the actual title beyond the first FAT cluster, not just filler.
+    std.mem.writeInt(u32, metadata[12..16], 560, .little);
+    std.mem.writeInt(u32, metadata[16..20], 1, .little);
+    std.mem.writeInt(u16, metadata[22..24], 0x204, .little);
+    std.mem.writeInt(u32, metadata[24..28], @intCast(title.len + 1), .little);
+    std.mem.writeInt(u32, metadata[28..32], @intCast(title.len + 1), .little);
+    @memcpy(metadata[36..42], "TITLE\x00");
+    @memcpy(metadata[560..][0..title.len], title);
+    return bytes;
+}
+
+fn nand_test_fat_link(bytes: []u8, cluster: usize, value: u16) void {
+    const pair = bytes[512 + cluster + cluster / 2 ..][0..2];
+    const old = std.mem.readInt(u16, pair, .little);
+    std.mem.writeInt(u16, pair, if (cluster & 1 == 0) (old & 0xf000) | value else (old & 0x000f) | (value << 4), .little);
+}
+
+fn nand_test_partition() [8192]u8 {
+    var bytes: [8192]u8 = @splat(0);
+    std.mem.writeInt(u16, bytes[11..13], 512, .little);
+    bytes[13] = 1;
+    std.mem.writeInt(u16, bytes[14..16], 1, .little);
+    bytes[16] = 1;
+    std.mem.writeInt(u16, bytes[17..19], 16, .little);
+    std.mem.writeInt(u16, bytes[19..21], 16, .little);
+    bytes[21] = 0xf8;
+    std.mem.writeInt(u16, bytes[22..24], 1, .little);
+    std.mem.writeInt(u16, bytes[510..512], 0xaa55, .little);
+    @memcpy(bytes[512..515], &[_]u8{ 0xf8, 0xff, 0xff });
+    for ([_]usize{ 2, 3, 4, 7 }, [_]u16{ 3, 0xfff, 7, 0xfff }) |cluster, link| nand_test_fat_link(&bytes, cluster, link);
+    for ([_]*const [11]u8{ "CONTIG  PBP", "FRAG    PBP" }, [_]u16{ 2, 4 }, 0..) |name, cluster, index| {
+        const record = bytes[1024 + index * 32 ..][0..32];
+        @memcpy(record[0..11], name);
+        record[11] = 0x20;
+        std.mem.writeInt(u16, record[26..28], cluster, .little);
+        std.mem.writeInt(u32, record[28..32], 640, .little);
+    }
+    const contiguous = nand_test_pbp("Contiguous");
+    const fragmented = nand_test_pbp("Fragmented");
+    @memcpy(bytes[1536..][0..640], &contiguous);
+    @memcpy(bytes[2560..][0..512], fragmented[0..512]);
+    @memcpy(bytes[4096..][0..128], fragmented[512..]);
+    return bytes;
+}
+
+test "NAND FAT queued PBP children decode after their partition and walker are gone" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const Queue = struct {
+        tasks: std.ArrayList(Task) = .empty,
+        fn enqueue(context: *anyopaque, task: Task) !void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            try self.tasks.append(std.testing.allocator, task);
+        }
+    };
+    var queue: Queue = .{};
+    defer {
+        for (queue.tasks.items) |task| task.deinit(allocator);
+        queue.tasks.deinit(allocator);
+    }
+    var dispatch = Dispatch{ .context = &queue, .enqueue = Queue.enqueue, .store = root, .catalog = root, .visited = .init(allocator) };
+    defer dispatch.deinit();
+    {
+        const fixture = nand_test_partition();
+        const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
+        defer input.release();
+        var inventory = Inventory{ .allocator = allocator, .io = io, .store = root, .dispatch = &dispatch, .paths = .init(allocator) };
+        defer inventory.deinit();
+        var writer: std.Io.Writer.Discarding = .init(&.{});
+        try ingest_nand_partition(&inventory, "flash0.img", input, &writer.writer);
+    }
+    try std.testing.expectEqual(@as(usize, 2), queue.tasks.items.len);
+    for (queue.tasks.items, [_][]const u8{ "Contiguous", "Fragmented" }) |task, title| {
+        const counts = try process_task(allocator, io, task, &dispatch);
+        try std.testing.expectEqual(@as(usize, 0), counts.extraction_errors);
+        const path = try std.fmt.allocPrint(allocator, "pbp/v{s}/{s}-tree.json", .{ revisions.pbp, task.hash });
+        defer allocator.free(path);
+        const tree_bytes = try tmp.dir.readFileAlloc(io, path, allocator, .unlimited);
+        defer allocator.free(tree_bytes);
+        const tree = try std.json.parseFromSlice(SavedTree, allocator, tree_bytes, .{ .ignore_unknown_fields = true });
+        defer tree.deinit();
+        try std.testing.expectEqual(null, tree.value.@"error");
+        const entry = for (tree.value.entries) |entry| {
+            if (std.mem.eql(u8, entry.path, "PARAM.SFO")) break entry;
+        } else return error.MissingSfo;
+        const hash = entry.sha256.?;
+        const object_path = try std.fmt.allocPrint(allocator, "sha256/{s}/{s}/{s}", .{ hash[0..2], hash[2..4], hash });
+        defer allocator.free(object_path);
+        const metadata = try tmp.dir.readFileAlloc(io, object_path, allocator, .unlimited);
+        defer allocator.free(metadata);
+        const expected = nand_test_pbp(title);
+        try std.testing.expectEqualSlices(u8, expected[40..], metadata);
+        try std.testing.expectEqualStrings(title, (try sfo.parse(allocator, metadata)).title.?);
+    }
+}
+
+test "NAND late FAT failure stays inline and retains an earlier real file" {
+    const allocator = std.testing.allocator;
+    var fixture = nand_test_partition();
+    nand_test_fat_link(&fixture, 7, 0xff7);
+    const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
+    defer input.release();
+    var inventory = Inventory{ .allocator = allocator, .io = std.testing.io, .store = null, .dispatch = null, .paths = .init(allocator) };
+    defer inventory.deinit();
+    var writer: std.Io.Writer.Discarding = .init(&.{});
+    try ingest_nand_partition(&inventory, "flash0.img", input, &writer.writer);
+    const tree = inventory.entries.items[0].extraction.?;
+    try std.testing.expectEqualStrings("FatBadCluster", tree.@"error".?);
+    try std.testing.expectEqual(@as(usize, 1), inventory.counts.extraction_errors);
+    try std.testing.expectEqual(@as(usize, 1), tree.entries.len);
+    try std.testing.expectEqualStrings("CONTIG.PBP", tree.entries[0].path);
+    const expected = nand_test_pbp("Contiguous");
+    try std.testing.expectEqualStrings(&hash_source(&expected).sha256, &tree.entries[0].sha256.?);
+    try std.testing.expectEqual(@as(?u64, expected.len), tree.entries[0].size_bytes);
+}
+
+test "NAND FAT callback errors escape even when named like parser errors" {
+    const allocator = std.testing.allocator;
+    const Queue = struct {
+        fn enqueue(_: *anyopaque, _: Task) !void {
+            return error.InvalidIsoPath;
+        }
+    };
+    var context: u8 = 0;
+    var dispatch = Dispatch{ .context = &context, .enqueue = Queue.enqueue, .store = null, .catalog = "unused", .visited = .init(allocator) };
+    defer dispatch.deinit();
+    const fixture = nand_test_partition();
+    const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
+    defer input.release();
+    var inventory = Inventory{ .allocator = allocator, .io = std.testing.io, .store = null, .dispatch = &dispatch, .paths = .init(allocator) };
+    defer inventory.deinit();
+    var writer: std.Io.Writer.Discarding = .init(&.{});
+    try std.testing.expectError(error.InvalidIsoPath, ingest_nand_partition(&inventory, "flash0.img", input, &writer.writer));
+    try std.testing.expectEqual(null, inventory.entries.items[0].extraction);
+}
+
+test "NAND FAT corrupt CAS child aborts instead of attaching a format error" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    const expected = nand_test_pbp("Contiguous");
+    const hash = hash_source(&expected).sha256;
+    const directory = try std.fmt.allocPrint(allocator, "sha256/{s}/{s}", .{ hash[0..2], hash[2..4] });
+    defer allocator.free(directory);
+    try tmp.dir.createDirPath(io, directory);
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ directory, hash });
+    defer allocator.free(path);
+    const corrupt = try tmp.dir.createFile(io, path, .{ .exclusive = true });
+    defer corrupt.close(io);
+    try corrupt.writeStreamingAll(io, "corrupt");
+    const fixture = nand_test_partition();
+    const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
+    defer input.release();
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = root, .dispatch = null, .paths = .init(allocator) };
+    defer inventory.deinit();
+    var writer: std.Io.Writer.Discarding = .init(&.{});
+    try std.testing.expectError(error.CorruptObject, ingest_nand_partition(&inventory, "flash0.img", input, &writer.writer));
+    try std.testing.expectEqual(null, inventory.entries.items[0].extraction);
+}
+
+fn nand_test_allocation_failures(allocator: std.mem.Allocator) !void {
+    const fixture = nand_test_partition();
+    const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
+    defer input.release();
+    var inventory = Inventory{ .allocator = allocator, .io = std.testing.io, .store = null, .dispatch = null, .paths = .init(allocator) };
+    defer inventory.deinit();
+    var writer: std.Io.Writer.Discarding = .init(&.{});
+    try ingest_nand_partition(&inventory, "flash0.img", input, &writer.writer);
+    const tree = inventory.entries.items[0].extraction.?;
+    try std.testing.expectEqual(null, tree.@"error");
+    try std.testing.expectEqual(@as(usize, 2), tree.entries.len);
+}
+
+test "NAND partition ownership and inline publication unwind every allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, nand_test_allocation_failures, .{});
+}
+
+fn update_test_pbp() [97]u8 {
+    var bytes: [97]u8 = @splat(0);
+    @memcpy(bytes[0..4], "\x00PBP");
+    std.mem.writeInt(u32, bytes[4..8], 0x10000, .little);
+    for (0..8) |i| std.mem.writeInt(u32, bytes[8 + i * 4 ..][0..4], if (i == 0) 40 else 93, .little);
+    const param = bytes[40..93];
+    @memcpy(param[0..4], "\x00PSF");
+    std.mem.writeInt(u32, param[4..8], 0x101, .little);
+    std.mem.writeInt(u32, param[8..12], 36, .little);
+    std.mem.writeInt(u32, param[12..16], 48, .little);
+    std.mem.writeInt(u32, param[16..20], 1, .little);
+    std.mem.writeInt(u16, param[22..24], 0x204, .little);
+    std.mem.writeInt(u32, param[24..28], 5, .little);
+    std.mem.writeInt(u32, param[28..32], 5, .little);
+    @memcpy(param[36..48], "UPDATER_VER\x00");
+    @memcpy(param[48..53], "6.61\x00");
+    @memcpy(bytes[93..97], "PSAR");
+    return bytes;
+}
+
+test "recognized updater replaced before intake remains an update format error" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var bytes = update_test_pbp();
+    try std.testing.expect(try probe_update(allocator, &bytes));
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, probe_update(failing.allocator(), &bytes));
+    // Discovery has already fixed the root role. The current input is hashed
+    // and diagnosed as an updater, not ignored or retried as an ISO.
+    bytes[0] = 1;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const file = try tmp.dir.createFile(io, "changed.pbp", .{});
+    try file.writeStreamingAll(io, &bytes);
+    file.close(io);
+    const path = try tmp.dir.realPathFileAlloc(io, "changed.pbp", allocator);
+    defer allocator.free(path);
+    const result = (try process_file(allocator, io, path, .update, null, null, null, null)).?;
+    defer result.deinit(allocator);
+    try std.testing.expectEqual(model.RootKind.update, result.kind);
+    try std.testing.expectEqualStrings("InvalidPbp", result.@"error".?);
+    try std.testing.expect(!result.has_metadata);
+    try std.testing.expectEqualStrings(&hash_source(&bytes).sha256, &result.sha256);
+}
+
+test "updater queue callback failures remain fatal regardless of error name" {
+    const allocator = std.testing.allocator;
+    const Queue = struct {
+        fn enqueue(_: *anyopaque, _: Task) !void {
+            return error.InvalidIsoPath;
+        }
+    };
+    var context: u8 = 0;
+    var dispatch = Dispatch{ .context = &context, .enqueue = Queue.enqueue, .store = null, .catalog = "unused", .visited = .init(allocator) };
+    defer dispatch.deinit();
+    const fixture = update_test_pbp();
+    const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
+    defer input.release();
+    try std.testing.expectError(error.InvalidIsoPath, process_update_checked(allocator, std.testing.io, input, null, null, &dispatch));
+}
+
+fn update_test_allocation_failures(allocator: std.mem.Allocator) !void {
+    const fixture = update_test_pbp();
+    const result = result: {
+        const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
+        defer input.release();
+        break :result (try process_update_checked(allocator, std.testing.io, input, null, null, null)).?;
+    };
+    defer result.deinit(allocator);
+    try std.testing.expectEqualStrings("6.61", result.updater_version.?);
+    try std.testing.expectEqualStrings(&hash_source(&fixture).sha256, &result.sha256);
+}
+
+test "updater metadata survives source release and unwinds every allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, update_test_allocation_failures, .{});
 }
 
 test {

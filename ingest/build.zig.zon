@@ -3,8 +3,7 @@
     .version = "0.1.0",
     .dependencies = .{
         .zig_psp = .{
-            .url = "https://github.com/zPSP-Dev/Zig-PSP/archive/35a7e02f1a2eafc200a851aea1ed0757128fe28e.tar.gz",
-            .hash = "pspsdk-0.7.0-BZphyk2bEgCFkzGUlGnNooIZmU52-Ezju6f4rU3JllQL",
+            .path = "../../sudoku-zig/Zig-PSP",
         },
         .pspdecrypt = .{
             .url = "https://github.com/John-K/pspdecrypt/archive/c156627db7634d395c380c0a9589130f603307fc.tar.gz",

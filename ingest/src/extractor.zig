@@ -2,7 +2,7 @@ const std = @import("std");
 
 const containers = @import("containers.zig");
 
-pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, edat, npumdimg, iso9660, pops, psx, vmp, document };
+pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, edat, pgd, npumdimg, iso9660, pops, psx, vmp, document };
 
 const document_prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
 
@@ -15,6 +15,14 @@ fn fixed_document_signature(bytes: []const u8) bool {
 /// Only an observed same-directory DOCINFO can resolve this candidate.
 pub fn paired_document_candidate(bytes: []const u8) bool {
     return std.mem.startsWith(u8, bytes, document_prefix) and !fixed_document_signature(bytes);
+}
+/// Generic PGD is context-sensitive. Only the NPUMDIMG metadata filename has
+/// a fixed-key profile established by observed retail files.
+pub fn detect_named(name: []const u8, bytes: []const u8) ?Kind {
+    if (std.mem.eql(u8, std.Io.Dir.path.basename(name), "OPNSSMP.PGD") and
+        std.mem.startsWith(u8, bytes, "\x00PGD"))
+        return .pgd;
+    return detect(bytes);
 }
 
 pub fn detect(bytes: []const u8) ?Kind {
@@ -55,6 +63,13 @@ test "format detection uses signatures" {
     try std.testing.expectEqual(Kind.psar, detect("PSAR\x03").?);
     try std.testing.expectEqual(Kind.rco, detect("\x00PRF").?);
     try std.testing.expectEqual(null, detect("not an archive"));
+}
+
+test "OPNSSMP filename selects fixed-key PGD without broad signature dispatch" {
+    const header = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00";
+    try std.testing.expectEqual(Kind.pgd, detect_named("USRDIR/OPNSSMP.PGD", header).?);
+    try std.testing.expectEqual(null, detect_named("USRDIR/OTHER.PGD", header));
+    try std.testing.expectEqual(null, detect_named("USRDIR/OPNSSMP.PGD", "not pgd"));
 }
 
 test "PSMF and raw MPEG files remain opaque" {

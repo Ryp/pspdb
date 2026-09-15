@@ -28,7 +28,11 @@ def tool_provenance(kind, tool=None):
     result = {'name': 'pspdb-ingest', 'version': versions()[kind], 'options': []}
     if kind == 'pbp':
         return dict(result, name='Zig-PSP zPBPTool', options=['in-memory'])
-    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat', 'npumdimg', 'psar', 'rco'):
+    if kind == 'nand':
+        return dict(result, name='pspdb-nand')
+    if kind == 'update':
+        return dict(result, name='pspdb-update')
+    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat', 'npumdimg', 'psar', 'rco', 'pgd'):
         return result
     if kind == 'pops':
         return dict(result, name='pspdb-pops', options=['in-memory'])

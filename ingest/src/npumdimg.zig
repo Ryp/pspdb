@@ -1,4 +1,5 @@
 const std = @import("std");
+const decoded_output = @import("decoded.zig");
 
 extern fn pspdb_npumdimg_decode(
     source: [*]const u8,
@@ -44,4 +45,8 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
     if (output.len < 32775 or !std.mem.eql(u8, output[32768..32775], "\x01CD001\x01"))
         return error.InvalidNpumdimgIso;
     return output;
+}
+
+pub fn extract(allocator: std.mem.Allocator, bytes: []const u8) !decoded_output.Output {
+    return .{ .bytes = try decode(allocator, bytes), .format = .iso };
 }

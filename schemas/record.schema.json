@@ -19,6 +19,27 @@
     "sha256",
     "size_bytes"
   ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": { "const": "update" }
+        }
+      },
+      "then": {
+        "properties": {
+          "metadata": {
+            "properties": {
+              "updater_target": {
+                "enum": ["psp", "psp-go", null],
+                "description": "Declared BOOTABLE compatibility class among released hardware: 1 is psp, 2 is psp-go; absent or other valid uint32 values are null. Not authenticity. Older UPDATE revisions may omit this field."
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "kind": {
       "type": "string",
