@@ -35,12 +35,14 @@ async function copyHash(hash) {
     }
   }
 }
-const nodes = new Map(), collapsed = new Set(), rowElements = new Map();
+const nodes = [], collapsed = new Set(), rowElements = new Map();
 const disclosures = new Map();
 let root, selected, visible = [];
 let filterNodes = null, searchTerms = [], savedTree = null;
+let searchWorker = null, searchReady = Promise.resolve(false), searchVersion = 0;
+let searchSettled = Promise.resolve(), settleSearch = null;
+const emptyChildren = Object.freeze([]);
 let searchSort = null, sortDirection = 1;
-const nameOrder = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 const highlightCache = new WeakMap();
 const rowHeight = 21, overscan = 20;
 let windowKey = "", windowVersion = 0, scrollFrame = 0;
@@ -50,7 +52,7 @@ const availability = new Map();
 async function refreshDownloads() {
   if (!downloadsEnabled) return;
   const mounted = [...$("entries").querySelectorAll("tr.node")]
-    .map(row => nodes.get(row.dataset.path)).filter(node => node?.type === "file" && node.hash);
+    .map(row => nodes[Number(row.dataset.node)]).filter(node => node?.type === "file" && node.hash);
   for (const node of mounted) {
     const cell = node.downloadCell, state = availability.get(node.hash);
     if (cell.dataset.state === String(state)) continue;
@@ -84,11 +86,23 @@ async function refreshDownloads() {
   }
 }
 
+function scrollMetrics() {
+  const host = $("table-scroll");
+  const viewport = Math.max(0, host.clientHeight - $("tree").tHead.offsetHeight);
+  const logicalHeight = visible.length * rowHeight;
+  // Stay below browser layout limits; rendered rows retain their normal height.
+  const height = Math.min(logicalHeight, 8_000_000);
+  const maximum = Math.max(0, height - viewport);
+  const scale = maximum ? Math.max(0, logicalHeight - viewport) / maximum : 1;
+  return { height, maximum, viewport, scale, offset: host.scrollTop * scale };
+}
+
 function renderWindow() {
   const host = $("table-scroll");
-  const start = Math.min(visible.length, Math.max(0, Math.floor(host.scrollTop / rowHeight) - overscan));
+  const metrics = scrollMetrics();
+  const start = Math.min(visible.length, Math.max(0, Math.floor(metrics.offset / rowHeight) - overscan));
   const end = Math.min(visible.length, start + Math.ceil(host.clientHeight / rowHeight) + overscan * 2);
-  const key = `${windowVersion}:${start}:${end}`;
+  const key = `${windowVersion}:${start}:${end}:${metrics.viewport}:${metrics.scale === 1 ? "" : host.scrollTop}`;
   if (key === windowKey) return;
   windowKey = key;
   const fragment = document.createDocumentFragment();
@@ -100,9 +114,19 @@ function renderWindow() {
     cell.style.height = `${height}px`;
     row.append(cell); fragment.append(row);
   }
-  spacer(start * rowHeight);
+  const before = Math.max(0, host.scrollTop + start * rowHeight - metrics.offset);
+  spacer(before);
   for (let index = start; index < end; index++) {
-    const node = visible[index], row = rowElements.get(node.path);
+    const node = visible[index], row = rowElements.get(node.index) || createRow(node);
+    row.classList.toggle("selected", node === selected);
+    row.setAttribute("aria-selected", String(node === selected));
+    const button = disclosures.get(node);
+    if (button) {
+      const expanded = !collapsed.has(node.index);
+      row.setAttribute("aria-expanded", String(expanded));
+      button.textContent = expanded ? "▾" : "▸";
+      button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${node.name}`);
+    }
     if (node.gamePrefix) {
       highlight(node.pathElement, filterNodes ? node.displayPath.slice(0, -label(node).length) : "");
       highlight(node.prefixElement, node.gamePrefix);
@@ -115,7 +139,16 @@ function renderWindow() {
     row.setAttribute("aria-rowindex", index + 2);
     fragment.append(row);
   }
-  spacer((visible.length - end) * rowHeight);
+  spacer(Math.max(0, metrics.height - before - (end - start) * rowHeight));
+  const mounted = new Set(visible.slice(start, end));
+  for (const [index] of rowElements) {
+    const node = nodes[index];
+    if (mounted.has(node)) continue;
+    rowElements.delete(index);
+    disclosures.delete(node);
+    for (const key of ["nameElement", "pathElement", "prefixElement", "titleElement",
+      "noteElement", "hashElement", "errorElement", "downloadCell"]) delete node[key];
+  }
   $("entries").replaceChildren(fragment);
   refreshDownloads();
 }
@@ -149,12 +182,6 @@ function highlight(el, text) {
   }
 }
 
-function compareSearchResults(a, b) {
-  const order = searchSort === "size" ? a.size - b.size
-    : searchSort === "hash" ? (a.hash || "").localeCompare(b.hash || "")
-    : nameOrder.compare(label(a), label(b));
-  return order * sortDirection || nameOrder.compare(a.path, b.path) || a.path.localeCompare(b.path);
-}
 
 function updateSortHeaders() {
   for (const key of ["name", "size", "hash"]) {
@@ -176,62 +203,171 @@ function sortSearch(key) {
   } else {
     searchSort = null;
   }
-  $("table-scroll").scrollTop = 0;
-  updateSortHeaders();
-  render();
-  select(selected, false, false);
+  return requestSearch();
+}
+
+function yieldPage() {
+  return globalThis.scheduler?.yield ? scheduler.yield() : new Promise(resolve => setTimeout(resolve, 0));
+}
+
+function cancelSearch() {
+  searchVersion++;
+  settleSearch?.();
+  settleSearch = null;
+  searchWorker?.postMessage({ type: "cancel", version: searchVersion });
+}
+
+function searchFailure(error) {
+  cancelSearch();
+  searchWorker?.terminate();
+  searchWorker = null;
+  $("tree-search").disabled = true;
+  $("tree").removeAttribute("aria-busy");
+  $("search-count").textContent = `Search unavailable (${error.message}). Reload to try again.`;
+}
+
+async function initializeSearch() {
+  searchWorker?.terminate();
+  cancelSearch();
+  $("tree-search").disabled = true;
+  const worker = new Worker("search-worker.js");
+  searchWorker = worker;
+  let readyResolve, readyReject;
+  const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+  // Handle early startup errors even while the index is still being assembled.
+  ready.catch(() => {});
+  let failure = null;
+  worker.onerror = event => {
+    event.preventDefault();
+    failure = new Error(event.message || "Search worker failed");
+    readyReject(failure);
+    if (searchWorker === worker) searchFailure(failure);
+  };
+  worker.onmessage = async ({ data }) => {
+    if (searchWorker !== worker) return;
+    if (data.type === "ready") { readyResolve(true); return; }
+    if (data.type === "error") {
+      failure = new Error(data.message);
+      readyReject(failure);
+      searchFailure(failure);
+      return;
+    }
+    if (data.type !== "results" || data.version !== searchVersion) return;
+    const matches = new Array(data.ids.length);
+    for (let start = 0; start < matches.length; start += 8192) {
+      const end = Math.min(start + 8192, matches.length);
+      for (let i = start; i < end; i++) matches[i] = nodes[data.ids[i]];
+      if (end < matches.length) await yieldPage();
+      if (data.version !== searchVersion) return;
+    }
+    filterNodes = matches;
+    $("search-count").textContent = `${number.format(matches.length)} matching files`;
+    $("tree").removeAttribute("aria-busy");
+    const query = $("tree-search").value.trim();
+    $("search-empty").hidden = matches.length !== 0;
+    if (!matches.length) {
+      $("search-empty").textContent = `No matches for “${query}”`;
+      const clear = element("button", "", "Clear filter");
+      clear.onclick = clearSearch;
+      $("search-empty").append(clear);
+    }
+    $("table-scroll").scrollTop = 0;
+    updateSortHeaders();
+    render();
+    if (visible.length) select(visible.includes(selected) ? selected : visible[0], false, false);
+    else {
+      $("tree").removeAttribute("aria-activedescendant");
+      $("selected-error").hidden = true;
+    }
+    settleSearch?.();
+    settleSearch = null;
+  };
+  const count = nodes.length;
+  const parents = new Int32Array(count), names = new Uint32Array(count), labels = new Uint32Array(count);
+  const texts = new Uint32Array(count), hashes = new Uint32Array(count), errors = new Uint32Array(count);
+  const sizes = new Float64Array(count), order = new Uint32Array(root.files);
+  const strings = [""], interned = new Map([["", 0]]);
+  function intern(text) {
+    if (!text) return 0;
+    let id = interned.get(text);
+    if (id === undefined) { id = strings.length; strings.push(text); interned.set(text, id); }
+    return id;
+  }
+  let sent = 0;
+  for (let start = 0; start < count; start += 8192) {
+    for (let i = start; i < Math.min(start + 8192, count); i++) {
+      const node = nodes[i];
+      texts[i] = node.displayName || node.note || node.searchMetadata
+        ? intern(`${node.displayName || ""} ${node.note || ""} ${node.searchMetadata || ""}`) : 0;
+      names[i] = intern(node.name);
+      labels[i] = intern(label(node));
+      parents[i] = node.parent ? node.parent.index : -1;
+      hashes[i] = intern(node.hash);
+      errors[i] = intern(node.error ? `error: ${node.error}` : "");
+      sizes[i] = node.size;
+      if (node.type === "file") order[node.fileOrder] = i;
+    }
+    if (failure) throw failure;
+    if (searchWorker !== worker) return false;
+    if (sent < strings.length) worker.postMessage({ type: "strings", strings: strings.slice(sent) });
+    sent = strings.length;
+    await yieldPage();
+  }
+  worker.postMessage({ type: "index", parents, names, labels, texts, hashes, errors, sizes, order },
+    [parents.buffer, names.buffer, labels.buffer, texts.buffer, hashes.buffer, errors.buffer, sizes.buffer, order.buffer]);
+  await ready;
+  if (searchWorker !== worker) return false;
+  $("tree-search").disabled = false;
+  return true;
+}
+
+function requestSearch() {
+  cancelSearch();
+  const version = searchVersion;
+  searchSettled = new Promise(resolve => { settleSearch = resolve; });
+  $("search-count").textContent = "Searching…";
+  $("search-empty").hidden = true;
+  $("tree").setAttribute("aria-busy", "true");
+  searchReady.then(ready => {
+    if (version !== searchVersion) return;
+    if (!ready) { settleSearch?.(); settleSearch = null; return; }
+    searchWorker.postMessage({ type: "search", version, terms: searchTerms, sort: searchSort, direction: sortDirection });
+  });
+  return searchSettled;
 }
 
 function applySearch() {
   const query = $("tree-search").value.trim();
   searchTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (query && !savedTree) savedTree = {
-    collapsed: new Set(collapsed), selected, scroll: $("table-scroll").scrollTop,
-  };
+  $("clear-search").hidden = !$("tree-search").value;
+  $("tree").classList.toggle("search-results", Boolean(query));
   if (query) {
-    filterNodes = new Set();
-    let files = 0;
-    for (const node of nodes.values()) {
-      if (node.type !== "file") continue;
-      if (!searchTerms.every(term => node.searchText.includes(term) || node.errorSearchText?.includes(term))) continue;
-      files++;
-      filterNodes.add(node);
-    }
-    $("search-count").textContent = `${number.format(files)} matching files`;
-  } else {
-    filterNodes = null;
-    $("search-count").textContent = "";
-    if (savedTree) {
-      collapsed.clear();
-      for (const path of savedTree.collapsed) collapsed.add(path);
-    }
+    if (!savedTree) savedTree = {
+      collapsed: new Set(collapsed), selected, scroll: $("table-scroll").scrollTop,
+    };
+    filterNodes ||= [];
+    updateSortHeaders();
+    return requestSearch();
+  }
+  cancelSearch();
+  searchSettled = Promise.resolve();
+  filterNodes = null;
+  $("search-count").textContent = "";
+  $("search-empty").hidden = true;
+  $("tree").removeAttribute("aria-busy");
+  if (savedTree) {
+    collapsed.clear();
+    for (const index of savedTree.collapsed) collapsed.add(index);
   }
   updateSortHeaders();
-  $("tree").classList.toggle("search-results", Boolean(query));
-  $("clear-search").hidden = !$("tree-search").value;
-  const empty = query && !filterNodes.size;
-  $("search-empty").hidden = !empty;
-  if (empty) {
-    $("search-empty").textContent = `No matches for “${query}”`;
-    const clear = element("button", "", "Clear filter");
-    clear.onclick = clearSearch;
-    $("search-empty").append(clear);
-  }
-  $("table-scroll").scrollTop = 0;
   render();
-  if (!query && savedTree) {
+  if (savedTree) {
     select(savedTree.selected, false);
     $("table-scroll").scrollTop = savedTree.scroll;
     renderWindow();
     savedTree = null;
-  } else if (visible.length) {
-    select(visible.includes(selected) ? selected : visible[0], false, false);
-  } else {
-    rowElements.get(selected?.path)?.classList.remove("selected");
-    rowElements.get(selected?.path)?.setAttribute("aria-selected", "false");
-    $("tree").removeAttribute("aria-activedescendant");
-    $("selected-error").hidden = true;
   }
+  return searchSettled;
 }
 
 function clearSearch() {
@@ -247,12 +383,49 @@ function element(tag, className, text) {
   return el;
 }
 
+class CatalogNode {
+  constructor(parent, name, data) {
+    this.index = nodes.length;
+    this.parent = parent;
+    this.name = name;
+    this.type = "directory";
+    this.children = emptyChildren;
+    this.depth = parent ? parent.depth + 1 : 0;
+    this.size = 0;
+    this.files = 0;
+    Object.assign(this, data);
+  }
+  get id() { return `node-${this.index}`; }
+  get path() {
+    const parts = [];
+    for (let node = this; node?.parent; node = node.parent) parts.push(node.name);
+    return parts.reverse().join("/");
+  }
+  get displayPath() {
+    if (!this.parent) return label(this);
+    const parts = [];
+    for (let node = this; node.parent; node = node.parent) parts.push(label(node));
+    return parts.reverse().join("/");
+  }
+}
+
+function nodeAtPath(path) {
+  let node = root;
+  if (!path) return node;
+  for (const part of path.split("/")) {
+    node = node.children.find(child => child.name === part);
+    if (!node) return undefined;
+  }
+  return node;
+}
+
 function add(parent, name, data = {}) {
-  const node = { name, type: "directory", children: [], parent, depth: parent ? parent.depth + 1 : 0, ...data };
-  node.path = parent?.path ? `${parent.path}/${name}` : name;
-  node.id = `node-${nodes.size}`;
-  nodes.set(node.path, node);
-  if (parent) parent.children.push(node);
+  const node = new CatalogNode(parent, name, data);
+  nodes.push(node);
+  if (parent) {
+    if (parent.children === emptyChildren) parent.children = [];
+    parent.children.push(node);
+  }
   return node;
 }
 
@@ -272,9 +445,11 @@ function extractedName(source, path, rule) {
   return path;
 }
 
-function addInventory(parent, entries, extractions = {}, ancestors = new Set(), nameRule = null) {
+let buildWork = 0;
+function* addInventory(parent, entries, extractions = {}, ancestors = new Set(), nameRule = null) {
   const directories = new Map([["", parent]]);
   for (const entry of entries) {
+    if (++buildWork % 4096 === 0) yield;
     const parts = entry.path.split("/");
     const name = extractedName(parent.name, parts.pop(), nameRule);
     let path = "", directory = parent;
@@ -286,13 +461,14 @@ function addInventory(parent, entries, extractions = {}, ancestors = new Set(), 
     if (entry.type === "directory") {
       if (!directories.has(entry.path)) directories.set(entry.path, add(directory, name));
     } else {
-      const node = add(directory, name, { type: "file", size: entry.size_bytes, hash: entry.sha256, redump: entry.redump || [] });
-      attachExtraction(node, extractions, ancestors, entry.extraction);
+      const node = add(directory, name, { type: "file", size: entry.size_bytes, hash: entry.sha256, redump: entry.redump || emptyChildren });
+      if (entry.extraction || extractions[node.hash] !== undefined)
+        yield* attachExtraction(node, extractions, ancestors, entry.extraction);
     }
   }
 }
 
-function attachExtraction(node, extractions, ancestors = new Set(), contextual = null, source = null) {
+function* attachExtraction(node, extractions, ancestors = new Set(), contextual = null, source = null) {
   const extraction = contextual || (source === null ? extractions[node.hash] : source[node.hash]);
   if (extraction === null) throw new Error(`Ambiguous non-root extraction kinds: ${node.hash}`);
   if (!extraction || (contextual && extraction.sha256 !== node.hash) || extraction.size_bytes !== node.size || ancestors.has(extraction)) return;
@@ -301,10 +477,9 @@ function attachExtraction(node, extractions, ancestors = new Set(), contextual =
   node.extractionVersion = extraction.extractor.version;
   if (extraction.error) {
     node.error = extraction.error;
-    node.errorSearchText = `error: ${extraction.error}`.toLowerCase();
   }
   if (extraction.stale_extraction) node.stale_extraction = extraction.stale_extraction;
-  addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
+  yield* addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
 }
 
 function addGroup(parent, name, data = {}) {
@@ -352,8 +527,17 @@ function packageLabels(packages) {
   return labels;
 }
 
-function build(data) {
-  nodes.clear();
+async function build(data) {
+  cancelSearch();
+  searchWorker?.terminate();
+  searchWorker = null;
+  for (const _ of buildCatalog(data)) await yieldPage();
+  searchReady = initializeSearch().catch(error => { searchFailure(error); return false; });
+}
+
+function* buildCatalog(data) {
+  nodes.length = 0;
+  buildWork = 0;
   downloadsEnabled = data.downloads_enabled === true;
   availability.clear();
   $("download-col").hidden = !downloadsEnabled;
@@ -375,7 +559,7 @@ function build(data) {
     for (const [hash, tree] of Object.entries(sources)) {
       if (sizes.has(hash) && sizes.get(hash) !== tree.size_bytes) throw new Error(`Conflicting source sizes: ${hash}`);
       sizes.set(hash, tree.size_bytes);
-      if (kind === "iso" || kind === "pkg") continue;
+      if (kind === "iso" || kind === "pkg" || kind === "nand" || kind === "update") continue;
       extractions[hash] = hash in extractions ? null : tree;
     }
   }
@@ -393,7 +577,7 @@ function build(data) {
       displayName,
       gamePrefix: metadata.media_code === "G" ? identity : null,
     });
-    attachExtraction(node, extractions, new Set(), null, data.trees.iso || {});
+    yield* attachExtraction(node, extractions, new Set(), null, data.trees.iso || {});
   }
   const packages = data.records.pkg || [];
   if (packages.length) {
@@ -410,23 +594,53 @@ function build(data) {
         gamePrefix: packageSerial(metadata) || null,
         searchMetadata: metadata.content_id || "",
       });
-      attachExtraction(node, extractions, new Set(), null, data.trees.pkg || {});
+      yield* attachExtraction(node, extractions, new Set(), null, data.trees.pkg || {});
     }
   }
-  function summarize(node) {
-    node.children.sort((a, b) => (a.type === b.type ? 0 : a.type === "directory" ? -1 : 1)
+  const firmware = addGroup(root, "firmware");
+  const nandGroup = addGroup(firmware, "nand");
+  const updateGroup = addGroup(firmware, "update");
+  const nands = data.records.nand || [];
+  for (const nand of nands) {
+    const metadata = nand.metadata || {};
+    const validGeometry = metadata.page_bytes === 512 && metadata.spare_bytes === 16
+      && metadata.pages_per_block === 32 && (metadata.blocks === 2048 || metadata.blocks === 4096)
+      && nand.size_bytes === metadata.blocks * 32 * 528;
+    const node = add(nandGroup, `${nand.sha256}.nand`, {
+      type: "file", hash: nand.sha256, size: nand.size_bytes,
+      displayName: validGeometry ? `${metadata.blocks / 64} MiB NAND · ${nand.sha256.slice(0, 12)}` : null,
+    });
+    yield* attachExtraction(node, extractions, new Set(), null, data.trees.nand || {});
+  }
+  const updates = data.records.update || [];
+  for (const update of updates) {
+    const metadata = update.metadata || {};
+    const version = metadata.updater_version?.trim();
+    const node = add(updateGroup, `${update.sha256}.pbp`, {
+      type: "file", hash: update.sha256, size: update.size_bytes,
+      displayName: version ? `Update ${version}${metadata.updater_target === "psp-go" ? " Go" : ""} · ${update.sha256.slice(0, 12)}` : null,
+      searchMetadata: [metadata.title, metadata.disc_id].filter(Boolean).join(" "),
+    });
+    yield* attachExtraction(node, extractions, new Set(), null, data.trees.update || {});
+  }
+  let fileOrder = 0;
+  const pending = [root];
+  while (pending.length) {
+    const node = pending.pop();
+    if (++buildWork % 8192 === 0) yield;
+    if (node.children.length > 1) node.children.sort((a, b) => (a.type === b.type ? 0 : a.type === "directory" ? -1 : 1)
       || (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : 0));
-    for (const child of node.children) summarize(child);
-    node.files = (node.type === "file" ? 1 : 0) + node.children.reduce((sum, child) => sum + child.files, 0);
-    if (node.type === "directory")
-      node.size = node.children.reduce((sum, child) => sum + child.size, 0);
+    if (node.type === "file") node.fileOrder = fileOrder++;
+    node.files = node.type === "file" ? 1 : 0;
+    for (let i = node.children.length - 1; i >= 0; i--) pending.push(node.children[i]);
   }
-  summarize(root);
-  for (const node of nodes.values()) {
-    node.displayPath = node.parent && node.parent !== root ? `${node.parent.displayPath}/${label(node)}` : label(node);
-    node.searchText = `${node.parent?.searchText || ""} ${node.name} ${node.displayName || ""} ${node.note || ""} ${node.searchMetadata || ""} ${node.hash || ""}`.toLowerCase();
+  for (let i = nodes.length - 1; i > 0; i--) {
+    const node = nodes[i], parent = node.parent;
+    parent.files += node.files;
+    if (parent.type === "directory") parent.size += node.size;
+    if (i % 8192 === 0) yield;
   }
-  $("catalog-count").textContent = `${isos.length} UMD images · ${packages.length} PSN packages · ${number.format(root.files)} files`;
+  $("catalog-count").textContent = `${isos.length} UMD images · ${packages.length} PSN packages · ${nands.length} NAND dumps · ${updates.length} updater PBPs · ${number.format(root.files)} files`;
 }
 
 function url(node) { return "#" + node.path.split("/").map(encodeURIComponent).join("/"); }
@@ -434,13 +648,13 @@ function label(node) { return node.displayName || node.name; }
 
 function select(node, scroll = true, updateURL = true) {
   if (!node || !visible.includes(node)) return;
-  const previous = selected && rowElements.get(selected.path);
+  const previous = selected && rowElements.get(selected.index);
   previous?.classList.remove("selected");
   previous?.setAttribute("aria-selected", "false");
   selected = node;
-  const row = rowElements.get(node.path);
-  row.classList.add("selected");
-  row.setAttribute("aria-selected", "true");
+  const row = rowElements.get(node.index);
+  row?.classList.add("selected");
+  row?.setAttribute("aria-selected", "true");
   $("tree").setAttribute("aria-activedescendant", node.id);
   $("selected-path").textContent = node.path || label(node);
   $("selected-error").hidden = !node.error;
@@ -449,9 +663,10 @@ function select(node, scroll = true, updateURL = true) {
   if (scroll || node.error) {
     // Scroll only vertically, preserving the user's horizontal column position.
     const host = $("table-scroll"), top = visible.indexOf(node) * rowHeight;
-    const height = host.clientHeight - $("tree").tHead.offsetHeight;
-    if (top < host.scrollTop) host.scrollTop = top;
-    else if (top + rowHeight > host.scrollTop + height) host.scrollTop = top + rowHeight - height;
+    const metrics = scrollMetrics();
+    if (top < metrics.offset) host.scrollTop = top / metrics.scale;
+    else if (top + rowHeight > metrics.offset + metrics.viewport)
+      host.scrollTop = (top + rowHeight - metrics.viewport) / metrics.scale;
     renderWindow();
   }
   if (updateURL) history.replaceState(null, "", url(node));
@@ -459,79 +674,58 @@ function select(node, scroll = true, updateURL = true) {
 
 function jump(node) {
   if (savedTree) clearSearch();
-  for (let parent = node.parent; parent; parent = parent.parent) collapsed.delete(parent.path);
+  for (let parent = node.parent; parent; parent = parent.parent) collapsed.delete(parent.index);
   render();
   select(node);
   const host = $("table-scroll");
-  host.scrollTop = Math.max(0, (visible.indexOf(node) - 2) * rowHeight);
+  host.scrollTop = Math.max(0, (visible.indexOf(node) - 2) * rowHeight) / scrollMetrics().scale;
   renderWindow();
   $("tree").focus({ preventScroll: true });
 }
 
 function toggle(node) {
   if (filterNodes || !expandable(node)) return;
-  if (collapsed.has(node.path)) {
-    collapsed.delete(node.path);
-  } else collapsed.add(node.path);
+  if (collapsed.has(node.index)) {
+    collapsed.delete(node.index);
+  } else collapsed.add(node.index);
   render();
   select(node);
   $("tree").focus({ preventScroll: true });
 }
 
 function render() {
-  const previous = visible;
   visible = [];
   function walk(node) {
-    if (!filterNodes || filterNodes.has(node)) visible.push(node);
-    if (filterNodes || !collapsed.has(node.path)) for (const child of node.children) walk(child);
+    visible.push(node);
+    if (!collapsed.has(node.index)) for (const child of node.children) walk(child);
   }
-  walk(root);
-  if (filterNodes && searchSort) visible.sort(compareSearchResults);
+  if (filterNodes) visible = filterNodes;
+  else walk(root);
   windowVersion++;
-  if (rowElements.size) {
-    // Keep row identity and handlers intact, mounting only the viewport window.
-    const showing = new Set(visible);
-    for (const node of previous) {
-      if (!showing.has(node)) rowElements.get(node.path).hidden = true;
-    }
-    for (const node of visible) {
-      const row = rowElements.get(node.path);
-      if (row.hidden) row.hidden = false;
-    }
-    for (const [node, button] of disclosures) {
-      const expanded = !collapsed.has(node.path);
-      const row = rowElements.get(node.path);
-      if (row.getAttribute("aria-expanded") !== String(expanded)) {
-        row.setAttribute("aria-expanded", String(expanded));
-        button.textContent = expanded ? "▾" : "▸";
-        button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${node.name}`);
-      }
-    }
-    $("tree").setAttribute("aria-rowcount", visible.length + 1);
-    const host = $("table-scroll");
-    host.scrollTop = Math.min(host.scrollTop, Math.max(0, visible.length * rowHeight - host.clientHeight + $("tree").tHead.offsetHeight));
-    renderWindow();
-    return;
-  }
-  const showing = new Set(visible);
-  for (const node of nodes.values()) {
+  $("tree").setAttribute("aria-rowcount", visible.length + 1);
+  const host = $("table-scroll");
+  host.scrollTop = Math.min(host.scrollTop, scrollMetrics().maximum);
+  renderWindow();
+}
+
+function createRow(node) {
     const folder = expandable(node);
     const container = Boolean(node.extraction);
     const row = element("tr", `node ${container ? "file container" : folder ? "folder" : "file"}${node.virtual && !container ? " virtual" : ""}`);
     if (node.error) row.classList.add("extraction-failed");
-    row.hidden = !showing.has(node);
     row.id = node.id;
     row.dataset.path = node.path;
+    row.dataset.node = node.index;
     row.setAttribute("aria-level", node.depth + 1);
     row.setAttribute("aria-selected", "false");
-    if (folder) row.setAttribute("aria-expanded", String(!collapsed.has(node.path)));
+    if (folder) row.setAttribute("aria-expanded", String(!collapsed.has(node.index)));
     const nameCell = element("td", "name-cell");
     nameCell.style.setProperty("--depth", node.depth);
     const content = element("div", "name-content");
     if (folder) {
-      const disclosure = element("button", "toggle", collapsed.has(node.path) ? "▸" : "▾");
+      const disclosure = element("button", "toggle", collapsed.has(node.index) ? "▸" : "▾");
       disclosure.tabIndex = -1;
-      disclosure.setAttribute("aria-label", `${collapsed.has(node.path) ? "Expand" : "Collapse"} ${node.name}`);
+      disclosure.setAttribute("aria-label", `${collapsed.has(node.index) ? "Expand" : "Collapse"} ${node.name}`);
       disclosure.onclick = event => { event.stopPropagation(); toggle(node); };
       disclosures.set(node, disclosure);
       content.append(disclosure);
@@ -622,16 +816,14 @@ function render() {
       if (filterNodes) jump(node);
       else if (folder) toggle(node);
     };
-    rowElements.set(node.path, row);
-  }
-  $("tree").setAttribute("aria-rowcount", visible.length + 1);
-  renderWindow();
+    rowElements.set(node.index, row);
+    return row;
 }
 
 function restore() {
   let path;
   try { path = location.hash.slice(1).split("/").map(decodeURIComponent).join("/"); } catch { path = ""; }
-  jump(nodes.get(path) || root);
+  jump(nodeAtPath(path) || root);
 }
 
 $("tree-search").addEventListener("input", applySearch);
@@ -660,11 +852,11 @@ document.addEventListener("keydown", event => {
   const node = selected;
   if (filterNodes && ["h", "l", "ArrowLeft", "ArrowRight", "Enter"].includes(key)) return;
   if (key === "h" || key === "ArrowLeft") {
-    if (expandable(node) && !collapsed.has(node.path) && node.children.length) toggle(node);
+    if (expandable(node) && !collapsed.has(node.index) && node.children.length) toggle(node);
     else select(node.parent || node);
   } else if (["l", "ArrowRight", "Enter"].includes(key)) {
     if (expandable(node)) {
-      if (collapsed.has(node.path)) toggle(node);
+      if (collapsed.has(node.index)) toggle(node);
       else select(node.children.find(child => visible.includes(child)) || node);
     }
   } else {
@@ -678,13 +870,14 @@ window.addEventListener("hashchange", () => { if (root) restore(); });
 
 fetch(document.documentElement.dataset.catalog).then(response => {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (document.documentElement.dataset.catalog.endsWith(".gz"))
+    return new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).json();
   return response.json();
-}).then(data => {
-  build(data);
-  for (const node of nodes.values()) if (node.extraction) collapsed.add(node.path);
+}).then(async data => {
+  await build(data);
+  for (const node of nodes) if (node.extraction) collapsed.add(node.index);
   $("message").hidden = true;
   $("browser").hidden = false;
-  $("tree-search").disabled = false;
   restore();
 }).catch(error => {
   root = null;
