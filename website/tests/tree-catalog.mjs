@@ -23,6 +23,7 @@ const context = vm.createContext({
   document: {documentElement:{dataset:{catalog:'api/catalog'}}, getElementById:()=>el, addEventListener(){}},
   window: {addEventListener(){}},
   ResizeObserver: class {observe(){}},
+  getComputedStyle: ()=>({getPropertyValue:()=> '21px'}),
   fetch: ()=>new Promise(()=>{}),
   Worker: CatalogWorker, setTimeout,
 });

@@ -447,6 +447,14 @@ own SHA-256, not hashes inherited from parent containers. Matching occurrences
 remain separate; ordinary text and filename searches include ancestor context.
 The same worker is included in static exports; serve them over HTTP as below.
 
+On narrow screens, the viewer prioritizes names and sizes, shows search-result
+filenames instead of long ancestor paths, and keeps the full selected path, exact
+byte count, and extraction details below the tree. **Copy SHA-256** replaces the
+narrow-screen hash column; **Open in tree** opens a search result without a double
+tap. Touch pointers get 44-pixel controls and taller rows, with virtual scrolling
+adjusted to the actual row height. Desktop columns and keyboard navigation remain
+available; selecting an error reveals its full message on either layout.
+
 On a frozen 1,654,763-file catalog, Chromium measurements on a Ryzen 9 5950X
 showed search results in 21–64 ms versus 371–751 ms before these changes, with
 matching result counts. Main-thread heap fell from about 2 GB to 240 MB, plus

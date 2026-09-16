@@ -37,7 +37,11 @@
     </div>
   </main>
   <div id="selected-error" role="status" aria-label="Extraction error" tabindex="0" hidden><span class="error-icon" aria-hidden="true">!</span><span id="selected-error-message"></span></div>
-  <div class="selection-bar"><span id="selected-path"></span><span id="notice" role="status"></span></div>
+  <div class="selection-bar">
+    <div class="selection-details"><span id="selected-path"></span><span id="selected-detail"></span></div>
+    <div class="selection-actions"><button id="open-selected" hidden>Open in tree</button><button id="copy-selected" hidden>Copy SHA-256</button></div>
+    <span id="notice" role="status"></span>
+  </div>
   <footer>
     <span class="shortcut-help"><kbd>h</kbd> collapse / parent <kbd>j</kbd><kbd>k</kbd> move <kbd>l</kbd> expand / child <span class="extra-help">· arrows work too</span></span>
   </footer>
