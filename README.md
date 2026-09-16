@@ -472,6 +472,12 @@ Serve this file as gzip data (for example, `application/gzip`), not as an alread
 HTTP-decoded JSON response. Python's static server and GitHub Pages serve it this
 way without additional configuration.
 
+While loading, the viewer shows download progress and received bytes, with a
+percentage when the response provides a usable length. Unknown-length or
+HTTP-decoded responses use an indeterminate bar instead of an inaccurate
+percentage. After transfer, the status changes to “Preparing catalog…” until
+the tree is ready; failed transfers show an error rather than a completed bar.
+
 Keep source code on `main` and exported snapshots at the root of a separate
 `pages` branch (`index.html`, assets, and `catalog.json.gz`, without a `site/` wrapper).
 Export into an empty staging directory, then copy its contents into a separate

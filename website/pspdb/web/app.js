@@ -868,12 +868,51 @@ document.addEventListener("keydown", event => {
 });
 window.addEventListener("hashchange", () => { if (root) restore(); });
 
-fetch(document.documentElement.dataset.catalog).then(response => {
+async function loadCatalog() {
+  const response = await fetch(document.documentElement.dataset.catalog);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const progress = $("catalog-progress"), detail = $("download-detail");
+  const encoding = response.headers.get("Content-Encoding");
+  const decoded = !!encoding && encoding !== "identity";
+  // Fetch decodes HTTP content encodings before exposing chunks. In that case
+  // Content-Length counts different bytes, so do not invent a percentage.
+  const length = decoded ? 0 : Number(response.headers.get("Content-Length"));
+  const total = Number.isSafeInteger(length) && length > 0 ? length : 0;
+  let received = 0, lastUpdate = 0;
+  function update() {
+    if (total) {
+      progress.max = total;
+      progress.value = Math.min(received, total);
+      detail.textContent = `${formatSize(received)} / ${formatSize(total)} · ${Math.min(100, Math.floor(received / total * 100))}%`;
+    } else {
+      detail.textContent = `${formatSize(received)} received${decoded ? " (decoded)" : ""}`;
+    }
+  }
+  $("loading-status").textContent = "Downloading catalog…";
+  update();
+  let body = response.body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      received += chunk.byteLength;
+      const now = performance.now();
+      if (now - lastUpdate >= 100) {
+        lastUpdate = now;
+        update();
+      }
+      controller.enqueue(chunk);
+    },
+    flush() {
+      progress.max = 1;
+      progress.value = 1;
+      detail.textContent = `${formatSize(received)} received${decoded ? " (decoded)" : ""}`;
+      $("loading-status").textContent = "Preparing catalog…";
+    },
+  }));
   if (document.documentElement.dataset.catalog.endsWith(".gz"))
-    return new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).json();
-  return response.json();
-}).then(async data => {
+    body = body.pipeThrough(new DecompressionStream("gzip"));
+  return new Response(body).json();
+}
+
+loadCatalog().then(async data => {
   await build(data);
   for (const node of nodes) if (node.extraction) collapsed.add(node.index);
   $("message").hidden = true;
@@ -883,5 +922,7 @@ fetch(document.documentElement.dataset.catalog).then(response => {
   root = null;
   $("browser").hidden = true;
   $("message").hidden = false;
-  $("message").textContent = `Could not load the catalog (${error.message}). Reload to try again.`;
+  $("catalog-progress").hidden = true;
+  $("download-detail").hidden = true;
+  $("loading-status").textContent = `Could not load the catalog (${error.message}). Reload to try again.`;
 });
