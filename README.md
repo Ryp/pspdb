@@ -387,7 +387,7 @@ Add `--umdatabase /path/to/pages` for exact SHA-1 links from saved UMDatabase
 entry pages named `ID.html` (for example, `E39CFE68.html`).
 UMD video labels use the SFO title when available, otherwise the observed disc
 identifier. Missing optional SFO metadata does not prevent browsing its inventory.
-The API and exported `catalog.json` keep inventories in `trees[kind][sha256]`.
+The API and exported `catalog.json.gz` keep inventories in `trees[kind][sha256]`.
 Root rows use their explicit `iso`, `pkg`, `nand` or `update` inventory; nested
 files use their derived extractor inventory. Inline contextual extractions retain occurrence precedence.
 
@@ -465,8 +465,15 @@ included separately. Export leaves ingested records unchanged and publishes only
 browser assets and metadata; Store/downloads are disabled. Relative asset URLs
 support repository paths such as `/pspdb/`.
 
+Static exports contain `catalog.json.gz` rather than uncompressed JSON, keeping
+large snapshots below GitHub's 100 MiB per-file limit. The viewer decompresses it
+with the browser's native `DecompressionStream` API before building its index.
+Serve this file as gzip data (for example, `application/gzip`), not as an already
+HTTP-decoded JSON response. Python's static server and GitHub Pages serve it this
+way without additional configuration.
+
 Keep source code on `main` and exported snapshots at the root of a separate
-`pages` branch (`index.html`, assets, and `catalog.json`, without a `site/` wrapper).
+`pages` branch (`index.html`, assets, and `catalog.json.gz`, without a `site/` wrapper).
 Export into an empty staging directory, then copy its contents into a separate
 clone of that branch. Never switch branches in a checkout used by active ingestion.
 Pages can publish directly from **pages / (root)**, or use **GitHub Actions** and

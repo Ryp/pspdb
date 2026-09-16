@@ -1,3 +1,4 @@
+import gzip
 import json
 from pathlib import Path
 import tempfile
@@ -32,7 +33,7 @@ class VersionedCatalogTests(unittest.TestCase):
             self.assertEqual(data['trees']['iso'][digest]['stale_extraction'],
                              {'kind': 'iso', 'version': '10', 'latest_version': '11'})
             export_site(root, Path(tmp) / 'export')
-            exported = json.loads((Path(tmp) / 'export/catalog.json').read_text())
+            exported = json.loads(gzip.decompress((Path(tmp) / 'export/catalog.json.gz').read_bytes()))
             self.assertEqual(exported['trees'], data['trees'])
             self.assertEqual(before, {path: path.read_bytes() for path in root.rglob('*.json')})
             (latest / (digest + '-tree.json')).unlink()
@@ -54,7 +55,7 @@ class VersionedCatalogTests(unittest.TestCase):
             (folder/(digest+'-ingest.json')).write_text(json.dumps(record))
             (folder/(digest+'-tree.json')).write_text(json.dumps(tree))
             export_site(root, Path(tmp)/'export')
-            data = json.loads((Path(tmp)/'export/catalog.json').read_text())
+            data = json.loads(gzip.decompress((Path(tmp)/'export/catalog.json.gz').read_bytes()))
             self.assertEqual(data['records']['pkg'], [record])
             self.assertEqual(data['trees']['pkg'][digest], {**tree, 'extraction_kind': 'pkg'})
             self.assertFalse(data['downloads_enabled'])

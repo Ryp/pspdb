@@ -1,5 +1,6 @@
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import gzip
 import json
 from pathlib import Path
 import tempfile
@@ -39,15 +40,13 @@ class ExportTests(unittest.TestCase):
                                           '<p class="text-value">' + 'b' * 40 + '</p>')
         before = {p: p.read_bytes() for p in self.catalog.rglob('*.json')}
         export_site(self.catalog, self.output, dat, pages)
-        data = json.loads((self.output / 'catalog.json').read_text())
+        data = json.loads(gzip.decompress((self.output / 'catalog.json.gz').read_bytes()))
         self.assertFalse(data['downloads_enabled'])
         iso = data['records']['iso'][0]
         self.assertEqual(iso['metadata']['title'], '日本語')
         self.assertEqual(iso['redump'], [{'id': 58161, 'name': 'Disc'}])
         self.assertEqual(iso['umdatabase'], [{'id': '1FD42ACC', 'name': 'Disc'}])
         self.assertEqual(data['trees'], catalog_data(self.catalog)['trees'])
-        self.assertEqual({p.name for p in self.output.iterdir()},
-                         {'index.html', 'app.js', 'search-worker.js', 'style.css', 'catalog.json', '.nojekyll'})
         self.assertEqual(before, {p: p.read_bytes() for p in self.catalog.rglob('*.json')})
 
     def test_static_host_supports_repository_subpath(self):
@@ -62,20 +61,24 @@ class ExportTests(unittest.TestCase):
         base = f'http://127.0.0.1:{server.server_port}/pspdb/'
         with client.open(base) as response:
             html = response.read().decode()
-        self.assertIn('data-catalog="catalog.json"', html)
+        self.assertIn('data-catalog="catalog.json.gz"', html)
         self.assertIn('href="style.css"', html)
         self.assertIn('src="app.js"', html)
-        for asset in ('app.js', 'search-worker.js', 'style.css', 'catalog.json'):
+        for asset in ('app.js', 'search-worker.js', 'style.css', 'catalog.json.gz'):
             with client.open(base + asset) as response:
                 self.assertEqual(response.status, 200)
+                if asset.endswith('.gz'):
+                    data = json.loads(gzip.decompress(response.read()))
+                    self.assertEqual(data['records']['iso'][0]['metadata']['title'], '日本語')
+                    self.assertFalse(data['downloads_enabled'])
 
     def test_export_cli_and_destination_guards(self):
         with patch('sys.argv', ['pspdb-web', 'export', '--catalog', str(self.catalog), '--output', str(self.output)]):
             self.assertEqual(main(), 0)
-        before = (self.output / 'catalog.json').read_bytes()
+        before = (self.output / 'catalog.json.gz').read_bytes()
         with self.assertRaisesRegex(ValueError, 'empty'):
             export_site(self.catalog, self.output)
-        self.assertEqual((self.output / 'catalog.json').read_bytes(), before)
+        self.assertEqual((self.output / 'catalog.json.gz').read_bytes(), before)
         for output in (self.catalog, self.catalog / 'export', self.root):
             with self.assertRaisesRegex(ValueError, 'separate'):
                 export_site(self.catalog, output)

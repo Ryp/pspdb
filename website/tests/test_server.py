@@ -317,7 +317,7 @@ class DownloadTests(unittest.TestCase):
             data = json.load(response)
         output = self.root / 'export'
         export_site(self.catalog, output)
-        exported = json.loads((output / 'catalog.json').read_text())
+        exported = json.loads(gzip.decompress((output / 'catalog.json.gz').read_bytes()))
         for snapshot in (data, exported):
             self.assertEqual([entry['path'] for entry in snapshot['trees']['iso'][self.digest]['entries']], ['root-only.prx'])
             self.assertEqual([entry['path'] for entry in snapshot['trees']['iso9660'][self.digest]['entries']], ['nested-only.prx'])

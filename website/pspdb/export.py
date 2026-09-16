@@ -1,4 +1,5 @@
 """Export a metadata-only snapshot for any static HTTP host."""
+import gzip
 import json
 from pathlib import Path
 import shutil
@@ -19,14 +20,14 @@ def export_site(catalog, output, redump=None, umdatabase=None):
                         load_redump(redump) if redump is not None else None,
                         load_umdatabase(umdatabase) if umdatabase is not None else None)
     data['downloads_enabled'] = False
-    body = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+    body = json.dumps(data, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     assets = Path(__file__).with_name('web')
     output.mkdir(parents=True, exist_ok=True)
-    (output / 'catalog.json').write_text(body + '\n', encoding='utf-8')
+    (output / 'catalog.json.gz').write_bytes(gzip.compress(body, compresslevel=1, mtime=0))
     for name in ('app.js', 'search-worker.js', 'style.css'):
         shutil.copyfile(assets / name, output / name)
     html = (assets / 'index.html').read_text(encoding='utf-8')
     (output / 'index.html').write_text(
-        html.replace('data-catalog="api/catalog"', 'data-catalog="catalog.json"'), encoding='utf-8')
+        html.replace('data-catalog="api/catalog"', 'data-catalog="catalog.json.gz"'), encoding='utf-8')
     (output / '.nojekyll').touch()
     return output

@@ -870,6 +870,8 @@ window.addEventListener("hashchange", () => { if (root) restore(); });
 
 fetch(document.documentElement.dataset.catalog).then(response => {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (document.documentElement.dataset.catalog.endsWith(".gz"))
+    return new Response(response.body.pipeThrough(new DecompressionStream("gzip"))).json();
   return response.json();
 }).then(async data => {
   await build(data);
