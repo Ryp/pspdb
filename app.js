@@ -44,7 +44,8 @@ let searchSettled = Promise.resolve(), settleSearch = null;
 const emptyChildren = Object.freeze([]);
 let searchSort = null, sortDirection = 1;
 const highlightCache = new WeakMap();
-const rowHeight = 21, overscan = 20;
+let rowHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height"));
+const overscan = 20;
 let windowKey = "", windowVersion = 0, scrollFrame = 0;
 let downloadsEnabled = false, checkingDownloads = false;
 const availability = new Map();
@@ -102,15 +103,18 @@ function renderWindow() {
   const metrics = scrollMetrics();
   const start = Math.min(visible.length, Math.max(0, Math.floor(metrics.offset / rowHeight) - overscan));
   const end = Math.min(visible.length, start + Math.ceil(host.clientHeight / rowHeight) + overscan * 2);
-  const key = `${windowVersion}:${start}:${end}:${metrics.viewport}:${metrics.scale === 1 ? "" : host.scrollTop}`;
+  const compact = getComputedStyle($("heading-hash")).display === "none";
+  const key = `${windowVersion}:${start}:${end}:${metrics.viewport}:${compact}:${metrics.scale === 1 ? "" : host.scrollTop}`;
   if (key === windowKey) return;
   windowKey = key;
+  const columns = (downloadsEnabled ? 4 : 3) - Number(compact);
+  $("tree").setAttribute("aria-colcount", String(columns));
   const fragment = document.createDocumentFragment();
   function spacer(height) {
     if (!height) return;
     const row = element("tr", "tree-spacer");
     row.setAttribute("aria-hidden", "true");
-    const cell = element("td"); cell.colSpan = downloadsEnabled ? 4 : 3;
+    const cell = element("td"); cell.colSpan = columns;
     cell.style.height = `${height}px`;
     row.append(cell); fragment.append(row);
   }
@@ -128,10 +132,10 @@ function renderWindow() {
       button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${node.name}`);
     }
     if (node.gamePrefix) {
-      highlight(node.pathElement, filterNodes ? node.displayPath.slice(0, -label(node).length) : "");
+      highlight(node.pathElement, filterNodes && !compact ? node.displayPath.slice(0, -label(node).length) : "");
       highlight(node.prefixElement, node.gamePrefix);
       highlight(node.titleElement, label(node).slice(node.gamePrefix.length));
-    } else highlight(node.nameElement, filterNodes ? node.displayPath : label(node));
+    } else highlight(node.nameElement, filterNodes && !compact ? node.displayPath : label(node));
     row.setAttribute("aria-level", filterNodes ? 1 : node.depth + 1);
     if (node.note) highlight(node.noteElement, node.note);
     if (node.hashElement) highlight(node.hashElement, node.hash.slice(0, 12));
@@ -156,7 +160,16 @@ function renderWindow() {
 $("table-scroll").addEventListener("scroll", () => {
   if (!scrollFrame) scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; renderWindow(); });
 });
-new ResizeObserver(() => { if (root && rowElements.size) renderWindow(); }).observe($("table-scroll"));
+new ResizeObserver(() => {
+  const nextHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height"));
+  if (nextHeight !== rowHeight) {
+    const position = scrollMetrics().offset / rowHeight;
+    rowHeight = nextHeight;
+    $("table-scroll").scrollTop = position * rowHeight / scrollMetrics().scale;
+    windowVersion++;
+  }
+  if (root) renderWindow();
+}).observe($("table-scroll"));
 
 function highlight(el, text) {
   const lower = text.toLowerCase();
@@ -278,6 +291,10 @@ async function initializeSearch() {
     else {
       $("tree").removeAttribute("aria-activedescendant");
       $("selected-error").hidden = true;
+      $("selected-path").textContent = "";
+      $("selected-detail").textContent = "";
+      $("open-selected").hidden = true;
+      $("copy-selected").hidden = true;
     }
     settleSearch?.();
     settleSearch = null;
@@ -657,6 +674,9 @@ function select(node, scroll = true, updateURL = true) {
   row?.setAttribute("aria-selected", "true");
   $("tree").setAttribute("aria-activedescendant", node.id);
   $("selected-path").textContent = node.path || label(node);
+  $("selected-detail").textContent = `${number.format(node.size)} bytes${node.extraction ? ` · ${node.extraction}` : ""}`;
+  $("open-selected").hidden = !filterNodes;
+  $("copy-selected").hidden = !node.hash;
   $("selected-error").hidden = !node.error;
   $("selected-error-message").textContent = node.error ? `error: ${node.error}` : "";
   $("notice").textContent = "";
@@ -828,6 +848,10 @@ function restore() {
 
 $("tree-search").addEventListener("input", applySearch);
 $("clear-search").onclick = clearSearch;
+$("open-selected").onclick = () => { if (selected && filterNodes) jump(selected); };
+$("copy-selected").onclick = async () => {
+  if (selected?.hash) $("notice").textContent = await copyHash(selected.hash) ? "SHA-256 copied" : "Copy unavailable in this browser";
+};
 for (const key of ["name", "size", "hash"]) $("sort-" + key).onclick = () => sortSearch(key);
 
 document.addEventListener("keydown", event => {
