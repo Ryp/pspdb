@@ -36,6 +36,26 @@ def iso_bytes(umd=GAME_UMD, nested=False):
     return output.getvalue()
 
 
+def iso_files_bytes(files, directories=(), *, joliet=False):
+    iso = pycdlib.PyCdlib()
+    iso.new(interchange_level=3, joliet=3 if joliet else None)
+    for directory in directories:
+        iso.add_directory('/' + directory, joliet_path='/' + directory if joliet else None)
+    for name, data in files.items():
+        iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1', joliet_path='/' + name if joliet else None)
+    output = BytesIO()
+    iso.write_fp(output)
+    iso.close()
+    return output.getvalue()
+
+
+def sfo_bytes(title):
+    key = b'TITLE\0'
+    value = (title.encode() if isinstance(title, str) else title) + b'\0'
+    return (struct.pack('<4sIIII', b'\0PSF', 0x101, 36, 36 + len(key), 1)
+            + struct.pack('<HHIII', 0, 0x204, len(value), len(value), 0) + key + value)
+
+
 REPO = Path(__file__).resolve().parents[2]
 BINARY = REPO / "ingest/zig-out/bin/pspdb-ingest"
 VERSIONS = json.loads((REPO / 'tools/extractor_versions.json').read_text())
@@ -390,6 +410,201 @@ class IngestCliTests(unittest.TestCase):
                 self.assertEqual(code, 0, output)
                 self.assertIn('Already cataloged: 1 sources skipped.', output)
 
+    def test_iso_unicode_names_preserve_utf8_and_decode_cp932_with_hardlinks(self):
+        iso = pycdlib.PyCdlib(); iso.new(interchange_level=3, rock_ridge='1.09')
+        iso.add_fp(BytesIO(GAME_UMD), len(GAME_UMD), iso_path='/UMD_DATA.BIN;1', rr_name='UMD_DATA.BIN')
+        directory = '新しいフォルダ'
+        legacy_name = 'savedataについて.txt'
+        alias_name = 'ソの別名.txt'  # CP932 contains a multibyte trailing 0x5c.
+        replacements = [
+            ('D' * len(directory.encode('cp932')), directory.encode('cp932')),
+            ('F' * len(legacy_name.encode('cp932')), legacy_name.encode('cp932')),
+            ('L' * len(alias_name.encode('cp932')), alias_name.encode('cp932')),
+        ]
+        iso.add_directory('/LEGACY', rr_name=replacements[0][0])
+        legacy_payload = b'legacy filename payload'
+        iso.add_fp(BytesIO(legacy_payload), len(legacy_payload), iso_path='/LEGACY/A.TXT;1', rr_name=replacements[1][0])
+        iso.add_hard_link(iso_old_path='/LEGACY/A.TXT;1', iso_new_path='/LEGACY/B.TXT;1', rr_name=replacements[2][0])
+        utf8_name = 'cafe\u0301-日本語.txt'
+        utf8_payload = b'UTF-8 filename payload'
+        iso.add_fp(BytesIO(utf8_payload), len(utf8_payload), iso_path='/UTF8.TXT;1', rr_name=utf8_name)
+        stream = BytesIO(); iso.write_fp(stream); iso.close()
+        image = stream.getvalue()
+        for placeholder, raw in replacements:
+            self.assertEqual(image.count(placeholder.encode()), 1)
+            image = image.replace(placeholder.encode(), raw)
+        # The same reader serves root ISO and hash-identified derived ISO9660.
+        outer = iso_files_bytes({'UMD_DATA.BIN': GAME_UMD, 'CHILD.BIN': image})
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+            (inputs / 'unicode.iso').write_bytes(image)
+            (inputs / 'parent.iso').write_bytes(outer)
+            catalog = root / 'catalog'; store = root / 'store'
+            before = snapshot(inputs)
+            code, output = self.run_cli(inputs, '--catalog', str(catalog), '--store', str(store), '--threads', '4', '--no-progress')
+            self.assertEqual(code, 0, output)
+            digest = hashlib.sha256(image).hexdigest()
+            expected = {
+                'UMD_DATA.BIN': GAME_UMD,
+                directory + '/' + legacy_name: legacy_payload,
+                directory + '/' + alias_name: legacy_payload,
+                utf8_name: utf8_payload,
+            }
+            for kind in ('iso', 'iso9660'):
+                tree = json.loads(result_path(catalog, kind, digest).with_name(digest + '-tree.json').read_text())
+                self.assertNotIn('error', tree)
+                entries = {entry['path']: entry for entry in tree['entries']}
+                self.assertEqual(set(entries), set(expected) | {directory})
+                self.assertEqual(entries[directory]['type'], 'directory')
+                for name, payload in expected.items():
+                    child_hash = hashlib.sha256(payload).hexdigest()
+                    self.assertEqual(entries[name]['sha256'], child_hash)
+                    self.assertEqual((store / 'sha256' / child_hash[:2] / child_hash[2:4] / child_hash).read_bytes(), payload)
+            self.assertEqual(snapshot(inputs), before)
+
+    def test_iso_legacy_path_conversion_rejects_invalid_bytes_and_unsafe_paths(self):
+        for raw in (b'bad\x81', b'bad\x81\x30', b'../escape', b'/absolute', b'a\\b', b'a:b', b'a\x1fb',
+                    'ソ'.encode('cp932') + b'\\escape', 'ソ'.encode('cp932') + b':escape'):
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as tmp:
+                iso = pycdlib.PyCdlib(); iso.new(interchange_level=3, rock_ridge='1.09')
+                iso.add_fp(BytesIO(GAME_UMD), len(GAME_UMD), iso_path='/UMD_DATA.BIN;1', rr_name='UMD_DATA.BIN')
+                payload = b'must not be published under an invalid path'
+                placeholder = 'X' * len(raw)
+                iso.add_fp(BytesIO(payload), len(payload), iso_path='/BAD.BIN;1', rr_name=placeholder)
+                stream = BytesIO(); iso.write_fp(stream); iso.close()
+                image = stream.getvalue()
+                self.assertEqual(image.count(placeholder.encode()), 1)
+                image = image.replace(placeholder.encode(), raw)
+                root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+                (inputs / 'bad.iso').write_bytes(image)
+                catalog = root / 'catalog'; store = root / 'store'
+                code, output = self.run_cli(inputs, '--catalog', str(catalog), '--store', str(store), '--no-progress')
+                self.assertEqual(code, 0, output)
+                digest = hashlib.sha256(image).hexdigest()
+                record = json.loads(result_path(catalog, 'iso', digest).read_text())
+                self.assertEqual(record['metadata']['identifier'], 'UMDT-99872')
+                tree = json.loads(tree_path(catalog, digest).read_text())
+                self.assertEqual(tree['error'], 'InvalidIsoPath')
+                self.assertNotIn(hashlib.sha256(payload).hexdigest(), {entry.get('sha256') for entry in tree['entries']})
+                child_hash = hashlib.sha256(payload).hexdigest()
+                self.assertFalse((store / 'sha256' / child_hash[:2] / child_hash[2:4] / child_hash).exists())
+                self.assertEqual((inputs / 'bad.iso').read_bytes(), image)
+
+    def test_mastering_wrapper_keeps_outer_files_and_derived_inner_identity(self):
+        title = sfo_bytes(b'Daxter\x99')
+        payload = b'inner logical game bytes'
+        logical_files = {'UMD_DATA.BIN': GAME_UMD, 'PSP_GAME/PARAM.SFO': title, 'PSP_GAME/DATA.BIN': payload}
+        inner = iso_files_bytes(logical_files, ('PSP_GAME',))
+        mastering_files = {'CONT_L0.IMG': bytes(32768), 'MDI.IMG': bytes(2048),
+                           'UMD_AUTH.DAT': bytes(256), 'USER_L0.IMG': inner}
+        # Both observed mastering images also carry equivalent Joliet roots.
+        outer = iso_files_bytes(mastering_files, joliet=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+            for zipped in (False, True):
+                with self.subTest(zipped=zipped):
+                    for old in inputs.iterdir(): old.unlink()
+                    if zipped:
+                        with zipfile.ZipFile(inputs / 'master.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+                            archive.writestr('renamed.iso', outer)
+                    else:
+                        (inputs / 'arbitrary-name.iso').write_bytes(outer)
+                    before = snapshot(inputs)
+                    catalog = root / ('zip-catalog' if zipped else 'iso-catalog')
+                    store = root / ('zip-store' if zipped else 'iso-store')
+                    code, output = self.run_cli(inputs, '--catalog', str(catalog), '--store', str(store), '--threads', '4', '--no-progress')
+                    self.assertEqual(code, 0, output)
+                    outer_hash = hashlib.sha256(outer).hexdigest()
+                    inner_hash = hashlib.sha256(inner).hexdigest()
+                    record = json.loads(result_path(catalog, 'iso', outer_hash).read_text())
+                    self.assertEqual((record['sha256'], record['sha1'], record['size_bytes']),
+                                     (outer_hash, hashlib.sha1(outer).hexdigest(), len(outer)))
+                    self.assertEqual(record['metadata']['title'], 'Daxter™')
+                    self.assertEqual(record['metadata']['logical_image_path'], 'USER_L0.IMG')
+                    self.assertEqual(record['metadata']['identifier'], 'UMDT-99872')
+                    outer_tree = json.loads(tree_path(catalog, outer_hash).read_text())
+                    inner_tree = json.loads(result_path(catalog, 'iso9660', inner_hash).with_name(inner_hash + '-tree.json').read_text())
+                    self.assertNotIn('error', outer_tree)
+                    self.assertNotIn('error', inner_tree)
+                    self.assertEqual(inner_tree['sha256'], inner_hash)
+                    self.assertEqual(inner_tree['size_bytes'], len(inner))
+                    outer_entries = {entry['path']: entry for entry in outer_tree['entries']}
+                    inner_entries = {entry['path']: entry for entry in inner_tree['entries']}
+                    self.assertEqual(set(outer_entries), set(mastering_files))
+                    self.assertEqual(set(inner_entries), set(logical_files) | {'PSP_GAME'})
+                    for files, entries in ((mastering_files, outer_entries), (logical_files, inner_entries)):
+                        for name, data in files.items():
+                            digest = hashlib.sha256(data).hexdigest()
+                            self.assertEqual(entries[name], dict(path=name, type='file', size_bytes=len(data), sha256=digest))
+                            self.assertEqual((store / 'sha256' / digest[:2] / digest[2:4] / digest).read_bytes(), data)
+                    self.assertFalse((store / 'sha256' / outer_hash[:2] / outer_hash[2:4] / outer_hash).exists())
+                    self.assertEqual(snapshot(inputs), before)
+
+    def test_mastering_wrapper_requires_exact_regular_bounded_layout(self):
+        inner = iso_files_bytes({'UMD_DATA.BIN': GAME_UMD, 'PSP_GAME/PARAM.SFO': sfo_bytes('Inner title')}, ('PSP_GAME',))
+        files = {'CONT_L0.IMG': bytes(32768), 'MDI.IMG': bytes(2048),
+                 'UMD_AUTH.DAT': bytes(256), 'USER_L0.IMG': inner}
+        outside = bytearray(iso_files_bytes(files))
+        record_offset = outside.index(b'USER_L0.IMG;1') - 33
+        sector = len(outside) // 2048 + 1
+        outside[record_offset + 2:record_offset + 10] = struct.pack('<I', sector) + struct.pack('>I', sector)
+        alternate = bytearray(iso_files_bytes(files, joliet=True))
+        control_record = alternate.index(b'CONT_L0.IMG;1') - 33
+        control_sector = struct.unpack_from('<I', alternate, control_record + 2)[0]
+        joliet_record = alternate.index('USER_L0.IMG'.encode('utf-16-be')) - 33
+        # Names and sizes still agree, but Joliet now selects different bytes.
+        alternate[joliet_record + 2:joliet_record + 10] = struct.pack('<I', control_sector) + struct.pack('>I', control_sector)
+        # pycdlib forbids dots in primary directory names; preserve record widths.
+        directory = iso_files_bytes(
+            {name: data for name, data in files.items() if name != 'USER_L0.IMG'},
+            ('USER_L0_IMG',),
+        ).replace(b'USER_L0_IMG', b'USER_L0.IMG')
+        invalid = {
+            'unrelated': iso_files_bytes({'USER_L0.IMG': inner}),
+            'extra-member': iso_files_bytes(dict(files, **{'EXTRA.BIN': b'extra'})),
+            'missing-companion': iso_files_bytes({name: data for name, data in files.items() if name != 'UMD_AUTH.DAT'}),
+            'nested-image': iso_files_bytes({'ASSET/USER_L0.IMG': inner}, ('ASSET',)),
+            'directory-image': directory,
+            'not-iso': iso_files_bytes(dict(files, **{'USER_L0.IMG': b'not an ISO'})),
+            'truncated-inner': iso_files_bytes(dict(files, **{'USER_L0.IMG': inner[:-2048]})),
+            'outside-extent': bytes(outside),
+            'alternate-extent': bytes(alternate),
+        }
+        for name, image in invalid.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+                (inputs / 'source.iso').write_bytes(image)
+                catalog = root / 'catalog'
+                code, output = self.run_cli(inputs, '--catalog', str(catalog), '--no-progress')
+                self.assertEqual(code, 0, output)
+                digest = hashlib.sha256(image).hexdigest()
+                record = json.loads(result_path(catalog, 'iso', digest).read_text())
+                self.assertNotIn('metadata', record)
+                self.assertEqual(record['size_bytes'], len(image))
+                tree = json.loads(tree_path(catalog, digest).read_text())
+                self.assertIn('error', tree)
+                self.assertEqual(tree['entries'], [])
+                self.assertFalse((catalog / 'iso9660').exists())
+
+    def test_root_umd_layout_takes_precedence_over_mastering_named_assets(self):
+        inner = iso_files_bytes({'UMD_DATA.BIN': GAME_UMD, 'PSP_GAME/PARAM.SFO': sfo_bytes('Inner title')}, ('PSP_GAME',))
+        files = {'CONT_L0.IMG': bytes(32768), 'MDI.IMG': bytes(2048), 'UMD_AUTH.DAT': bytes(256),
+                 'USER_L0.IMG': inner, 'UMD_DATA.BIN': GAME_UMD, 'PSP_GAME/PARAM.SFO': sfo_bytes('Outer title')}
+        image = iso_files_bytes(files, ('PSP_GAME',))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
+            (inputs / 'source.iso').write_bytes(image)
+            catalog = root / 'catalog'
+            code, output = self.run_cli(inputs, '--catalog', str(catalog), '--no-progress')
+            self.assertEqual(code, 0, output)
+            digest = hashlib.sha256(image).hexdigest()
+            record = json.loads(result_path(catalog, 'iso', digest).read_text())
+            self.assertEqual(record['metadata']['title'], 'Outer title')
+            self.assertNotIn('logical_image_path', record['metadata'])
+            tree = json.loads(tree_path(catalog, digest).read_text())
+            self.assertNotIn('error', tree)
+            self.assertEqual({entry['path'] for entry in tree['entries']}, set(files) | {'PSP_GAME'})
+
     def test_iso_hardlinks_resolve_case_sensitive_paths(self):
         iso = pycdlib.PyCdlib(); iso.new(interchange_level=3, rock_ridge='1.09')
         # Distinct Rock Ridge names may differ only by case. The earlier extent
@@ -430,12 +645,7 @@ class IngestCliTests(unittest.TestCase):
             self.assertEqual(source.read_bytes(), image)
 
     def test_metadata_is_read_before_inventory_and_resolves_shared_extents(self):
-        def sfo(title):
-            key = b'TITLE\0'
-            value = title.encode() + b'\0'
-            return (struct.pack('<4sIIII', b'\0PSF', 0x101, 36, 36 + len(key), 1)
-                    + struct.pack('<HHIII', 0, 0x204, len(value), len(value), 0) + key + value)
-
+        sfo = sfo_bytes
         cases = [
             ('shared-game', sfo('Shared game'), None, True, 'Shared game'),
             ('shared-umd', sfo('Game title'), None, False, 'Game title'),
@@ -444,6 +654,11 @@ class IngestCliTests(unittest.TestCase):
             ('game-with-updater', sfo('Game title'), None, False, 'Game title'),
             ('invalid-video', sfo('Game title'), b'not an SFO', False, None),
             ('updater-only', None, None, False, 'Bundled updater'),
+            ('legacy-game', sfo(b'Daxter\x99'), None, False, 'Daxter™'),
+            ('legacy-video', None, sfo(b'Video\x99'), False, 'Video™'),
+            ('mixed-legacy', sfo(b'Game\x99'), sfo(b'Video\x99'), False, 'Game™'),
+            ('legacy-updater-only', None, None, False, 'Updater™'),
+            ('invalid-title', sfo(b'Daxter\x98'), None, False, None),
         ]
         for name, game, video, shared, title in cases:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
@@ -464,12 +679,12 @@ class IngestCliTests(unittest.TestCase):
                         iso.add_hard_link(iso_old_path='/AAA_SFO.BIN;1', iso_new_path=path)
                     else:
                         iso.add_fp(BytesIO(data), len(data), iso_path=path)
-                if name in ('updater-only', 'game-with-updater'):
+                if name in ('updater-only', 'legacy-updater-only', 'game-with-updater'):
                     folders = ['/PSP_GAME/SYSDIR', '/PSP_GAME/SYSDIR/UPDATE']
                     if game is None: folders.insert(0, '/PSP_GAME')
                     for folder in folders:
                         iso.add_directory(folder)
-                    updater = sfo('Bundled updater')
+                    updater = sfo(b'Updater\x99' if name == 'legacy-updater-only' else 'Bundled updater')
                     iso.add_fp(BytesIO(updater), len(updater), iso_path='/PSP_GAME/SYSDIR/UPDATE/PARAM.SFO;1')
                 output = BytesIO(); iso.write_fp(output); iso.close()
                 image = output.getvalue()
@@ -483,7 +698,7 @@ class IngestCliTests(unittest.TestCase):
                         (root / 'sample.iso').write_bytes(image)
                     args = ('--store', str(store), '--threads', '1', '--no-progress')
                     code, output = self.run_cli(root, *args, '--catalog', str(catalog))
-                    if name == 'invalid-video':
+                    if name in ('invalid-video', 'invalid-title'):
                         self.assertEqual(code, 0, output)
                         digest = hashlib.sha256(image).hexdigest()
                         record = json.loads(result_path(catalog, 'iso', digest).read_text())
@@ -498,6 +713,7 @@ class IngestCliTests(unittest.TestCase):
                     record = json.loads(next((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json')).read_text())
                     self.assertEqual(record['metadata'].get('title'), title)
                     self.assertEqual(record['metadata']['umd_uid'], '8D53CBDF6A4FC495')
+                    self.assertNotIn('logical_image_path', record['metadata'])
                     self.assertEqual(record['sha256'], hashlib.sha256(image).hexdigest())
                     self.assertEqual(record['sha1'], hashlib.sha1(image).hexdigest())
                     for folder, data in [('PSP_GAME', game), ('UMD_VIDEO', video)]:
@@ -507,6 +723,12 @@ class IngestCliTests(unittest.TestCase):
                         digest = hashlib.sha256(data).hexdigest()
                         self.assertEqual(entry['sha256'], digest)
                         self.assertEqual((store / 'sha256' / digest[:2] / digest[2:4] / digest).read_bytes(), data)
+                    if name == 'legacy-updater-only':
+                        tree = json.loads(tree_path(catalog, record['sha256']).read_text())
+                        entry = next(e for e in tree['entries'] if e['path'] == 'PSP_GAME/SYSDIR/UPDATE/PARAM.SFO')
+                        digest = hashlib.sha256(updater).hexdigest()
+                        self.assertEqual(entry['sha256'], digest)
+                        self.assertEqual((store / 'sha256' / digest[:2] / digest[2:4] / digest).read_bytes(), updater)
 
     def test_catalog_uses_iso_identity_and_keeps_identical_inventories(self):
         from jsonschema import Draft202012Validator
@@ -871,7 +1093,6 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
             'size': first + bad_size,
             'truncated': first + second[:-1],
             'truncated_deflate': first + second[:12],
-            'trailing_junk': source + b'junk',
         }
         for label, compressed in cases.items():
             with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:

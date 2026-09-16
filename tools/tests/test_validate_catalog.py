@@ -221,7 +221,7 @@ class CatalogValidationTests(unittest.TestCase):
         validate_changes(repo, base)
         self.tree['size_bytes'] += 1
         self.save()
-        with self.assertRaisesRegex(ValueError, 'immutable'):
+        with self.assertRaises(ValueError):
             validate_changes(repo, base)
 
     def test_git_comparison_allows_additions_but_not_edits_or_removals(self):
@@ -234,6 +234,62 @@ class CatalogValidationTests(unittest.TestCase):
         added = self.folder / ('b'*64 + '-ingest.json'); added.write_text('{}')
         git('add', 'catalog'); validate_changes(repo, base)
         self.ingest_path.write_text('{}')
-        with self.assertRaisesRegex(ValueError, 'immutable'): validate_changes(repo, base)
+        with self.assertRaises(ValueError): validate_changes(repo, base)
         self.save(); self.tree_path.unlink()
-        with self.assertRaisesRegex(ValueError, 'immutable'): validate_changes(repo, base)
+        with self.assertRaises(ValueError): validate_changes(repo, base)
+
+    def test_withdrawal_requires_an_empty_failed_tree_and_both_result_files(self):
+        repo = self.root.parent
+        self.folder = self.root / 'gzip/v3'
+        self.folder.mkdir(parents=True)
+        self.record['kind'] = 'gzip'
+        self.tree['extractor']['version'] = '3'
+        self.ingest_path = self.folder / (self.digest + '-ingest.json')
+        self.tree_path = self.folder / (self.digest + '-tree.json')
+        self.tree['error'] = 'BadGzipHeader'
+        self.save()
+        retained = []
+        for digest, kind, version, entries, error in [
+            ('b' * 64, 'gzip', '3', [], None),
+            ('c' * 64, 'gzip', '3', [dict(path='retained.bin', type='file', sha256='d' * 64, size_bytes=2)], 'InvalidGzip'),
+            ('e' * 64, 'iso', '1', [], 'InvalidIso'),
+        ]:
+            record = dict(self.record, kind=kind, sha256=digest)
+            tree = dict(self.tree, sha256=digest, entries=entries,
+                        extractor=dict(self.tree['extractor'], version=version))
+            folder = self.root / kind / ('v' + version)
+            folder.mkdir(parents=True, exist_ok=True)
+            if error is None:
+                del tree['error']
+            else:
+                tree['error'] = error
+            pair = {}
+            for role, value in [('ingest', record), ('tree', tree)]:
+                path = folder / f'{digest}-{role}.json'
+                pair[path] = json.dumps(value)
+                path.write_text(pair[path])
+            retained.append(pair)
+
+        def git(*args):
+            return subprocess.run(['git', *args], cwd=repo, check=True,
+                                  capture_output=True, text=True).stdout.strip()
+
+        git('init', '-q')
+        git('add', 'catalog')
+        git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'Baseline')
+        base = git('rev-parse', 'HEAD')
+        self.tree_path.unlink()
+        with self.assertRaises(ValueError):
+            validate_changes(repo, base)
+        self.ingest_path.unlink()
+        validate_changes(repo, base)
+        self.assertEqual(validate_catalog(self.root), {'pairs': 4, 'isos': 2})
+
+        # Keep successful output, partial inventories and even failed source observations.
+        for pair in retained:
+            for path in pair:
+                path.unlink()
+            with self.assertRaises(ValueError):
+                validate_changes(repo, base)
+            for path, contents in pair.items():
+                path.write_text(contents)

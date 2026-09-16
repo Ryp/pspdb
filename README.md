@@ -39,8 +39,9 @@ sources. Overlapping folders are scanned as supplied, without deduplicating path
 
 Discovers ISO and PKG files, including members of ZIP archives, plus uncompressed
 NAND dumps and firmware updater PBPs as described below. Successful ISO
-extraction requires a root `UMD_DATA.BIN`; missing or invalid metadata is recorded
-as an extraction error once source identity is established. Retail PSP/PS1 PKGs
+extraction requires `UMD_DATA.BIN` at the logical image root; recognized mastering
+containers use their bounded `USER_L0.IMG` as described below. Missing or invalid
+metadata is recorded as an extraction error once source identity is established. Retail PSP/PS1 PKGs
 are decrypted by the native PKG extractor, preserving file and directory paths.
 `--store` is optional. `--threads N` caps threads (default: logical CPU
 count); `--no-progress` disables terminal progress. `--skip-existing` skips current
@@ -68,6 +69,9 @@ successful results raise `CatalogConflict`. A tree with an `error` string, inclu
 an error in an inline extraction, is an incomplete attempt and may be replaced on
 retry. Source metadata identity records remain immutable. New revisions preserve
 previous successful results.
+An empty, failed **derived** classification may be withdrawn by removing both
+files of its pair. Source observations, partial inventories and successful results
+cannot be withdrawn. The original file remains in its parent inventory.
 The same bytes may have separate source roles: an original `iso` observation and
 a nested `iso9660` extraction retain independent inventories and provenance.
 Their SHA-256/size byte identity and stored object remain shared.
@@ -84,14 +88,32 @@ on the affected file. External links stay beside the filename; errors and extrac
 badges align at the right edge. Error-bearing results are never fresh for `--skip-existing`,
 so supplying a missing helper or license allows a later run to retry them.
 
-ISO/PKG revision 5 and PBP revision 4 read SFO strings through the first NUL within
-the declared data length, allowing nonzero bytes after the terminator found in
-retail metadata. Unterminated strings, invalid text before the terminator, and
-structural bounds violations remain errors. Earlier revisions stay unchanged.
+ISO revision 6, PKG revision 5 and PBP revision 4 read SFO strings through the first
+NUL within the declared data length, allowing nonzero bytes after the terminator
+found in retail metadata. Unterminated strings, unsupported text before the
+terminator, and structural bounds violations remain errors. Earlier revisions stay unchanged.
 
 SFO metadata is parsed in memory by Zig-PSP's `tools/sfo/src/main.zig`.
 Its native reader validates bounds and borrows the key/data pools; PSPDB only
 selects and validates its catalog fields. No SDK source patch is applied.
+
+ISO titles share PKG's narrow legacy normalization: an otherwise ASCII `TITLE`
+may contain CP1252 byte `0x99`, which becomes UTF-8 `™` in metadata only. Original
+SFO bytes remain unchanged; other invalid high bytes are rejected. Generic PBP
+and standalone updater validation retain their existing strict UTF-8 behavior.
+
+ISO revision 6 and nested ISO9660 revision 4 preserve valid UTF-8 filenames
+verbatim. Invalid-UTF-8 Rock Ridge names are converted strictly from CP932;
+undecodable input and unsafe paths remain errors. Shared-extent aliases retain
+byte-exact, case-sensitive target lookup.
+
+A mastering wrapper must contain exactly four regular root files:
+`CONT_L0.IMG`, `MDI.IMG`, `UMD_AUTH.DAT` and `USER_L0.IMG`. The reader validates the
+inner ISO's bounds and checks that libarchive's effective file view agrees with
+the borrowed extents. Metadata comes from the logical image and records
+`logical_image_path: "USER_L0.IMG"`. The outer SHA-256, SHA-1 and size remain
+unchanged; all four outer files remain visible, and the inner image gets its own
+hash-keyed ISO9660 inventory. An ordinary root `UMD_DATA.BIN` takes precedence.
 
 Metadata is read independently before file inventory/storage: `UMD_DATA.BIN`
 and both game/video `PARAM.SFO` paths. When both SFOs exist, game metadata takes
@@ -233,7 +255,7 @@ their separate inventories and freshness roles. **psn/update** is unchanged.
 Reachable extraction errors preserve successful contents and keep the updater
 eligible for `--skip-existing` retries.
 
-PRX revision 11, gzip revision 3, KL3E/KL4E revision 5 and PGD revision 4 use
+PRX revision 12, gzip revision 4, KL3E/KL4E revision 5 and PGD revision 4 use
 filename-independent output names in hash-keyed trees. Occurrence naming rules
 restore source-specific display/download names. This prevents catalog conflicts
 when identical firmware components occur under different names or ELF offsets.
@@ -554,9 +576,13 @@ Native source normalization and patch lists live in `ingest/build.zig`;
 the fetched dependencies. Standalone builders explicitly opt into patching
 their already isolated temporary source directory.
 
-PSAR revision 3 runs the pinned pspdecrypt algorithms through a native memory
+PSAR revision 4 runs the pinned pspdecrypt algorithms through a native memory
 bridge. It preserves final-write semantics, decoded table lengths, secondary
 compression members, reboot modules, IPL stages and kernel-key outputs.
+Authenticated IPL kernel-key output may contain one 16-byte key or at least two
+keys. The second-key XOR is applied only when those bytes exist; shorter output
+and a partial second key remain errors. Original PSAR framing and suffix bytes
+are not rewritten.
 The collector retains at most 8 MiB of output payloads. Larger archives retain
 only final names/event positions and replay the immutable source to emit final
 writes; this is a buffering policy, not an output-size limit or a process-wide
@@ -588,7 +614,7 @@ Python adapters, embedded in the binary and run through uv.
 PRX and KL3E/KL4E decode in memory through a pinned, patched pspdecrypt library
 linked by the Zig build. They need no external helper, NAS input reread, or
 temporary output files. This links GPLv3 pspdecrypt code into the ingest binary.
-PRX revision 11 supports `~PSP` modules and `PSPsysGP` firmware resources,
+PRX revision 12 supports `~PSP` modules and `PSPsysGP` firmware resources,
 with layouts 0/1/2/4/5/6; legacy layout 8 shares the layout-0 algorithm.
 Coverage includes standard update XOR recipes and Go firmware index keys.
 Known resource tags select an exact recipe, and integrity failures are terminal.
@@ -597,10 +623,15 @@ plaintext; type-6 verification uses correctly sized 21-byte curve scalars.
 Mutable KIRK state is thread-local. No unchecked payload-only fallback remains.
 Separate outer Sony signature fields are not verified: valid inner authentication
 does not establish whole-updater authenticity or installation safety.
+Once a recipe's outer header hash matches, failed KIRK integrity is reported as
+`PrxIntegrityFailed`; it cannot fall through to console-signcheck normalization
+or become a misleading missing-fuse dependency.
 
 Generic layouts 3/7/10 and runtime-key-dependent PAUTH/NPDRM modules are not
 supported by the standalone PRX path. PAUTH needs the game's runtime work area;
 NPDRM can require a per-module key. Fixed XOR constants do not replace those keys.
+ARK's custom gzip/MD5 wrappers are not authenticated PRX envelopes and remain
+unsupported; they are not silently inflated.
 
 `OPNSSMP.PGD` revision 4 authenticates and decrypts the observed version-1,
 DRM-type-1 profile in memory with the fixed DNAS key. The decoder validates the
@@ -637,11 +668,18 @@ Uncompressed payloads retain their full KIRK-declared length, including any byte
 beyond `elf_size`. PRX-contained gzip validates one member's CRC32/ISIZE; bytes
 after that member belong to the envelope.
 
-Standalone gzip decoding uses Zig's standard-library DEFLATE decoder on the retained
+Standalone gzip revision 4 uses Zig's standard-library DEFLATE decoder on the retained
 input buffer, without a Python process, NAS input reread, or temporary output
 files. Each member's CRC32 and decoded size are checked before any output is
 published; concatenated members and zero padding retain Python gzip behavior.
-The single decoded child is named `module.elf`, `payload.gz`, or `payload.bin`
+A validated gzip prefix followed by a non-gzip suffix makes the entire input
+opaque: the original file remains intact, with no decoded prefix or gzip tree
+published. Classification happens during the deduplicated decode, not a second
+inflate probe. Recognized later members still require valid headers, DEFLATE,
+CRC32 and size; truncation remains an error. Destroyed next-member magic cannot
+be distinguished from an enclosing-format suffix. Historical empty failed
+classifications must be withdrawn as complete pairs to prevent stale fallback.
+A standalone stream's decoded child is named `module.elf`, `payload.gz`, or `payload.bin`
 according to its signature, then enters normal storage and recursive extraction.
 Standalone KL3E/KL4E streams similarly retain their compressed bytes and get a decoded child.
 ELF files containing bounded `~PSP` wrappers expose them as `embedded-<offset>.psp`

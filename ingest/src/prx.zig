@@ -39,6 +39,7 @@ fn decrypt_plain(allocator: std.mem.Allocator, bytes: []const u8) !Decrypted {
         -2 => return error.InvalidPrxSize,
         -3 => return error.PrxDecryptionFailed,
         -4 => return error.PrxSizeMismatch,
+        -5 => return error.PrxIntegrityFailed,
         else => if (result <= 0 or result != expected) return error.PrxSizeMismatch,
     }
     return .{ .bytes = try allocator.realloc(output, expected), .elf_size = elf_size };
@@ -320,9 +321,25 @@ test "PRX preserves unaligned input and rejects truncation or modified headers" 
     try std.testing.expect(std.mem.allEqual(u8, output[payload.len..], 0));
 
     // Missing CBC padding previously let libkirk read a block beyond the file.
-    try std.testing.expectError(error.PrxDecryptionFailed, decode(allocator, unaligned[0 .. unaligned.len - 1], null));
+    try std.testing.expectError(error.PrxIntegrityFailed, decode(allocator, unaligned[0 .. unaligned.len - 1], null));
     unaligned[0x0a] ^= 1;
     try std.testing.expectError(error.PrxDecryptionFailed, decode(allocator, unaligned, null));
+}
+
+test "matched PRX integrity failures remain terminal with or without console context" {
+    const allocator = std.testing.allocator;
+    const fixture = try signed_fixture(allocator, "\x7fELF authenticated ciphertext");
+    defer allocator.free(fixture);
+    fixture[0x150] ^= 1;
+    const original = try allocator.dupe(u8, fixture);
+    defer allocator.free(original);
+    var key = kirk.Cmd8Key.init(0x0000123456789abc);
+    defer key.deinit();
+    for ([_]?*const kirk.Cmd8Key{ null, &key }) |context| {
+        try std.testing.expectError(error.PrxIntegrityFailed, decode(allocator, fixture, context));
+        try std.testing.expectError(error.PrxIntegrityFailed, extract(allocator, fixture, context));
+        try std.testing.expectEqualSlices(u8, original, fixture);
+    }
 }
 
 // Sony updater PSAR members F0/vsh/etc/index_05g.dat (Go) and index_01g.dat
@@ -394,9 +411,15 @@ fn expect_resource_plaintext(encrypted: []const u8, plaintext: []const u8) !void
 fn expect_resource_rejected(encrypted: []const u8) !void {
     var input: [496]u8 = undefined;
     @memcpy(&input, encrypted);
-    try std.testing.expectError(error.PrxDecryptionFailed, decode(std.testing.allocator, &input, null));
+    if (decode(std.testing.allocator, &input, null)) |unexpected| {
+        std.testing.allocator.free(unexpected);
+        return error.AcceptedCorruptPrx;
+    } else |_| {}
     try std.testing.expectEqualSlices(u8, encrypted, &input);
-    try std.testing.expectError(error.PrxDecryptionFailed, extract(std.testing.allocator, &input, null));
+    if (extract(std.testing.allocator, &input, null)) |unexpected| {
+        std.testing.allocator.free(unexpected.bytes);
+        return error.AcceptedCorruptPrx;
+    } else |_| {}
     try std.testing.expectEqualSlices(u8, encrypted, &input);
 }
 

@@ -954,8 +954,9 @@
 +            
              szDataPath = outdir + "/kkeys_" + std::string(filename);
              // Added the final xor to create to correct second key
-+            if (decSize < 32) return 1;
-             for(int j=0;j<0x10;j++) outBuf[j+0x10] ^= scxor[j];
++            if (decSize != 16 && decSize < 32) return 1;
+-            for(int j=0;j<0x10;j++) outBuf[j+0x10] ^= scxor[j];
++            if (decSize >= 32) for(int j=0;j<0x10;j++) outBuf[j+0x10] ^= scxor[j];
 -            WriteFile(szDataPath.c_str(), outBuf, decSize);
 +            if (!sink.file(szDataPath.c_str(), outBuf, decSize)) return 1;
          }

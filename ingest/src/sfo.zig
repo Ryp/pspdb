@@ -1,7 +1,7 @@
 const std = @import("std");
 
-/// Values borrow the SFO buffer. Missing metadata is allowed; malformed input
-/// is rejected rather than inventing metadata or silently misreading offsets.
+/// Values borrow the SFO buffer, except a normalized title owned by the caller.
+/// Missing metadata is allowed; malformed input is rejected.
 pub const Metadata = struct {
     disc_version: ?[]const u8 = null,
     disc_id: ?[]const u8 = null,
@@ -9,12 +9,10 @@ pub const Metadata = struct {
     required_firmware: ?[]const u8 = null,
 };
 
-/// Select catalog fields from Zig-PSP's parsed SFO. Values still borrow bytes.
-pub fn parse(allocator: std.mem.Allocator, bytes: []const u8) !Metadata {
-    return parseImpl(allocator, bytes, null, null);
-}
-
-pub fn parsePkg(allocator: std.mem.Allocator, bytes: []const u8, title_owner: *[]u8) !Metadata {
+/// A supplied title owner must start empty and be freed even if parsing fails.
+/// Without an owner, selected strings retain strict UTF-8 validation.
+/// Normalization affects catalog text only, never the original SFO bytes.
+pub fn parse(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u8) !Metadata {
     return parseImpl(allocator, bytes, title_owner, null);
 }
 
@@ -82,8 +80,8 @@ fn parseImpl(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u
         const end = std.mem.indexOfScalar(u8, data, 0) orelse return error.InvalidSfo;
         const text = data[0..end];
         if (!std.unicode.utf8ValidateSlice(text)) {
-            // Some retail PS1 SFOs use CP1252 trademark in otherwise ASCII TITLE.
-            // Normalize catalog text only; the original SFO object is untouched.
+            // Some PSP and PS1 SFOs use CP1252 trademark in otherwise ASCII TITLE.
+            // No other legacy high byte is accepted.
             if (!std.mem.eql(u8, key, "TITLE") or title_owner == null) return error.InvalidSfo;
             var length: usize = 0;
             for (text) |c| {
@@ -109,8 +107,10 @@ fn parseImpl(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u
 }
 
 test "missing and malformed SFO" {
-    try std.testing.expectEqual(null, (try parse(std.testing.allocator, "")).disc_id);
-    try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, "not an SFO"));
+    var owner: []u8 = &.{};
+    defer std.testing.allocator.free(owner);
+    try std.testing.expectEqual(null, (try parse(std.testing.allocator, "", &owner)).disc_id);
+    try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, "not an SFO", &owner));
 }
 
 fn fixture() [74]u8 {
@@ -136,30 +136,33 @@ fn fixture() [74]u8 {
 
 test "Zig-PSP SFO fields borrow the original input and ignore unrelated types" {
     var bytes = fixture();
-    const result = try parse(std.testing.allocator, &bytes);
+    var owner: []u8 = &.{};
+    defer std.testing.allocator.free(owner);
+    const result = try parse(std.testing.allocator, &bytes, &owner);
     try std.testing.expectEqualStrings("Demo", result.title.?);
     try std.testing.expectEqual(bytes[65..].ptr, result.title.?.ptr);
     try std.testing.expectEqual(null, result.disc_id);
     // Unknown formats in unrelated fields are retained by the dependency.
     std.mem.writeInt(u16, bytes[38..40], 0xffff, .little);
-    try std.testing.expectEqualStrings("Demo", (try parse(std.testing.allocator, &bytes)).title.?);
+    try std.testing.expectEqualStrings("Demo", (try parse(std.testing.allocator, &bytes, &owner)).title.?);
 }
 
 test "SFO strings end at the first NUL within their declared data" {
     var bytes = fixture();
     @memcpy(bytes[65..70], "Hi\x00\x04\xff");
-    try std.testing.expectEqualStrings("Hi", (try parse(std.testing.allocator, &bytes)).title.?);
     var owner: []u8 = &.{};
     defer std.testing.allocator.free(owner);
-    try std.testing.expectEqualStrings("Hi", (try parsePkg(std.testing.allocator, &bytes, &owner)).title.?);
+    try std.testing.expectEqualStrings("Hi", (try parse(std.testing.allocator, &bytes, &owner)).title.?);
 
     // A terminator in the allocated slot but outside data_len is not valid.
     std.mem.writeInt(u32, bytes[24..28], 2, .little);
-    try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, &bytes));
+    try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, &bytes, &owner));
 }
 
 test "Zig-PSP SFO rejects malformed tables, keys, values and duplicate metadata" {
     const allocator = std.testing.allocator;
+    var owner: []u8 = &.{};
+    defer allocator.free(owner);
     for (0..11) |case| {
         var bytes = fixture();
         switch (case) {
@@ -182,23 +185,23 @@ test "Zig-PSP SFO rejects malformed tables, keys, values and duplicate metadata"
             },
             else => unreachable,
         }
-        try std.testing.expectError(error.InvalidSfo, parse(allocator, &bytes));
+        try std.testing.expectError(error.InvalidSfo, parse(allocator, &bytes, &owner));
     }
 
     var bytes = fixture();
     for (0..bytes.len) |length| {
         if (length == 0) continue; // Missing metadata is supported.
-        try std.testing.expectError(error.InvalidSfo, parse(allocator, bytes[0..length]));
+        try std.testing.expectError(error.InvalidSfo, parse(allocator, bytes[0..length], &owner));
     }
 }
 
-test "PKG title normalizes legacy trademark without changing source" {
+test "selected title normalizes legacy trademark without changing source" {
     var bytes = fixture();
     bytes[68] = 0x99;
+    try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, &bytes, null));
     var owner: []u8 = &.{};
     defer std.testing.allocator.free(owner);
-    const result = try parsePkg(std.testing.allocator, &bytes, &owner);
+    const result = try parse(std.testing.allocator, &bytes, &owner);
     try std.testing.expectEqualStrings("Dem™", result.title.?);
     try std.testing.expectEqual(@as(u8, 0x99), bytes[68]);
-    try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, &bytes));
 }

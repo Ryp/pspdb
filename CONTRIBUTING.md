@@ -31,8 +31,8 @@ Copy **new pairs** into the same relative locations under `catalog/`, preserving
 existing files. For example:
 
 ```text
-catalog/iso/v5/<source-sha256>-ingest.json
-catalog/iso/v5/<source-sha256>-tree.json
+catalog/iso/v6/<source-sha256>-ingest.json
+catalog/iso/v6/<source-sha256>-tree.json
 ```
 
 PKG inputs use `catalog/pkg/v5/<source-sha256>-ingest.json` and the adjacent
@@ -69,15 +69,19 @@ PR description. Whole-image hashes in the ingest records identify the sources.
 
 PR checks validate the JSON schemas, filenames, source identity and size
 consistency, paired records, extractor revisions, and tree paths. They also
-reject edits to successful results, renames, and deletions of existing catalog
-records. Error-bearing extraction trees are incomplete attempts and may be updated
-on retry, preserving their source identity and revision. These checks validate
-catalog consistency; they cannot verify file contents without the original sources.
+reject edits to successful results and removal of source observations. Error-bearing
+extraction trees are incomplete attempts and may be updated on retry, preserving
+their source identity and revision. A proven false **derived** classification may
+be withdrawn only by deleting both its metadata and tree files, and only if its
+failed tree contains no entries. Partial inventories and successful results must
+remain. These checks validate catalog consistency; they cannot verify file contents
+without the original sources.
 CI does not need those sources or the extraction tools.
 
 Extractor fixes belong in a new revision: update
 [tools/extractor_versions.json](tools/extractor_versions.json), rebuild, and add
-results under the new `vN` folder. Keep historical results intact. The website
+results under the new `vN` folder. Keep historical results intact except for the
+empty failed derived-pair withdrawal described above. The website
 selects the newest complete pair for each extractor kind and source hash.
 
 ## Initial catalog
@@ -89,9 +93,7 @@ start at revision 1 in this tracked baseline, including PRX and gzip, which had
 higher internal revision labels before the reset. This was a layout/provenance-label
 migration, not a new extraction run. Future extractor changes increment from this
 baseline and retain previous results.
-Native KL3E and KL4E extraction uses revision 2; PRX revision 4 folds decryption
-and contained gzip/KL/2RLZ decompression into one result, including `PSPsysGP`
-firmware resources. PSAR revision 3 and RCO revision 2 also run natively and use
-`pspdb-ingest` provenance, without an external executable/configuration hash.
-Their prior helper-backed revisions keep their original provenance unchanged.
-Older revisions remain as historical records; no production re-ingest is implied.
+Current native revisions and decoder boundaries are documented in the shared
+registry and [extractor documentation](README.md#extractors). Historical
+helper-backed revisions keep their original provenance unchanged. Changing the
+registry does not imply that every historical source has been re-ingested.

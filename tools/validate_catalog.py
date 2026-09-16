@@ -104,15 +104,30 @@ def validate_catalog(root, versions=None):
 
 
 def validate_changes(repo, base):
-    """Completed results are immutable; failed extraction trees may be retried."""
+    """Preserve source observations and output; allow retries or empty derived-pair withdrawal."""
     result = subprocess.run(['git', 'diff', '--no-renames', '--name-status', '-z', base, '--', 'catalog/'],
                             cwd=repo, check=True, capture_output=True)
     tokens = result.stdout.decode('utf-8').split('\0')
-    for status, path in zip(tokens[0::2], tokens[1::2]):
-        if status == 'A':
+    changes = list(zip(tokens[0::2], tokens[1::2]))
+    deleted = {path for status, path in changes if status == 'D'}
+    withdrawn = set()
+    for status, path in changes:
+        if status == 'A' or path in withdrawn:
             continue
         relative = Path(path).relative_to('catalog').as_posix()
         match = RESULT.fullmatch(relative)
+        if status == 'D' and match and match[1] not in ('iso', 'pkg', 'nand', 'update'):
+            stem = f'catalog/{match[1]}/v{match[2]}/{match[3]}'
+            pair = {stem + '-ingest.json', stem + '-tree.json'}
+            if pair <= deleted:
+                old = json.loads(subprocess.run(
+                    ['git', 'show', f'{base}:{stem}-tree.json'], cwd=repo, check=True,
+                    capture_output=True, text=True).stdout, object_pairs_hook=unique_object)
+                # A false format classification has no extracted output to retain.
+                # Never withdraw partial inventories or one half of a result pair.
+                if old['entries'] == [] and extraction_error(old) is not None:
+                    withdrawn.update(pair)
+                    continue
         if status == 'M' and match and match.group(4) == 'tree':
             old = json.loads(subprocess.run(
                 ['git', 'show', f'{base}:{path}'], cwd=repo, check=True,
@@ -129,7 +144,7 @@ def validate_changes(repo, base):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--catalog', type=Path, default=REPO / 'catalog')
-    parser.add_argument('--base', help='Git base commit/ref; reject changes or deletions to existing catalog files')
+    parser.add_argument('--base', help='Git base commit/ref; preserve source observations and successful output, allowing failed retries or empty derived-pair withdrawal')
     args = parser.parse_args()
     try:
         summary = validate_catalog(args.catalog)

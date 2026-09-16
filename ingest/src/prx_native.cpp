@@ -28,6 +28,9 @@ extern "C" int pspdb_prx_decode(const uint8_t *input, size_t input_len,
     // signatures before releasing plaintext. Separate external PRX signatures
     // are not verified; there is no unauthenticated payload-only fallback.
     const int result = pspDecryptPRX(input, output, uint32_t(input_len), nullptr, false);
+    // A matched PRX header followed by failed KIRK integrity is terminal,
+    // including across Zig's optional console-signcheck normalization.
+    if (result == -4) return -5;
     if (result < 0) return -3;
     if (uint32_t(result) != expected) return -4;
     return result;

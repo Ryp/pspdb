@@ -141,6 +141,7 @@ fn publish_iso(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
         disc_version: ?[]const u8,
         title: ?[]const u8,
         required_firmware: ?[]const u8,
+        logical_image_path: ?[]const u8,
     };
     const record = .{
         .kind = "iso",
@@ -157,6 +158,7 @@ fn publish_iso(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
             .disc_version = fields.disc_version,
             .title = fields.title,
             .required_firmware = fields.required_firmware,
+            .logical_image_path = result.logical_image_path,
         }) else null,
     };
     const tree = .{

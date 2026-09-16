@@ -126,22 +126,33 @@ fn hash_source(bytes: []const u8) SourceHashes {
     };
 }
 
-fn read_metadata(allocator: std.mem.Allocator, bytes: []const u8) !Result {
+fn read_metadata(allocator: std.mem.Allocator, bytes: []const u8, mastering: *?iso.Mastering) !Result {
     if (bytes.len == 0) return error.EmptyFile;
-    const umd_bytes = (try iso.read_file(allocator, bytes, "UMD_DATA.BIN")) orelse return error.MissingUmdData;
-    var result: Result = .{ .size_bytes = bytes.len, .umd_bytes = umd_bytes, .record = undefined };
+    var logical_bytes = bytes;
+    const umd_bytes = (try iso.read_file(allocator, logical_bytes, "UMD_DATA.BIN")) orelse inner: {
+        mastering.* = (try iso.mastering(allocator, bytes)) orelse return error.MissingUmdData;
+        logical_bytes = mastering.*.?.logical_bytes();
+        break :inner (try iso.read_file(allocator, logical_bytes, "UMD_DATA.BIN")) orelse return error.MissingUmdData;
+    };
+    var result: Result = .{
+        .size_bytes = bytes.len,
+        .umd_bytes = umd_bytes,
+        .logical_image_path = if (mastering.* != null) "USER_L0.IMG" else null,
+    };
     errdefer result.deinit(allocator);
     result.record = try umd.parse(umd_bytes);
-    result.game_sfo_bytes = (try iso.read_file(allocator, bytes, "PSP_GAME/PARAM.SFO")) orelse &.{};
-    result.video_sfo_bytes = (try iso.read_file(allocator, bytes, "UMD_VIDEO/PARAM.SFO")) orelse &.{};
-    const game = try sfo.parse(allocator, result.game_sfo_bytes);
-    const video = try sfo.parse(allocator, result.video_sfo_bytes);
+    result.game_sfo_bytes = (try iso.read_file(allocator, logical_bytes, "PSP_GAME/PARAM.SFO")) orelse &.{};
+    result.video_sfo_bytes = (try iso.read_file(allocator, logical_bytes, "UMD_VIDEO/PARAM.SFO")) orelse &.{};
+    const game = try sfo.parse(allocator, result.game_sfo_bytes, &result.iso_title);
+    var video_title: []u8 = &.{};
+    defer allocator.free(video_title);
+    const video = try sfo.parse(allocator, result.video_sfo_bytes, if (result.game_sfo_bytes.len == 0) &result.iso_title else &video_title);
     // One disc-level metadata record: prefer the game SFO when both exist.
     result.metadata = if (result.game_sfo_bytes.len != 0) game else video;
     if (result.game_sfo_bytes.len == 0 and result.video_sfo_bytes.len == 0) {
-        result.updater_sfo_bytes = (try iso.read_file(allocator, bytes, "PSP_GAME/SYSDIR/UPDATE/PARAM.SFO")) orelse &.{};
+        result.updater_sfo_bytes = (try iso.read_file(allocator, logical_bytes, "PSP_GAME/SYSDIR/UPDATE/PARAM.SFO")) orelse &.{};
         // An updater-only disc takes its title here, but MSTKUPDATE is not its disc ID.
-        const updater = try sfo.parse(allocator, result.updater_sfo_bytes);
+        const updater = try sfo.parse(allocator, result.updater_sfo_bytes, &result.iso_title);
         result.metadata.title = updater.title;
         result.metadata.disc_version = updater.disc_version;
     }
@@ -151,20 +162,21 @@ fn read_metadata(allocator: std.mem.Allocator, bytes: []const u8) !Result {
 /// Read and validate metadata first, then inventory, hash and store file contents.
 /// Only libarchive's private descriptor view is patched; whole-ISO hashing uses
 /// the unchanged input. The reader retains one file for the synchronous callback.
-pub fn process_iso(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8) !Result {
-    return (try process_iso_checked(allocator, io, bytes, store, null, null)).?;
-}
-
-pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
+pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, input: memory.View, store: ?[]const u8, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
+    const bytes = input.bytes;
     const hashes = hash_source(bytes);
     if (catalog) |root| {
         if (try catalog_io.contains(allocator, io, root, hashes.sha256, bytes.len, .iso)) return null;
     }
-    var result = read_metadata(allocator, bytes) catch |err| return try source_error(allocator, bytes, hashes, .iso, err);
+    var mastering: ?iso.Mastering = null;
+    var result = read_metadata(allocator, bytes, &mastering) catch |err| return try source_error(allocator, bytes, hashes, .iso, err);
     errdefer result.deinit(allocator);
     var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .pair_documents = true, .paths = .init(allocator) };
     defer inventory.deinit();
-    iso.walk(allocator, bytes, &inventory, Inventory.emit_view) catch |err| {
+    (if (mastering) |image|
+        iso.walk_mastering(image, input.owner, &inventory, Inventory.emit_view)
+    else
+        iso.walk(allocator, bytes, &inventory, Inventory.emit_view)) catch |err| {
         result.@"error" = try extraction_error(&inventory, err);
     };
     try inventory.extract_documents();
@@ -204,7 +216,7 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
             // its entire game payload a second time just to read PARAM.SFO.
             const parsed = containers.parse_pbp(view.bytes) catch return;
             self.result.pbp_sfo_bytes = try self.inventory.allocator.dupe(u8, parsed.get("PARAM.SFO").?);
-            const inner = sfo.parsePkg(self.inventory.allocator, self.result.pbp_sfo_bytes, &self.result.pbp_title) catch |err| switch (err) {
+            const inner = sfo.parse(self.inventory.allocator, self.result.pbp_sfo_bytes, &self.result.pbp_title) catch |err| switch (err) {
                 error.OutOfMemory => return err,
                 else => return,
             };
@@ -230,7 +242,7 @@ fn read_pkg_metadata(allocator: std.mem.Allocator, package: pkg.Package) !Result
     if (try package.read_file(allocator, "PARAM.SFO")) |metadata| {
         result.pkg_sfo_bytes = metadata;
         if (metadata.len == 0) return error.InvalidSfo;
-        result.metadata = try sfo.parsePkg(allocator, metadata, &result.pkg_title);
+        result.metadata = try sfo.parse(allocator, metadata, &result.pkg_title);
     } else if (package.content_type != 9) {
         return error.MissingPkgMetadata;
     }
@@ -834,6 +846,8 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
     var failure: ?[]const u8 = null;
     defer if (failure) |message| allocator.free(message);
     const provenance = execute_task(allocator, task, dispatch, &inventory, &output) catch |err| blk: {
+        // A validated gzip prefix with an enclosing suffix stays opaque.
+        if (task.kind == .gzip and err == error.NotStandaloneGzip) return inventory.counts;
         failure = try extraction_error(&inventory, err);
         break :blk orchestrator(task.kind);
     };
@@ -918,9 +932,7 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
         },
         .pbp => blk: {
             const pbp = try containers.parse_pbp(task.input.bytes);
-            var title: []u8 = &.{};
-            defer allocator.free(title);
-            _ = try sfo.parsePkg(allocator, pbp.get("PARAM.SFO") orelse "", &title);
+            _ = try sfo.parse(allocator, pbp.get("PARAM.SFO") orelse "", null);
             if (pbp.get("DATA.BIN")) |psar_bytes| {
                 if (extractor.detect(psar_bytes) == .npumdimg) {
                     const data = try data_psp.Header.parse(pbp.get("DATA.PSP") orelse return error.MissingDataPsp);
@@ -1130,7 +1142,7 @@ pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, 
     };
     defer input.release();
     const result = switch (kind) {
-        .iso => try process_iso_checked(allocator, io, input.bytes, store, catalog, dispatch),
+        .iso => try process_iso_checked(allocator, io, input, store, catalog, dispatch),
         .pkg => try process_pkg_checked(allocator, io, input.bytes, store, catalog, dispatch),
         .nand => try process_nand_checked(allocator, io, input.bytes, store, catalog, dispatch, nand_fuse_directory),
         .update => try process_update_checked(allocator, io, input, store, catalog, dispatch),
@@ -1143,7 +1155,9 @@ pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, 
 
 test "unparseable source publishes identity without invented metadata" {
     const allocator = std.testing.allocator;
-    const result = try process_iso(allocator, std.testing.io, "not an ISO", null);
+    const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, "not an ISO"));
+    defer input.release();
+    const result = (try process_iso_checked(allocator, std.testing.io, input, null, null, null)).?;
     defer result.deinit(allocator);
     try std.testing.expectEqualStrings("InvalidIso", result.@"error".?);
     try std.testing.expect(!result.has_metadata);
@@ -1338,7 +1352,9 @@ test "NAND FAT queued PBP children decode after their partition and walker are g
         defer allocator.free(metadata);
         const expected = nand_test_pbp(title);
         try std.testing.expectEqualSlices(u8, expected[40..], metadata);
-        try std.testing.expectEqualStrings(title, (try sfo.parse(allocator, metadata)).title.?);
+        var title_owner: []u8 = &.{};
+        defer allocator.free(title_owner);
+        try std.testing.expectEqualStrings(title, (try sfo.parse(allocator, metadata, &title_owner)).title.?);
     }
 }
 

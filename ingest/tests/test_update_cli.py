@@ -124,6 +124,81 @@ class UpdateCliTests(unittest.TestCase):
             self.run_ingest(inputs, "--catalog", catalog, "--store", store, "--skip-existing")
             self.assertEqual(snapshot(catalog), old)
 
+    def test_compound_gzip_stays_opaque_while_standalone_children_decode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            inputs, catalog, store = (base / name for name in ("inputs", "catalog", "store"))
+            inputs.mkdir()
+            prefix = b"compound prefix must not be published"
+            compound = gzip.compress(prefix, mtime=0) + bytes(32) + b"PACK\x07compound suffix"
+            plain = b"standalone child without gzip extension"
+            first, second = b"first concatenated member", b"second concatenated member"
+            compressed = gzip.compress(plain, mtime=0)
+            concatenated = gzip.compress(first, mtime=0) + gzip.compress(second, mtime=0)
+            padded = gzip.compress(second, mtime=0) + bytes(16) + gzip.compress(first, mtime=0) + bytes(32)
+            files = {
+                "F0/data.bin": compound,
+                "F0/same-content.gz": compound,
+                "F0/module.bin": compressed,
+                "F0/concatenated.bin": concatenated,
+                "F0/padded.bin": padded,
+            }
+            archive = psar([("flash0:/" + name.removeprefix("F0/"), data) for name, data in files.items()])
+            source = pbp({"PARAM.SFO": sfo(METADATA), "DATA.BIN": archive})
+            source_path = inputs / "updater.pbp"
+            source_path.write_bytes(source)
+            output, _ = self.run_ingest(inputs, "--catalog", catalog, "--store", store, threads=4)
+            self.assertNotIn("Extraction error:", output)
+            parent = self.assert_inventory(catalog, "psar", archive, files)
+            for entry in parent["entries"]:
+                if entry.get("sha256") == digest(compound):
+                    self.assertNotIn("extraction", entry)
+            self.assertFalse(catalog_tree(catalog, "gzip", compound).exists())
+            self.assertFalse(object_path(store, prefix).exists())
+            for data in files.values():
+                self.assertEqual(object_path(store, data).read_bytes(), data)
+            for data, decoded in ((compressed, plain), (concatenated, first + second), (padded, second + first)):
+                self.assert_inventory(catalog, "gzip", data, {"payload.bin": decoded})
+                self.assertEqual(object_path(store, decoded).read_bytes(), decoded)
+            self.assertEqual(source_path.read_bytes(), source)
+
+    def test_corrupt_gzip_members_publish_failures_without_decoded_prefixes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            inputs, catalog, store = (base / name for name in ("inputs", "catalog", "store"))
+            inputs.mkdir()
+            plain = b"validated prefix of a corrupt stream"
+            member = gzip.compress(plain, mtime=0)
+            crc = bytearray(member)
+            crc[-8] ^= 1
+            size = bytearray(member)
+            size[-4] ^= 1
+            method = bytearray(member)
+            method[2] = 0
+            files = {
+                "F0/first-crc.bin": bytes(crc) + b"\0PACK",
+                "F0/next-crc.bin": member + bytes(crc),
+                "F0/next-size.bin": member + bytes(size),
+                "F0/next-method.bin": member + bytes(method),
+                "F0/next-trailer.bin": member + member[:-1],
+                "F0/next-header.bin": member + b"\0\x1f\x8b",
+                "F0/next-name.bin": member + b"\x1f\x8b\x08\x08" + bytes(6) + b"unterminated",
+            }
+            archive = psar([("flash0:/" + name.removeprefix("F0/"), data) for name, data in files.items()])
+            source = pbp({"PARAM.SFO": sfo(METADATA), "DATA.BIN": archive})
+            (inputs / "updater.pbp").write_bytes(source)
+            self.run_ingest(inputs, "--catalog", catalog, "--store", store)
+            self.assert_inventory(catalog, "psar", archive, files)
+            for name, data in files.items():
+                with self.subTest(name=name):
+                    failure = json.loads(catalog_tree(catalog, "gzip", data).read_text())
+                    self.assertTrue(failure["error"])
+                    self.assertNotEqual(failure["error"], "NotStandaloneGzip")
+                    self.assertEqual(failure["entries"], [])
+                    self.assertEqual(object_path(store, data).read_bytes(), data)
+            for decoded in (plain, plain + plain):
+                self.assertFalse(object_path(store, decoded).exists())
+
     def test_exact_sections_variants_metadata_and_deferred_children(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

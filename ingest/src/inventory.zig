@@ -110,6 +110,8 @@ pub const Result = struct {
     game_sfo_bytes: []u8 = &.{},
     video_sfo_bytes: []u8 = &.{},
     updater_sfo_bytes: []u8 = &.{},
+    iso_title: []u8 = &.{},
+    logical_image_path: ?[]const u8 = null,
     metadata: sfo.Metadata = .{},
     has_metadata: bool = true,
     entries: []Entry = &.{},
@@ -130,6 +132,7 @@ pub const Result = struct {
         allocator.free(self.game_sfo_bytes);
         allocator.free(self.video_sfo_bytes);
         allocator.free(self.updater_sfo_bytes);
+        allocator.free(self.iso_title);
         if (self.@"error") |message| allocator.free(message);
         for (self.entries) |entry| entry.deinit(allocator);
         allocator.free(self.entries);

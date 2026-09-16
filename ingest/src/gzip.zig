@@ -65,6 +65,8 @@ pub fn decode_member_bounded(allocator: std.mem.Allocator, bytes: []const u8, li
 }
 
 /// Decode all members before exposing output; verify each trailer's CRC and size.
+/// A non-gzip suffix after a validated member is NotStandaloneGzip, never a
+/// successful prefix extraction. Callers may leave that entire input opaque.
 pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
     var input: std.Io.Reader = .fixed(bytes);
     var output: std.Io.Writer.Allocating = .init(allocator);
@@ -77,6 +79,15 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
         };
         // Python's gzip reader accepts zero padding after and between members.
         while (input.seek < bytes.len and bytes[input.seek] == 0) input.seek += 1;
+        if (input.seek == bytes.len) break;
+        const tail = bytes[input.seek..];
+        // Keep malformed methods and truncated headers fatal when gzip magic
+        // survives (including a lone first magic byte). Only a validated member
+        // permits compound classification; no decompressed prefix escapes.
+        // An arbitrary suffix is indistinguishable from a next member whose
+        // magic was destroyed, so those bytes make the whole input opaque.
+        if (tail[0] != 0x1f or (tail.len > 1 and tail[1] != 0x8b))
+            return error.NotStandaloneGzip;
     }
     return output.toOwnedSlice();
 }
@@ -103,10 +114,8 @@ test "gzip enclosing member boundary differs from standalone member and padding 
     const joined = try decode(allocator, member ++ "\x00\x00" ++ member ++ "\x00");
     defer allocator.free(joined);
     try std.testing.expectEqualStrings("abcabc", joined);
-    if (decode(allocator, member ++ "\x00envelope tail")) |unexpected| {
-        allocator.free(unexpected);
-        return error.UnexpectedGzipSuccess;
-    } else |_| {}
+    try std.testing.expectError(error.NotStandaloneGzip, decode(allocator, member ++ "\x00envelope tail"));
+    try std.testing.expectError(error.NotStandaloneGzip, extract(allocator, member ++ "\x00PACK\x07"));
     for (0..member.len) |length| {
         if (decode_member_into(member[0..length], &output)) |_| {
             return error.UnexpectedGzipSuccess;
@@ -118,4 +127,34 @@ test "gzip enclosing member boundary differs from standalone member and padding 
         try std.testing.expectError(error.InvalidGzip, decode_member_into(&damaged, &output));
         try std.testing.expectError(error.InvalidGzip, decode(allocator, &damaged));
     }
+}
+
+test "gzip compound classification never hides recognized member corruption" {
+    const member = "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03\x01\x03\x00\xfc\xffabc\xc2\x41\x24\x35\x03\x00\x00\x00";
+    const allocator = std.testing.allocator;
+    // Every nonempty truncated next member remains a decoding error, even a
+    // header reduced to one magic byte; an absent next member is valid EOF.
+    for (1..member.len) |length| {
+        const bytes = member ++ "\x00" ++ member;
+        if (decode(allocator, bytes[0 .. member.len + 1 + length])) |unexpected| {
+            allocator.free(unexpected);
+            return error.UnexpectedGzipSuccess;
+        } else |err| {
+            try std.testing.expect(err != error.NotStandaloneGzip);
+        }
+    }
+    for ([_]usize{ 2, member.len - 8, member.len - 4 }) |offset| {
+        var bytes = (member ++ "\x00" ++ member).*;
+        bytes[member.len + 1 + offset] ^= 1;
+        if (decode(allocator, &bytes)) |unexpected| {
+            allocator.free(unexpected);
+            return error.UnexpectedGzipSuccess;
+        } else |err| {
+            try std.testing.expect(err != error.NotStandaloneGzip);
+        }
+    }
+    // The first member must validate before any suffix can classify the input.
+    var damaged = (member ++ "\x00PACK\x07").*;
+    damaged[member.len - 8] ^= 1;
+    try std.testing.expectError(error.InvalidGzip, decode(allocator, &damaged));
 }

@@ -413,7 +413,7 @@ const Pool = struct {
         const input = try memory.Owner.take_allocated(self.allocator, bytes);
         defer input.release();
         return switch (member.kind) {
-            .iso => processor.process_iso_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch),
+            .iso => processor.process_iso_checked(self.allocator, self.io, input, self.store, self.skip_cache(), dispatch),
             .pkg => processor.process_pkg_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch),
         };
     }
