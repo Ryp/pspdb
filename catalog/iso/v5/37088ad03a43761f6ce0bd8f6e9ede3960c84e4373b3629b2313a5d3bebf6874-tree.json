@@ -1,0 +1,485 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "37088ad03a43761f6ce0bd8f6e9ede3960c84e4373b3629b2313a5d3bebf6874",
+  "size_bytes": 195362816,
+  "extractor": {
+    "name": "pspdb-ingest",
+    "version": "5",
+    "options": []
+  },
+  "entries": [
+    {
+      "path": "PSP_GAME",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/ICON0.PNG",
+      "type": "file",
+      "size_bytes": 18160,
+      "sha256": "e674e5d5caef7d502d4d434d9db8ab0dfb5c3a83ddc2fa47a45543a4ad027e4b"
+    },
+    {
+      "path": "PSP_GAME/ICON1.PMF",
+      "type": "file",
+      "size_bytes": 104448,
+      "sha256": "8eb09e95da5fbad329b12a88fd5a49640dbd377f23233d47399ab8e7f593865f"
+    },
+    {
+      "path": "PSP_GAME/PARAM.SFO",
+      "type": "file",
+      "size_bytes": 472,
+      "sha256": "e3808a60e52467f955201d6609c0a3e7effb1cf6d371bc0c12323a07189ab7ef"
+    },
+    {
+      "path": "PSP_GAME/PIC0.PNG",
+      "type": "file",
+      "size_bytes": 296,
+      "sha256": "b2eed4555a90e4807716c6d605854c87ea78613782d1194d27451bb180db2e41"
+    },
+    {
+      "path": "PSP_GAME/PIC1.PNG",
+      "type": "file",
+      "size_bytes": 194387,
+      "sha256": "abe661fb0f0a14caf1333efa5fe71f1f015dc5c97806926aa9edb2acbf613c73"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/BOOT.BIN",
+      "type": "file",
+      "size_bytes": 4714608,
+      "sha256": "3430e275e4afe306184d7be764c0b870ea258d17747608c880a227b7c361a969"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/EBOOT.BIN",
+      "type": "file",
+      "size_bytes": 4714944,
+      "sha256": "4493ee243f2eba54e0bd4c03d6292e3f381cb05358012539e1d01ba97b7e23a9"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/DATA.BIN",
+      "type": "file",
+      "size_bytes": 13182464,
+      "sha256": "106952a0e423936e07a5a0985ab7d862f37fb0d852146de6d6e7700d76864a8d"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/EBOOT.BIN",
+      "type": "file",
+      "size_bytes": 3536480,
+      "sha256": "ffe065e885db9bc5aaa0e7385fc58d435e374bffa505ef218f675ffa05a946c0"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/PARAM.SFO",
+      "type": "file",
+      "size_bytes": 1772,
+      "sha256": "01a261e22bb4271d79a60dd907ac4efbd3161128aab8f392dceb7417da84acb5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/FILE.cdd",
+      "type": "file",
+      "size_bytes": 41809,
+      "sha256": "9e63b94eafb077e2b131006a9269632254a0772888281ae07a685f572ab4ad26"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/FILE.cdf",
+      "type": "file",
+      "size_bytes": 140126208,
+      "sha256": "b9f85faea6c7e046736ce69d9978bd6ab21f6f8b126d29e84cad39936d26c99b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/SD.reg",
+      "type": "file",
+      "size_bytes": 388,
+      "sha256": "7eb56ad3462471e88143c13702b45207dd53bbb83a4b66dd0cf4066aa6b532fd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/audiocodec.prx",
+      "type": "file",
+      "size_bytes": 3200,
+      "sha256": "bfedd21d696bfd88509e7adcfd881255d0d703fe68173757248c2d8643c7de1f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/cert_loader.prx",
+      "type": "file",
+      "size_bytes": 3088,
+      "sha256": "4783c07abad3671cc9459f7429ee0261d8b7f839a28a28d976244314cbb02c02"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/ifhandle.prx",
+      "type": "file",
+      "size_bytes": 10816,
+      "sha256": "daa8a996fcc27ee5865ec5e0bff7ac9d09a5350cdcc6bd7079edd41ab2b4631a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/memab.prx",
+      "type": "file",
+      "size_bytes": 17216,
+      "sha256": "614ab7971d08bc5aaf7783671c6008462cc3090ca41a63a88ec4e35ffd82caae"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/mpegbase.prx",
+      "type": "file",
+      "size_bytes": 5808,
+      "sha256": "2c566d0af002c0497f5f3f7c191275a68205bf70403a54a050cf619178766f80"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/pspnet_adhoc_auth.prx",
+      "type": "file",
+      "size_bytes": 11360,
+      "sha256": "daa688123b8b691978bcd7b7195fa8f574671c11ac008d6d9a134db8a6b161a6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/rinit.prx",
+      "type": "file",
+      "size_bytes": 31104,
+      "sha256": "1c69304b27cbfcf00a56699018f12e3a59b228bb1845df7d38133ca05765fe1d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/sc_sascore.prx",
+      "type": "file",
+      "size_bytes": 5904,
+      "sha256": "f377ce68cbe63b103f039c9891193ca033e7f512c0826a9496ae3430f22cfa7e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/usbpspcm.prx",
+      "type": "file",
+      "size_bytes": 14560,
+      "sha256": "a6b0c7b10783794a2839e67704c2d531876f8c42ad4c72bef7ea3b7b969e22e0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/kmodule/videocodec.prx",
+      "type": "file",
+      "size_bytes": 3808,
+      "sha256": "06b1e1277fc18cf68b32aa83c71bc78e6bfe5379c2b5a3b9fbcd8a73e81a1dee"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libadler_authorized.prx",
+      "type": "file",
+      "size_bytes": 1824,
+      "sha256": "3cba7d695a3f522c26d1ef09aa1feb505d9f5632d81e921c38cc41fc0a41b31c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libatrac3plus_authorized.prx",
+      "type": "file",
+      "size_bytes": 20288,
+      "sha256": "18837b18c354b88f0021cf8ea0e61582af9ade541bc624b9fda10b5fc6f70aad"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libbase64_authorized.prx",
+      "type": "file",
+      "size_bytes": 2592,
+      "sha256": "f7afff413d57972c8fc5edf789d543edda858bf39b6c0a8a184984488e4099b3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libccc_authorized.prx",
+      "type": "file",
+      "size_bytes": 6400,
+      "sha256": "a6dac7ea611fcb6dc647c5e3d6e168615450cb0095edf7a9f80ee894557b30c1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libdeflt_authorized.prx",
+      "type": "file",
+      "size_bytes": 6688,
+      "sha256": "bd20aba4950d2bf8db8716c372170544b00f703dbf5fca65094a6c3ed3b8ca9b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libfont_authorized.prx",
+      "type": "file",
+      "size_bytes": 41040,
+      "sha256": "d9067cc3b9946903ad1a3102427fc6c5d1ba48664cc5990f90b0b7772ac3e1a0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libfpu_authorized.prx",
+      "type": "file",
+      "size_bytes": 6992,
+      "sha256": "a23ea3adcef99f83e430f8bb4d137f1229cc804f2e89a6c095c4212583be0826"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libhttp_authorized.prx",
+      "type": "file",
+      "size_bytes": 87376,
+      "sha256": "cbb28be5d4e3b6eb2472e38ab18584ddfd753d84830c9536ec0f154641cdea05"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libmd5_authorized.prx",
+      "type": "file",
+      "size_bytes": 3584,
+      "sha256": "54bd3f556b0e7c1dcd77ca248b4fcb531af12c2c63bddf50e7f0a64183ea98b9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libmt19937_authorized.prx",
+      "type": "file",
+      "size_bytes": 2160,
+      "sha256": "e701d3ea7976c8c6b8b514e8cdf65801d3d7bd24c2a5837c579ae0d3c80f0042"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libparse_http_authorized.prx",
+      "type": "file",
+      "size_bytes": 5520,
+      "sha256": "0fcaeca209d5dbf4706e79e24f5259e7a867cc3cbc8824c87c92f400bfe09c5b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libparse_uri_authorized.prx",
+      "type": "file",
+      "size_bytes": 15920,
+      "sha256": "b29d9164ea1aaffc649d5705b4c28f53965c8a87189962eacf1b26e3703feae6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libqpcode_authorized.prx",
+      "type": "file",
+      "size_bytes": 3264,
+      "sha256": "959fab5e59b31d420ee1eb7de15420c1282f534bf8b7911e394c6c0b6cd8bbd7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/libsha1_authorized.prx",
+      "type": "file",
+      "size_bytes": 4256,
+      "sha256": "189ed6003e28c5bdc956f7b803f21ba12e2ec0328f1a30d434d8d47f91b98170"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/mpeg_authorized.prx",
+      "type": "file",
+      "size_bytes": 43408,
+      "sha256": "4ec458cb26c38e23eeb56b1746f017367e3ef42b257653bf51b9ab0d3423e184"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/psmf_authorized.prx",
+      "type": "file",
+      "size_bytes": 10080,
+      "sha256": "c87e4e9c9018bfb7a0b68dbfd4e4ad6a9fdf77db77fa2357abaaeb7b1733a88e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/pspnet_adhoc_authorized.prx",
+      "type": "file",
+      "size_bytes": 42832,
+      "sha256": "5cad02fe48f0b8a9a0f8b4965849af115aa8bbd62b45f6ba6d19be112eb89718"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/pspnet_adhocctl_authorized.prx",
+      "type": "file",
+      "size_bytes": 32336,
+      "sha256": "b0dd1a14043742f5da315f2787c637e98c199507a06d1aefa4ab2d5d106e4686"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/pspnet_apctl_authorized.prx",
+      "type": "file",
+      "size_bytes": 44752,
+      "sha256": "ccfd8ad9ddbbe6235a7ee5df13552dcaabfd34d3faf8cb2ec4030947999a7e22"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/pspnet_authorized.prx",
+      "type": "file",
+      "size_bytes": 60704,
+      "sha256": "06462595665a4f9dc931de7f81208a274670b14c732de738f89d2735cb0d6223"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/pspnet_inet_authorized.prx",
+      "type": "file",
+      "size_bytes": 240304,
+      "sha256": "e1e62c88b147f24ff960af01c850b19fe285cc1416fa0de47947afd6fde4fb02"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/auth/pspnet_resolver_authorized.prx",
+      "type": "file",
+      "size_bytes": 12736,
+      "sha256": "be8884b7f819c9c0a7ed1b47e6d86c411e26492b84bf50e034100deffeae2ba6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libadler.prx",
+      "type": "file",
+      "size_bytes": 1488,
+      "sha256": "e3df219420d0156f0a00512cc1946b893b0843220a9a5f60dda69da891e7062e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libatrac3plus.prx",
+      "type": "file",
+      "size_bytes": 19940,
+      "sha256": "124de641b7353a578c9392c0b7f5547a9381fdbbd1ad31150059c8e2641ddc56"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libbase64.prx",
+      "type": "file",
+      "size_bytes": 2252,
+      "sha256": "41e320822c668429f5722b68ea2ac52fc9e5c1b7e2bf5bc1d2b02d0a4848b303"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libccc.prx",
+      "type": "file",
+      "size_bytes": 6056,
+      "sha256": "e4ecad818542c7bcfb41a1ddc9d5cda058e23743c7a2ed71e99e1f9d42b5c992"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libdeflt.prx",
+      "type": "file",
+      "size_bytes": 6348,
+      "sha256": "edc7f33c14c882e4d3598c2d3a8127bdce3b6a3930436744247ed15e1f650746"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libfont.prx",
+      "type": "file",
+      "size_bytes": 40696,
+      "sha256": "77d97cfed109f850486168b2a4b69e072147ca00842c9749d45f8dead33092ec"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libfpu.prx",
+      "type": "file",
+      "size_bytes": 6644,
+      "sha256": "a501b030925867da977fe28e697961df3448726eba8ee5baf8db70b698fcfca0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libhttp.prx",
+      "type": "file",
+      "size_bytes": 87032,
+      "sha256": "393794ab4d2be85671b75c15505ce530420f04192f26eca308e99857ac6eec19"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libmd5.prx",
+      "type": "file",
+      "size_bytes": 3248,
+      "sha256": "cdc5e5734fcbe3d358491f37d285c329811c6e3cc3d7e3f60166db5501a0954e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libmt19937.prx",
+      "type": "file",
+      "size_bytes": 1816,
+      "sha256": "147f4452bea1ce512dda4d4b114281e6efd563472877191123bf0e19f686ea20"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libparse_http.prx",
+      "type": "file",
+      "size_bytes": 5180,
+      "sha256": "b291f2c8fe20931021ae1812c7a8ecc3cdeb174f1731dbbade5baea860b8e633"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libparse_uri.prx",
+      "type": "file",
+      "size_bytes": 15584,
+      "sha256": "594b7ab79e27fe5e71042eec6c9666f84bc98eaf94507abe2d1cf8506af364b1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libqpcode.prx",
+      "type": "file",
+      "size_bytes": 2924,
+      "sha256": "bedca6cce56a4bef0c2a26939579559aeb6666957eeb27eb3d16c961cdf7b0fe"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libsha1.prx",
+      "type": "file",
+      "size_bytes": 3912,
+      "sha256": "c10f15b50a1084087f64e94b40b906e99a444aa5c2d71df8fd000e8be2b976f3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libssl.prx",
+      "type": "file",
+      "size_bytes": 259788,
+      "sha256": "e8662647b091b45bc20d5fb3b62f1944ea0e8df273e57187f5956c6c27115be3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/mpeg.prx",
+      "type": "file",
+      "size_bytes": 43068,
+      "sha256": "d216625f5c02b54f648bfcdc590f5d70dd6407357798a483804f857d3122965e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/psmf.prx",
+      "type": "file",
+      "size_bytes": 9740,
+      "sha256": "af6ba3c0ce4387690d53cf82d20758e67876d47b3596b67a63a50c5785d4fb2e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet.prx",
+      "type": "file",
+      "size_bytes": 60360,
+      "sha256": "cea4bd4cabcefb97ad0254cdfb7d1066f7ffdfe66864ea8fc9957a8e6c2690e1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet_adhoc.prx",
+      "type": "file",
+      "size_bytes": 42492,
+      "sha256": "32c7c3625d42ff94c91f269d022065d1b02d2cdb06324ee72587da697948c0b2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet_adhoc_download.prx",
+      "type": "file",
+      "size_bytes": 15828,
+      "sha256": "f51f8c62eb81fadfdd3880ae7d8c3663128f3497cbfe77bc22b8efb882b14d8a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet_adhoc_matching.prx",
+      "type": "file",
+      "size_bytes": 19688,
+      "sha256": "9f6379bcce1f3ea3636c564c494ffd881ee83d82d2fbcda3a33c5e61597ee3e5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet_adhocctl.prx",
+      "type": "file",
+      "size_bytes": 31996,
+      "sha256": "ecbd18403489d7d0939d2586537375fd724d96102f8e8d9edb008cd1c35b640c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet_ap_dialog_dummy.prx",
+      "type": "file",
+      "size_bytes": 4820,
+      "sha256": "49f5c4dca6314b48c4da1e496023b30b7f4994ce57775856db11eeea9dcc60cb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet_apctl.prx",
+      "type": "file",
+      "size_bytes": 44412,
+      "sha256": "b19f0ff9c9e1b47082eda4ec79a915d14c35b52170d2752a187757268346e3a1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet_inet.prx",
+      "type": "file",
+      "size_bytes": 239968,
+      "sha256": "6be99ad1e84969fe9ca2543ce1ea919fe0a3ce23220fd7c3cc4a93804c1841ba"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/pspnet_resolver.prx",
+      "type": "file",
+      "size_bytes": 12400,
+      "sha256": "43b09ef13c36d3916f9dc1eae9d7fd65a1615bae7bb18cd748a84e5b58b94de6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/scan.prx",
+      "type": "file",
+      "size_bytes": 67400,
+      "sha256": "5f440febb9a6f271a7da0606a183be4a95c103a4699b316e6a0c91e06c026bdf"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/show_macaddr.prx",
+      "type": "file",
+      "size_bytes": 63532,
+      "sha256": "ad32c2577d925867f1422c9a79e731c9a4c16fa0584e3827ef12300cfbcd4be6"
+    },
+    {
+      "path": "UMD_DATA.BIN",
+      "type": "file",
+      "size_bytes": 48,
+      "sha256": "653ae813e3a214d06ff9522ec0af9682567d1d925c823cc2b5bdb21babf57e67"
+    }
+  ]
+}
