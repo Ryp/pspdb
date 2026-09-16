@@ -47,6 +47,8 @@ const highlightCache = new WeakMap();
 let rowHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height"));
 const overscan = 20;
 let windowKey = "", windowVersion = 0, scrollFrame = 0;
+let logicalOffset = 0, physicalOffset = 0, scrollViewport = 0;
+let nativeScrolling = false, touchCount = 0, scrollEndTimer = 0;
 let downloadsEnabled = false, checkingDownloads = false;
 const availability = new Map();
 
@@ -94,8 +96,120 @@ function scrollMetrics() {
   // Stay below browser layout limits; rendered rows retain their normal height.
   const height = Math.min(logicalHeight, 8_000_000);
   const maximum = Math.max(0, height - viewport);
-  const scale = maximum ? Math.max(0, logicalHeight - viewport) / maximum : 1;
-  return { height, maximum, viewport, scale, offset: host.scrollTop * scale };
+  const logicalMaximum = Math.max(0, logicalHeight - viewport);
+  // Leave room for overscan at both physical ends. The rest of the scrollbar
+  // maps proportionally over the entire remaining logical range.
+  const edge = logicalMaximum > maximum
+    ? Math.min(maximum / 4, (overscan + 2) * rowHeight + $("tree").tHead.offsetHeight) : 0;
+  const scale = maximum ? (logicalMaximum - 2 * edge) / (maximum - 2 * edge) : 1;
+  return { height, maximum, logicalMaximum, viewport, edge, scale, offset: logicalOffset };
+}
+
+function globalScrollOffset(position, metrics) {
+  if (position <= metrics.edge) return position;
+  if (position >= metrics.maximum - metrics.edge)
+    return metrics.logicalMaximum - (metrics.maximum - position);
+  return metrics.edge + (position - metrics.edge) * metrics.scale;
+}
+
+function globalScrollPosition(offset, metrics) {
+  if (offset <= metrics.edge) return offset;
+  if (offset >= metrics.logicalMaximum - metrics.edge)
+    return metrics.maximum - (metrics.logicalMaximum - offset);
+  return metrics.edge + (offset - metrics.edge) / metrics.scale;
+}
+
+function nativeScrollPosition(metrics) {
+  // A large, bounded native-input window, aligned to a real logical endpoint
+  // when it is nearby. Most gestures never need a rebase while in motion.
+  return Math.min(logicalOffset,
+    Math.max(metrics.maximum / 2, metrics.maximum - (metrics.logicalMaximum - logicalOffset)));
+}
+
+function writeScrollPosition(position) {
+  physicalOffset = position;
+  // Install the new spacer geometry before scrolling: the old DOM may describe
+  // a shorter tree/search result and otherwise clamp the requested position.
+  renderWindow();
+  $("table-scroll").scrollTop = position;
+  const actual = $("table-scroll").scrollTop;
+  if (actual !== physicalOffset) {
+    physicalOffset = actual;
+    renderWindow();
+  }
+  // Record the browser-rounded position immediately. Its asynchronous scroll
+  // event is then a zero delta, without dropping any intervening native motion.
+}
+
+function setScrollOffset(offset, keepNative = false) {
+  clearTimeout(scrollEndTimer);
+  nativeScrolling = keepNative || touchCount > 0;
+  const metrics = scrollMetrics();
+  logicalOffset = Math.max(0, Math.min(metrics.logicalMaximum, offset));
+  writeScrollPosition(nativeScrolling ? nativeScrollPosition(metrics) : globalScrollPosition(logicalOffset, metrics));
+  scheduleScrollEnd();
+}
+
+function readScrollOffset() {
+  const metrics = scrollMetrics();
+  // A viewport change can clamp scrollTop before ResizeObserver runs. That is
+  // a layout adjustment, not input; retain the logical row and remap instead.
+  if (metrics.viewport !== scrollViewport) {
+    resizeScroll();
+    return logicalOffset;
+  }
+  const position = Math.max(0, Math.min(metrics.maximum, $("table-scroll").scrollTop));
+  if (position !== physicalOffset) {
+    const delta = nativeScrolling ? position - physicalOffset
+      : globalScrollOffset(position, metrics) - globalScrollOffset(physicalOffset, metrics);
+    logicalOffset = Math.max(0, Math.min(metrics.logicalMaximum, logicalOffset + delta));
+    if (!nativeScrolling && (position === 0 || position === metrics.maximum))
+      logicalOffset = position === 0 ? 0 : metrics.logicalMaximum;
+    physicalOffset = position;
+  }
+  return logicalOffset;
+}
+
+function rebaseNativeScroll() {
+  const metrics = scrollMetrics();
+  const guard = Math.min(metrics.maximum / 4, Math.max(65_536, metrics.viewport * 4));
+  if ((physicalOffset < guard && logicalOffset > physicalOffset)
+    || (metrics.maximum - physicalOffset < guard
+      && metrics.logicalMaximum - logicalOffset > metrics.maximum - physicalOffset))
+    writeScrollPosition(nativeScrollPosition(metrics));
+}
+
+function beginNativeScroll() {
+  // Compositor scrolling may precede a passive wheel callback. Consume that
+  // first pending movement as native pixels, not as a scrollbar-track jump.
+  const starting = !nativeScrolling;
+  nativeScrolling = true;
+  readScrollOffset();
+  if (starting) rebaseNativeScroll();
+  scheduleScrollEnd();
+}
+
+function finishNativeScroll() {
+  if (!nativeScrolling || touchCount) return;
+  setScrollOffset(readScrollOffset());
+}
+
+function scheduleScrollEnd() {
+  clearTimeout(scrollEndTimer);
+  // Debounce scrollend as well: internal rebases can emit it, and wheel packets
+  // may be separate native animations. Never remap under a stationary finger.
+  if (nativeScrolling && !touchCount)
+    scrollEndTimer = setTimeout(finishNativeScroll, 180);
+}
+
+function resizeScroll() {
+  const nextHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height"));
+  const position = logicalOffset / rowHeight;
+  if (nextHeight !== rowHeight) {
+    rowHeight = nextHeight;
+    windowVersion++;
+  }
+  if (root) setScrollOffset(position * rowHeight, nativeScrolling);
 }
 
 function renderWindow() {
@@ -104,7 +218,8 @@ function renderWindow() {
   const start = Math.min(visible.length, Math.max(0, Math.floor(metrics.offset / rowHeight) - overscan));
   const end = Math.min(visible.length, start + Math.ceil(host.clientHeight / rowHeight) + overscan * 2);
   const compact = getComputedStyle($("heading-hash")).display === "none";
-  const key = `${windowVersion}:${start}:${end}:${metrics.viewport}:${compact}:${metrics.scale === 1 ? "" : host.scrollTop}`;
+  scrollViewport = metrics.viewport;
+  const key = `${windowVersion}:${start}:${end}:${metrics.viewport}:${compact}:${physicalOffset - metrics.offset}`;
   if (key === windowKey) return;
   windowKey = key;
   const columns = (downloadsEnabled ? 4 : 3) - Number(compact);
@@ -118,7 +233,7 @@ function renderWindow() {
     cell.style.height = `${height}px`;
     row.append(cell); fragment.append(row);
   }
-  const before = Math.max(0, host.scrollTop + start * rowHeight - metrics.offset);
+  const before = Math.max(0, physicalOffset + start * rowHeight - metrics.offset);
   spacer(before);
   for (let index = start; index < end; index++) {
     const node = visible[index], row = rowElements.get(node.index) || createRow(node);
@@ -158,18 +273,31 @@ function renderWindow() {
 }
 
 $("table-scroll").addEventListener("scroll", () => {
-  if (!scrollFrame) scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; renderWindow(); });
-});
-new ResizeObserver(() => {
-  const nextHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height"));
-  if (nextHeight !== rowHeight) {
-    const position = scrollMetrics().offset / rowHeight;
-    rowHeight = nextHeight;
-    $("table-scroll").scrollTop = position * rowHeight / scrollMetrics().scale;
-    windowVersion++;
+  readScrollOffset();
+  if (nativeScrolling) {
+    rebaseNativeScroll();
+    scheduleScrollEnd();
   }
-  if (root) renderWindow();
-}).observe($("table-scroll"));
+  if (!scrollFrame) scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; renderWindow(); });
+}, { passive: true });
+$("table-scroll").addEventListener("wheel", event => {
+  if (!event.ctrlKey && !event.shiftKey && event.deltaY) beginNativeScroll();
+}, { passive: true });
+$("table-scroll").addEventListener("touchstart", event => {
+  touchCount = event.touches.length;
+  beginNativeScroll();
+}, { passive: true });
+for (const type of ["touchend", "touchcancel"]) {
+  $("table-scroll").addEventListener(type, event => {
+    touchCount = event.touches.length;
+    scheduleScrollEnd();
+  }, { passive: true });
+}
+$("table-scroll").addEventListener("scrollend", scheduleScrollEnd, { passive: true });
+$("table-scroll").addEventListener("pointerdown", event => {
+  if (event.pointerType !== "touch") finishNativeScroll();
+}, { passive: true });
+new ResizeObserver(resizeScroll).observe($("table-scroll"));
 
 function highlight(el, text) {
   const lower = text.toLowerCase();
@@ -284,9 +412,8 @@ async function initializeSearch() {
       clear.onclick = clearSearch;
       $("search-empty").append(clear);
     }
-    $("table-scroll").scrollTop = 0;
     updateSortHeaders();
-    render();
+    render(0);
     if (visible.length) select(visible.includes(selected) ? selected : visible[0], false, false);
     else {
       $("tree").removeAttribute("aria-activedescendant");
@@ -360,7 +487,7 @@ function applySearch() {
   $("tree").classList.toggle("search-results", Boolean(query));
   if (query) {
     if (!savedTree) savedTree = {
-      collapsed: new Set(collapsed), selected, scroll: $("table-scroll").scrollTop,
+      collapsed: new Set(collapsed), selected, scroll: readScrollOffset() / rowHeight,
     };
     filterNodes ||= [];
     updateSortHeaders();
@@ -380,8 +507,7 @@ function applySearch() {
   render();
   if (savedTree) {
     select(savedTree.selected, false);
-    $("table-scroll").scrollTop = savedTree.scroll;
-    renderWindow();
+    setScrollOffset(savedTree.scroll * rowHeight);
     savedTree = null;
   }
   return searchSettled;
@@ -682,12 +808,12 @@ function select(node, scroll = true, updateURL = true) {
   $("notice").textContent = "";
   if (scroll || node.error) {
     // Scroll only vertically, preserving the user's horizontal column position.
-    const host = $("table-scroll"), top = visible.indexOf(node) * rowHeight;
+    const top = visible.indexOf(node) * rowHeight;
+    readScrollOffset();
     const metrics = scrollMetrics();
-    if (top < metrics.offset) host.scrollTop = top / metrics.scale;
-    else if (top + rowHeight > metrics.offset + metrics.viewport)
-      host.scrollTop = (top + rowHeight - metrics.viewport) / metrics.scale;
-    renderWindow();
+    const offset = top < metrics.offset ? top
+      : top + rowHeight > metrics.offset + metrics.viewport ? top + rowHeight - metrics.viewport : metrics.offset;
+    setScrollOffset(offset);
   }
   if (updateURL) history.replaceState(null, "", url(node));
 }
@@ -697,9 +823,7 @@ function jump(node) {
   for (let parent = node.parent; parent; parent = parent.parent) collapsed.delete(parent.index);
   render();
   select(node);
-  const host = $("table-scroll");
-  host.scrollTop = Math.max(0, (visible.indexOf(node) - 2) * rowHeight) / scrollMetrics().scale;
-  renderWindow();
+  setScrollOffset(Math.max(0, (visible.indexOf(node) - 2) * rowHeight));
   $("tree").focus({ preventScroll: true });
 }
 
@@ -713,7 +837,7 @@ function toggle(node) {
   $("tree").focus({ preventScroll: true });
 }
 
-function render() {
+function render(offset = readScrollOffset()) {
   visible = [];
   function walk(node) {
     visible.push(node);
@@ -723,9 +847,7 @@ function render() {
   else walk(root);
   windowVersion++;
   $("tree").setAttribute("aria-rowcount", visible.length + 1);
-  const host = $("table-scroll");
-  host.scrollTop = Math.min(host.scrollTop, scrollMetrics().maximum);
-  renderWindow();
+  setScrollOffset(offset);
 }
 
 function createRow(node) {
@@ -871,6 +993,11 @@ document.addEventListener("keydown", event => {
   if (!visible.length) return;
   if (event.key === "Enter" && /^(BUTTON|A)$/.test(event.target.tagName)) return;
   const key = event.key;
+  if (["PageUp", "PageDown", " "].includes(key) && $("table-scroll").contains(event.target)
+    && !event.target.closest("button, a")) {
+    beginNativeScroll();
+    return;
+  }
   if (!["h", "j", "k", "l", "ArrowLeft", "ArrowDown", "ArrowUp", "ArrowRight", "Enter", "Home", "End"].includes(key)) return;
   event.preventDefault();
   const node = selected;
