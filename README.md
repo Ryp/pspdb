@@ -459,9 +459,17 @@ On narrow screens, the viewer prioritizes names and sizes, shows search-result
 filenames instead of long ancestor paths, and keeps the full selected path, exact
 byte count, and extraction details below the tree. **Copy SHA-256** replaces the
 narrow-screen hash column; **Open in tree** opens a search result without a double
-tap. Touch pointers get 44-pixel controls and taller rows, with virtual scrolling
-adjusted to the actual row height. Desktop columns and keyboard navigation remain
-available; selecting an error reveals its full message on either layout.
+tap. Touch rows are 41 pixels high (desktop rows remain 21 pixels), with stronger
+16-pixel indentation on narrow screens, continuing at 8 pixels for deeper levels
+instead of flattening them, and aligned file/folder markers. Virtual
+scrolling follows the actual row height. Toolbar controls retain their larger
+touch targets. Desktop columns and keyboard navigation remain available; selecting
+an error reveals its full message on either layout.
+
+The search field is editable before the catalog arrives and throughout index
+preparation. The latest entered query runs automatically once ready, without
+stealing focus from the field. Clearing a pending query is safe, and a catalog
+download failure preserves the entered text.
 
 On a frozen 1,654,763-file catalog, Chromium measurements on a Ryzen 9 5950X
 showed search results in 21–64 ms versus 371–751 ms before these changes, with

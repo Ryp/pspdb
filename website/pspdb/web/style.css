@@ -116,7 +116,7 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
 .selection-actions button { background: #1b222b; border: 1px solid #36404c; border-radius: 4px; padding: 4px 8px; }
 .selection-bar { flex-shrink: 0; align-items: center; }
 @media (max-width: 760px) {
-  :root { --row-height: 45px; font-size: 13px; }
+  :root { --row-height: 41px; font-size: 13px; }
   header { flex-wrap: wrap; gap: 6px 12px; padding: 8px 12px; }
   .brand { min-height: 36px; }
   #catalog-count { flex: 1; min-width: 0; font-size: 10px; text-align: right; }
@@ -127,15 +127,15 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
   #clear-search { min-width: 44px; min-height: 44px; }
   .size-col { width: 76px; }
   .hash-col, #heading-hash, td.hash { display: none; }
-  .name-cell { padding-left: calc(4px + min(var(--depth), 4) * 8px); }
+  .name-cell { padding-left: calc(4px + min(var(--depth), 4) * 16px + max(0, var(--depth) - 4) * 8px); }
   .search-results .name-cell { padding-left: 8px; }
   th { padding: 0 8px; }
   .sort-button { min-height: 44px; }
-  .toggle { width: 44px; height: 44px; line-height: 44px; }
-  .file-mark { width: 12px; }
+  .toggle { width: 44px; height: calc(var(--row-height) - 1px); line-height: calc(var(--row-height) - 1px); }
+  .file-mark { width: 44px; }
   .extraction-tags { gap: 2px; }
   .extraction-tag + .extraction-tag, .note { display: none; }
-  .redump-link, .umdatabase-link { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  .redump-link, .umdatabase-link { min-width: 44px; min-height: calc(var(--row-height) - 1px); display: inline-flex; align-items: center; justify-content: center; }
   .extraction-error { min-width: 13px; flex: 0 0 auto; }
   .error-message { display: none; }
   .extraction-failed .name { max-width: none; min-width: 0; }
@@ -147,12 +147,14 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
   #notice { white-space: normal; min-width: 0; flex: 1; }
   #message { padding: 20px 12px; }
   #selected-error { padding: 8px 12px; max-height: 18dvh; }
-  .download-link { display: inline-flex; align-items: center; min-height: 44px; }
+  .download-link { display: inline-flex; align-items: center; min-height: calc(var(--row-height) - 1px); }
 }
 @media (pointer: coarse) {
-  :root { --row-height: 45px; }
-  .toggle { width: 44px; height: 44px; line-height: 44px; }
-  .hash button, .sort-button, .selection-actions button { min-height: 44px; }
+  :root { --row-height: 41px; }
+  .toggle { width: 44px; height: calc(var(--row-height) - 1px); line-height: calc(var(--row-height) - 1px); }
+  .file-mark { width: 44px; }
+  .hash button { min-height: calc(var(--row-height) - 1px); }
+  .sort-button, .selection-actions button { min-height: 44px; }
   #tree-search { min-height: 44px; font-size: 16px; }
   #clear-search { min-width: 44px; min-height: 44px; }
 }
