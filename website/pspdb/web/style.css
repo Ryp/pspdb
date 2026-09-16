@@ -25,7 +25,7 @@ main { flex: 1; min-height: 0; display: flex; }
 mark { background: #38523e; color: #e1fbea; border-radius: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 [hidden] { display: none !important; }
-#table-scroll { width: 100%; overflow: auto; scrollbar-width: thin; }
+#table-scroll { width: 100%; overflow: auto; scrollbar-width: thin; overflow-anchor: none; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
 table:focus { outline: none; }
 .name-col { width: auto; }

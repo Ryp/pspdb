@@ -437,8 +437,16 @@ The browser constructs the tree in yielding batches, retains compact occurrence
 identities and computes paths only when needed. A Web Worker searches and sorts
 an interned text/typed-array index without blocking keyboard input. Superseded
 queries are cancelled; no results are dropped or capped. Only viewport rows are
-mounted, and scaled scroll coordinates keep the final rows reachable even beyond
-browser layout-height limits. Search covers files inside collapsed branches;
+mounted, and the DOM scroll height stays below browser layout limits. Wheel,
+native touch/momentum, and page-scrolling keys move one logical pixel per native
+scroll pixel, regardless of the result count. A bounded native-input window is
+rebased near its physical edges when more results remain. After scrolling settles
+(never while a finger is down), the scrollbar returns to global coordinates
+without moving the visible rows; dragging it and using End still reach the final
+row. Short unscaled margins at the scrollbar's ends leave room for overscan; the
+rest maps proportionally across the remaining results. The thumb can change
+position during these remaps, but browser touch physics, pinch zoom, and horizontal
+scrolling remain native. Search covers files inside collapsed branches;
 narrowing a query reuses matches and checks only the surviving candidates' strings,
 memoizing repeated lookups and skipping already-satisfied terms. Broadening searches
 the full index.

@@ -27,7 +27,8 @@ const context = vm.createContext({
   fetch: ()=>new Promise(()=>{}),
   Worker: CatalogWorker, setTimeout,
 });
-vm.runInContext(fs.readFileSync(new URL('../pspdb/web/app.js', import.meta.url), 'utf8'), context);
+const appSource = fs.readFileSync(new URL('../pspdb/web/app.js', import.meta.url), 'utf8');
+vm.runInContext(appSource, context);
 let queryVersion = 1000;
 async function search(query, sort = null, direction = 1) {
   assert.equal(await vm.runInContext('searchReady', context), true);
@@ -404,3 +405,46 @@ assert.equal((await search('ancestor')).length, 5);
 console.log('PASS: sparse refinements preserve ancestor context, own errors, duplicate hashes, hash transitions, empty results and broadening.');
 vm.runInContext('searchWorker.terminate()',context);
 console.log('PASS: asynchronous ancestor/own-hash transitions, duplicate occurrences, source-only errors and reversible sorting.');
+
+// Browsers can advance scrollTop before delivering a passive wheel callback.
+// The first movement must remain native pixels even on a compressed scroll rail.
+for (const count of [28000, 3240000]) {
+  const handlers = new Map();
+  let position = 0, idle;
+  const host = {
+    clientHeight:600,
+    get scrollTop() { return position; },
+    set scrollTop(value) { position = Math.round(value); },
+    addEventListener(type, handler) { handlers.set(type, handler); },
+  };
+  const tree = {...el, tHead:{offsetHeight:40}};
+  const scrollContext = vm.createContext({
+    document:{documentElement:{dataset:{catalog:'api/catalog'}}, addEventListener(){},
+      getElementById:id=>id==='table-scroll' ? host : id==='tree' ? tree : el},
+    window:{addEventListener(){}},
+    ResizeObserver:class {observe(){}},
+    getComputedStyle:()=>({getPropertyValue:()=> '45px'}),
+    fetch:()=>new Promise(()=>{}),
+    setTimeout:callback=>{ idle = callback; return 1; },
+    clearTimeout:()=>{ idle = undefined; },
+    requestAnimationFrame:()=>0,
+    count,
+  });
+  vm.runInContext(appSource, scrollContext);
+  vm.runInContext(`
+    visible = {length:count};
+    renderWindow = ()=>{};
+    logicalOffset = 200000;
+    scrollViewport = scrollMetrics().viewport;
+    $("table-scroll").scrollTop = globalScrollPosition(logicalOffset, scrollMetrics());
+    physicalOffset = $("table-scroll").scrollTop;
+  `, scrollContext);
+  host.scrollTop += 120;
+  handlers.get('wheel')({deltaY:120});
+  assert.equal(vm.runInContext('scrollMetrics().offset', scrollContext), 200120);
+  assert.equal(typeof idle, 'function');
+  idle();
+  handlers.get('scroll')();
+  assert.equal(vm.runInContext('scrollMetrics().offset', scrollContext), 200120);
+}
+console.log('PASS: compositor-first wheel movement and rounded idle remapping preserve native pixel distance at both list scales.');
