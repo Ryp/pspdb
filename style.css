@@ -71,6 +71,8 @@ td.size { color: #c5d1e1; font-size: 11px; }
 footer { min-height: 37px; padding: 8px 16px; border-top: 1px solid #232c36; color: #b4c0d0; font-size: 10px; display: flex; justify-content: space-between; gap: 15px; }
 kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #394250; border-radius: 3px; min-width: 17px; padding: 0 4px; text-align: center; margin-right: 3px; }
 #message { padding: 30px; color: #c5d1e1; }
+#catalog-progress { display: block; width: min(440px, 100%); height: 12px; margin: 12px 0 8px; accent-color: #91d5ae; }
+#download-detail { color: #aab9cc; font-size: 11px; font-variant-numeric: tabular-nums; }
 @media (max-width: 760px) { header { gap: 10px; padding: 6px 14px; } .extra-help { display: none; } #search-count { font-size: 10px; } #catalog-count, #selected-path, .search-field kbd, footer { display: none; } .selection-bar:has(#notice:empty) { display: none; } }
 @media (max-width: 560px) { header { flex-wrap: wrap; } .search-bar { order: 1; flex-basis: 100%; } }
 

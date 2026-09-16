@@ -22,7 +22,11 @@
     <span id="catalog-count"></span>
   </header>
   <div id="search-empty" role="status" hidden></div>
-  <div id="message" role="status">Loading catalog…</div>
+  <div id="message">
+    <div id="loading-status" role="status">Requesting catalog…</div>
+    <progress id="catalog-progress" aria-label="Catalog download" aria-describedby="download-detail"></progress>
+    <div id="download-detail"></div>
+  </div>
   <main id="browser" hidden>
     <div id="table-scroll">
       <table id="tree" role="treegrid" aria-label="PSP catalog" aria-colcount="3" tabindex="0">
