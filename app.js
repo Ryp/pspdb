@@ -38,6 +38,7 @@ async function copyHash(hash) {
 const nodes = [], collapsed = new Set(), rowElements = new Map();
 const disclosures = new Map();
 let root, selected, visible = [];
+let catalogReady = false;
 let filterNodes = null, searchTerms = [], savedTree = null;
 let searchWorker = null, searchReady = Promise.resolve(false), searchVersion = 0;
 let searchSettled = Promise.resolve(), settleSearch = null;
@@ -370,7 +371,6 @@ function searchFailure(error) {
 async function initializeSearch() {
   searchWorker?.terminate();
   cancelSearch();
-  $("tree-search").disabled = true;
   const worker = new Worker("search-worker.js");
   searchWorker = worker;
   let readyResolve, readyReject;
@@ -461,7 +461,6 @@ async function initializeSearch() {
     [parents.buffer, names.buffer, labels.buffer, texts.buffer, hashes.buffer, errors.buffer, sizes.buffer, order.buffer]);
   await ready;
   if (searchWorker !== worker) return false;
-  $("tree-search").disabled = false;
   return true;
 }
 
@@ -482,8 +481,9 @@ function requestSearch() {
 
 function applySearch() {
   const query = $("tree-search").value.trim();
-  searchTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
   $("clear-search").hidden = !$("tree-search").value;
+  if (!catalogReady || $("tree-search").disabled) return;
+  searchTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
   $("tree").classList.toggle("search-results", Boolean(query));
   if (query) {
     if (!savedTree) savedTree = {
@@ -516,7 +516,7 @@ function applySearch() {
 function clearSearch() {
   $("tree-search").value = "";
   applySearch();
-  $("tree").focus({ preventScroll: true });
+  (catalogReady ? $("tree") : $("tree-search")).focus({ preventScroll: true });
 }
 
 function element(tag, className, text) {
@@ -818,13 +818,13 @@ function select(node, scroll = true, updateURL = true) {
   if (updateURL) history.replaceState(null, "", url(node));
 }
 
-function jump(node) {
+function jump(node, focus = true) {
   if (savedTree) clearSearch();
   for (let parent = node.parent; parent; parent = parent.parent) collapsed.delete(parent.index);
   render();
   select(node);
   setScrollOffset(Math.max(0, (visible.indexOf(node) - 2) * rowHeight));
-  $("tree").focus({ preventScroll: true });
+  if (focus) $("tree").focus({ preventScroll: true });
 }
 
 function toggle(node) {
@@ -962,10 +962,10 @@ function createRow(node) {
     return row;
 }
 
-function restore() {
+function restore(focus = true) {
   let path;
   try { path = location.hash.slice(1).split("/").map(decodeURIComponent).join("/"); } catch { path = ""; }
-  jump(nodeAtPath(path) || root);
+  jump(nodeAtPath(path) || root, focus);
 }
 
 $("tree-search").addEventListener("input", applySearch);
@@ -977,7 +977,7 @@ $("copy-selected").onclick = async () => {
 for (const key of ["name", "size", "hash"]) $("sort-" + key).onclick = () => sortSearch(key);
 
 document.addEventListener("keydown", event => {
-  if (root && !event.ctrlKey && !event.metaKey && !event.altKey) {
+  if (catalogReady && !event.ctrlKey && !event.metaKey && !event.altKey) {
     if (event.key === "Escape" && (savedTree || event.target === $("tree-search"))) {
       event.preventDefault(); clearSearch(); return;
     }
@@ -989,7 +989,7 @@ document.addEventListener("keydown", event => {
       event.preventDefault(); $("tree-search").focus(); return;
     }
   }
-  if (!root || event.ctrlKey || event.metaKey || event.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target === $("selected-error")) return;
+  if (!catalogReady || event.ctrlKey || event.metaKey || event.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target === $("selected-error")) return;
   if (!visible.length) return;
   if (event.key === "Enter" && /^(BUTTON|A)$/.test(event.target.tagName)) return;
   const key = event.key;
@@ -1017,7 +1017,7 @@ document.addEventListener("keydown", event => {
   }
   $("tree").focus({ preventScroll: true });
 });
-window.addEventListener("hashchange", () => { if (root) restore(); });
+window.addEventListener("hashchange", () => { if (catalogReady) restore(); });
 
 async function loadCatalog() {
   const response = await fetch(document.documentElement.dataset.catalog);
@@ -1068,9 +1068,12 @@ loadCatalog().then(async data => {
   for (const node of nodes) if (node.extraction) collapsed.add(node.index);
   $("message").hidden = true;
   $("browser").hidden = false;
-  restore();
+  restore(document.activeElement !== $("tree-search") && document.activeElement !== $("clear-search"));
+  catalogReady = true;
+  if ($("tree-search").value) applySearch();
 }).catch(error => {
   root = null;
+  catalogReady = false;
   $("browser").hidden = true;
   $("message").hidden = false;
   $("catalog-progress").hidden = true;
