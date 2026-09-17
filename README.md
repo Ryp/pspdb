@@ -398,6 +398,10 @@ Requires **uv** and **Python 3.11+**. The website has no third-party runtime dep
 uv run pspdb-web --catalog catalog --host 0.0.0.0 --port 8000 --store /path/to/store
 ```
 
+Search input is kept in the URL as `?q=…` (for example, `/?q=EBOOT.PBP`).
+Copy the address bar to share a search; opening the link restores the filter.
+Clearing the search removes `q` while retaining the selected tree path.
+
 Open **http://localhost:8000**, or the host's LAN address. Omit `--store` to hide
 downloads; omit `--host` to bind only to localhost. Add `--redump /path/to/dat.zip`
 (or an XML DAT) to link exact ISO SHA-1 + size matches to Redump. The DAT is

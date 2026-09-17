@@ -482,6 +482,10 @@ function requestSearch() {
 function applySearch() {
   const query = $("tree-search").value.trim();
   $("clear-search").hidden = !$("tree-search").value;
+  const address = new URL(location.href);
+  if ($("tree-search").value) address.searchParams.set("q", $("tree-search").value);
+  else address.searchParams.delete("q");
+  if (address.href !== location.href) history.replaceState(null, "", address);
   if (!catalogReady || $("tree-search").disabled) return;
   searchTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
   $("tree").classList.toggle("search-results", Boolean(query));
@@ -968,6 +972,8 @@ function restore(focus = true) {
   jump(nodeAtPath(path) || root, focus);
 }
 
+$("tree-search").value = new URLSearchParams(location.search).get("q") || "";
+$("clear-search").hidden = !$("tree-search").value;
 $("tree-search").addEventListener("input", applySearch);
 $("clear-search").onclick = clearSearch;
 $("open-selected").onclick = () => { if (selected && filterNodes) jump(selected); };
