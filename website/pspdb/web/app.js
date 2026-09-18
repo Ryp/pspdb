@@ -1066,7 +1066,54 @@ async function loadCatalog() {
   }));
   if (document.documentElement.dataset.catalog.endsWith(".gz"))
     body = body.pipeThrough(new DecompressionStream("gzip"));
-  return new Response(body).json();
+  return decodeCatalog(await new Response(body).json());
+}
+
+// Mirrors pspdb/wire.py: directories are objects keyed by child name, files are
+// [size, hash_id] rows with optional extras, and hashes and tree metadata come
+// from shared dictionaries. Decoding restores the inventory entries the tree
+// builder consumes.
+const WIRE_SCHEMA = 3;
+
+function decodeCatalog(payload) {
+  if (payload.wire_schema !== WIRE_SCHEMA) throw new Error("Unsupported catalog wire schema");
+  const { hashes, profiles } = payload;
+  function decodeFile(path, row) {
+    const entry = { path, type: "file" };
+    if (row[0] !== null && row[0] !== undefined) entry.size_bytes = row[0];
+    if (row[1] !== null && row[1] !== undefined) entry.sha256 = hashes[row[1]];
+    for (const [name, value] of Object.entries(row[2] || {}))
+      entry[name] = name === "extraction" ? decodeTree(value) : value;
+    if (entry.type === null || entry.type === undefined) delete entry.type;
+    return entry;
+  }
+  function walk(node, prefix, entries) {
+    for (const name in node) {
+      const child = node[name], path = prefix + name;
+      if (Array.isArray(child)) entries.push(decodeFile(path, child));
+      else {
+        entries.push({ path, type: "directory" });
+        walk(child, path + "/", entries);
+      }
+    }
+    return entries;
+  }
+  function decodeTree([size, profile, digest, root]) {
+    const tree = { ...profiles[profile] };
+    if (size !== null) tree.size_bytes = size;
+    if (digest !== null) tree.sha256 = hashes[digest];
+    tree.entries = walk(root, "", []);
+    return tree;
+  }
+  const data = {};
+  for (const [name, value] of Object.entries(payload))
+    if (!["wire_schema", "hashes", "profiles", "trees"].includes(name)) data[name] = value;
+  data.trees = {};
+  for (const [kind, sources] of Object.entries(payload.trees)) {
+    const decoded = data.trees[kind] = {};
+    for (const [digest, tree] of Object.entries(sources)) decoded[digest] = decodeTree(tree);
+  }
+  return data;
 }
 
 loadCatalog().then(async data => {

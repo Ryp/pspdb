@@ -15,6 +15,7 @@ from unittest.mock import patch
 from pspdb.server import _CatalogCache, catalog_data, handler_for, download_index
 from pspdb.cli import main
 from pspdb.export import export_site
+from pspdb.wire import decode_catalog
 
 
 class ContextualIndexTests(unittest.TestCase):
@@ -96,16 +97,16 @@ class DownloadTests(unittest.TestCase):
         replacement.replace(path)
         self.start(self.store)
         with self.get('/api/catalog') as response:
-            self.assertEqual(json.load(response)['records']['iso'][0]['metadata']['title'], 'New')
+            self.assertEqual(decode_catalog(json.load(response))['records']['iso'][0]['metadata']['title'], 'New')
 
     def test_disk_snapshot_separates_annotations_and_download_mode(self):
         first = {('b' * 40, 42): [dict(id=1, name='First association')]}
         second = {('b' * 40, 42): [dict(id=2, name='Second association')]}
         _CatalogCache(self.catalog, self.store, first, None).get()
-        changed = json.loads(_CatalogCache(self.catalog, self.store, second, None).get()['body'])
+        changed = decode_catalog(json.loads(_CatalogCache(self.catalog, self.store, second, None).get()['body']))
         self.assertEqual(changed['records']['iso'][0]['redump'], second[('b' * 40, 42)])
         readonly = _CatalogCache(self.catalog, None, second, None).get()
-        self.assertFalse(json.loads(readonly['body'])['downloads_enabled'])
+        self.assertFalse(decode_catalog(json.loads(readonly['body']))['downloads_enabled'])
         self.assertIsNone(readonly['objects'])
 
     def test_corrupt_cache_rebuilds_but_invalid_catalog_still_fails(self):
@@ -134,7 +135,7 @@ class DownloadTests(unittest.TestCase):
             self.start(None)
             with self.assertLogs('pspdb.server', level='WARNING'):
                 with self.get('/api/catalog') as response:
-                    self.assertEqual(json.load(response)['records']['iso'][0]['sha256'], 'a' * 64)
+                    self.assertEqual(decode_catalog(json.load(response))['records']['iso'][0]['sha256'], 'a' * 64)
 
     def test_catalog_validators_and_compression(self):
         self.start(None)
@@ -284,7 +285,9 @@ class DownloadTests(unittest.TestCase):
         (folder / f'{self.digest}.json').write_text(json.dumps(record))
         self.start(self.store)
         with self.get('/api/catalog') as response:
-            self.assertEqual(json.load(response)['trees']['tree'][self.digest], record)
+            # The transport nests inventories, so the implied parent is explicit.
+            self.assertEqual(decode_catalog(json.load(response))['trees']['tree'][self.digest],
+                             {**record, 'entries': [{'path': 'F0', 'type': 'directory'}] + record['entries']})
         with self.get('/download/' + self.digest + '/decoded.prx') as response:
             self.assertEqual(response.read(), self.content)
 
@@ -314,10 +317,10 @@ class DownloadTests(unittest.TestCase):
         before = {p: p.read_bytes() for p in self.catalog.rglob('*.json')}
         self.start(self.store)
         with self.get('/api/catalog') as response:
-            data = json.load(response)
+            data = decode_catalog(json.load(response))
         output = self.root / 'export'
         export_site(self.catalog, output)
-        exported = json.loads(gzip.decompress((output / 'catalog.json.gz').read_bytes()))
+        exported = decode_catalog(json.loads(gzip.decompress((output / 'catalog.json.gz').read_bytes())))
         for snapshot in (data, exported):
             self.assertEqual([entry['path'] for entry in snapshot['trees']['iso'][self.digest]['entries']], ['root-only.prx'])
             self.assertEqual([entry['path'] for entry in snapshot['trees']['iso9660'][self.digest]['entries']], ['nested-only.prx'])
@@ -336,13 +339,13 @@ class DownloadTests(unittest.TestCase):
         pending.unlink()
         clock.return_value = 31
         with self.get('/api/catalog') as response:
-            data = json.load(response)
+            data = decode_catalog(json.load(response))
         self.assertEqual(data['trees']['iso'][self.digest]['extractor']['version'], '10')
         self.status(f'/download/{self.empty}/published-root.prx', 404)
         pending.write_bytes(completed_tree)
         clock.return_value = 62
         with self.get('/api/catalog') as response:
-            data = json.load(response)
+            data = decode_catalog(json.load(response))
         self.assertEqual(data['trees']['iso'][self.digest]['extractor']['version'], '12')
         self.assertEqual(data['trees']['iso9660'][self.digest]['extractor']['version'], '1')
         with self.get(f'/download/{self.empty}/published-root.prx') as response:

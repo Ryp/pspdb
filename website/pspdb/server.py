@@ -16,6 +16,8 @@ import zlib
 from time import monotonic
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from .wire import decode_catalog, encode_catalog
+
 
 def load_extractor_registry():
     """Use live checkout revisions when available; installed viewers may not have them."""
@@ -278,6 +280,7 @@ class _CatalogCache:
         self.cache_path = Path(cache_root).expanduser() / filename if cache_root else None
         implementation = hashlib.sha256(
             Path(__file__).read_bytes() + Path(__file__).with_name("redump.py").read_bytes()
+            + Path(__file__).with_name("wire.py").read_bytes()
         ).hexdigest()
         self.cache_configuration = [
             implementation, store is not None,
@@ -291,7 +294,7 @@ class _CatalogCache:
 
     def _payload(self, signature, body, compressed, data=None, body_digest=None):
         if self.store is not None and data is None:
-            data = json.loads(body)
+            data = decode_catalog(json.loads(body))
         return dict(signature=signature, body=body, gzip=compressed,
                     etag='"' + (body_digest or hashlib.sha256(body).hexdigest()) + '"',
                     gzip_etag='"' + hashlib.sha256(compressed).hexdigest() + '"',
@@ -344,8 +347,9 @@ class _CatalogCache:
                 if payload is None:
                     data = catalog_data(self.catalog, self.redump, self.umdatabase)
                     data["downloads_enabled"] = self.store is not None
-                    body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-                    compressed = gzip.compress(body, compresslevel=1, mtime=0)
+                    body = json.dumps(encode_catalog(data), ensure_ascii=False,
+                                      separators=(",", ":")).encode("utf-8")
+                    compressed = gzip.compress(body, compresslevel=6, mtime=0)
                     payload = self._payload(signature, body, compressed, data)
                     # Never persist a mixed generation observed during active ingestion.
                     if self.cache_path is not None and catalog_signature(self.catalog) == signature:

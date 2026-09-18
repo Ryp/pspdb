@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 
 from .server import catalog_data
+from .wire import encode_catalog
 from .redump import load_matches as load_redump
 from .umdatabase import load_matches as load_umdatabase
 
@@ -20,10 +21,10 @@ def export_site(catalog, output, redump=None, umdatabase=None):
                         load_redump(redump) if redump is not None else None,
                         load_umdatabase(umdatabase) if umdatabase is not None else None)
     data['downloads_enabled'] = False
-    body = json.dumps(data, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    body = json.dumps(encode_catalog(data), ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     assets = Path(__file__).with_name('web')
     output.mkdir(parents=True, exist_ok=True)
-    (output / 'catalog.json.gz').write_bytes(gzip.compress(body, compresslevel=1, mtime=0))
+    (output / 'catalog.json.gz').write_bytes(gzip.compress(body, compresslevel=9, mtime=0))
     for name in ('app.js', 'search-worker.js', 'style.css'):
         shutil.copyfile(assets / name, output / name)
     html = (assets / 'index.html').read_text(encoding='utf-8')

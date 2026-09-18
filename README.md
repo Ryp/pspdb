@@ -417,6 +417,20 @@ The API and exported `catalog.json.gz` keep inventories in `trees[kind][sha256]`
 Root rows use their explicit `iso`, `pkg`, `nand` or `update` inventory; nested
 files use their derived extractor inventory. Inline contextual extractions retain occurrence precedence.
 
+Both the API and the export send a compact transport encoding (`wire_schema` 3,
+`website/pspdb/wire.py`). Inventories mirror their directory layout instead of
+repeating full paths: a directory is an object keyed by child name and a file is
+`[size_bytes, hash_id]`, with rare extras such as a contextual extraction or
+Redump matches in a trailing object. Repeated SHA-256 strings become one shared
+`hashes` dictionary, and repeated tree metadata such as extractor, extraction
+kind, naming rule, staleness and errors becomes one shared `profiles`
+dictionary. The browser rebuilds `trees[kind][sha256]` entries, so the structure
+above still describes what the viewer works with; parents that a path only
+implied come back as ordinary directory entries, and one name cannot describe
+two different children of a directory. On the current catalog this cut the
+gzip-encoded response from 72.5 MB to 45.0 MB and the decoded JSON the browser
+parses from 250 MB to 101 MB.
+
 The local server caches compact catalog JSON, gzip bytes and the download index
 as one coherent snapshot. Requests recheck catalog paths, modification/change times,
 sizes, inode identities and annotation dependencies at most once every five seconds. One background

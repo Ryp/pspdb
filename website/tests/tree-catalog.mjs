@@ -25,7 +25,9 @@ const context = vm.createContext({
   ResizeObserver: class {observe(){}},
   getComputedStyle: ()=>({getPropertyValue:()=> '21px'}),
   fetch: ()=>new Promise(()=>{}),
-  Worker: CatalogWorker, setTimeout,
+  Worker: CatalogWorker, setTimeout, URLSearchParams, URL,
+  location: {href:'http://localhost/', search:'', hash:''},
+  history: {replaceState(){}},
 });
 const appSource = fs.readFileSync(new URL('../pspdb/web/app.js', import.meta.url), 'utf8');
 vm.runInContext(appSource, context);
@@ -428,6 +430,8 @@ for (const count of [28000, 3240000]) {
     setTimeout:callback=>{ idle = callback; return 1; },
     clearTimeout:()=>{ idle = undefined; },
     requestAnimationFrame:()=>0,
+    URLSearchParams, URL, location:{href:'http://localhost/', search:'', hash:''},
+    history:{replaceState(){}},
     count,
   });
   vm.runInContext(appSource, scrollContext);

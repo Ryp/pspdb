@@ -12,6 +12,7 @@ from urllib.request import build_opener, ProxyHandler
 from pspdb.cli import main
 from pspdb.export import export_site
 from pspdb.server import catalog_data
+from pspdb.wire import decode_catalog
 
 
 class ExportTests(unittest.TestCase):
@@ -40,7 +41,7 @@ class ExportTests(unittest.TestCase):
                                           '<p class="text-value">' + 'b' * 40 + '</p>')
         before = {p: p.read_bytes() for p in self.catalog.rglob('*.json')}
         export_site(self.catalog, self.output, dat, pages)
-        data = json.loads(gzip.decompress((self.output / 'catalog.json.gz').read_bytes()))
+        data = decode_catalog(json.loads(gzip.decompress((self.output / 'catalog.json.gz').read_bytes())))
         self.assertFalse(data['downloads_enabled'])
         iso = data['records']['iso'][0]
         self.assertEqual(iso['metadata']['title'], '日本語')
@@ -68,7 +69,7 @@ class ExportTests(unittest.TestCase):
             with client.open(base + asset) as response:
                 self.assertEqual(response.status, 200)
                 if asset.endswith('.gz'):
-                    data = json.loads(gzip.decompress(response.read()))
+                    data = decode_catalog(json.loads(gzip.decompress(response.read())))
                     self.assertEqual(data['records']['iso'][0]['metadata']['title'], '日本語')
                     self.assertFalse(data['downloads_enabled'])
 
