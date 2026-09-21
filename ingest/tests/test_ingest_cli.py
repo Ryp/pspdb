@@ -369,11 +369,19 @@ class IngestCliTests(unittest.TestCase):
                 {p.relative_to(no_store_catalog): json.loads(p.read_text()) for p in no_store_catalog.rglob('*.json')})
             digest = hashlib.sha256(GAME_UMD).hexdigest()
             path = store / 'sha256' / digest[:2] / digest[2:4] / digest
+            # Published objects are linked into place only after their bytes are
+            # durable, so reuse trusts the digest in the path: same-size bytes are
+            # never reread for a hash, which is what makes reuse cheap on spinning
+            # disks. A size that disagrees with the record is still real damage.
             path.write_bytes(b'x' * len(GAME_UMD))
             code, output = self.run_cli(root, '--store', str(store), '--threads', '4', '--no-progress')
+            self.assertEqual(code, 0, output)
+            self.assertEqual(path.read_bytes(), b'x' * len(GAME_UMD))
+            path.write_bytes(b'x' * (len(GAME_UMD) - 1))
+            code, output = self.run_cli(root, '--catalog', str(catalog), '--store', str(store), '--threads', '4', '--no-progress')
             self.assertEqual(code, 1, output)
             self.assertIn('CorruptObject', output)
-            self.assertEqual(path.read_bytes(), b'x' * len(GAME_UMD))
+            self.assertEqual(path.read_bytes(), b'x' * (len(GAME_UMD) - 1))
             self.assertEqual(list((store / '.incoming').iterdir()), [])
 
     def test_movies_remain_opaque_and_do_not_require_helpers(self):

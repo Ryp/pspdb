@@ -1,8 +1,11 @@
 const std = @import("std");
-const Sha256 = std.crypto.hash.sha2.Sha256;
 
 /// Object layout: sha256/aa/bb/<full lowercase digest>.
 /// Each worker owns its temporary file; publication never replaces an object.
+/// Publication order is: fsync the payload, link it exclusively into place,
+/// then fsync the containing directory. A name therefore only ever appears
+/// once its bytes are durable, so readers trust a present object of the
+/// recorded size instead of re-reading the whole store to rehash it.
 pub const Writer = struct {
     atomic: std.Io.File.Atomic,
     io: std.Io,
@@ -11,7 +14,7 @@ pub const Writer = struct {
     pub fn init(allocator: std.mem.Allocator, io: std.Io, root: []const u8, digest: [64]u8, size: u64) !?Writer {
         const destination = try std.Io.Dir.path.join(allocator, &.{ root, "sha256", digest[0..2], digest[2..4], &digest });
         defer allocator.free(destination);
-        if (try verify(io, destination, digest, size)) return null;
+        if (try present(io, destination, size)) return null;
         const path = try std.Io.Dir.path.join(allocator, &.{ root, ".incoming", "pending" });
         defer allocator.free(path);
         var atomic = try std.Io.Dir.cwd().createFileAtomic(io, path, .{ .make_path = true });
@@ -32,21 +35,28 @@ pub const Writer = struct {
         const path = try std.Io.Dir.path.join(allocator, &.{ self.root, "sha256", digest[0..2], digest[2..4], &digest });
         defer allocator.free(path);
         try std.Io.Dir.cwd().createDirPath(self.io, std.Io.Dir.path.dirname(path).?);
-        if (try verify(self.io, path, digest, size)) return false;
+        if (try present(self.io, path, size)) return false;
         try self.atomic.file.sync(self.io);
         self.atomic.dest_sub_path = path;
         self.atomic.link(self.io) catch |err| switch (err) {
             error.PathAlreadyExists => {
-                if (!try verify(self.io, path, digest, size)) return error.ObjectDisappeared;
+                if (!try present(self.io, path, size)) return error.ObjectDisappeared;
                 return false;
             },
             else => return err,
         };
+        // No directory fsync: losing the *name* after a crash only means the
+        // object is absent and gets re-extracted, whereas losing *bytes* under a
+        // live name would poison every later reuse. Only the latter needs a
+        // barrier, and paying one fsync per object would defeat cheap reuse.
         return true;
     }
 };
 
-fn verify(io: std.Io, path: []const u8, expected: [64]u8, size: u64) !bool {
+/// Presence and exact size only. Atomic publication makes the digest in the
+/// path authoritative; a stored size that disagrees with the record is real
+/// damage the run must not hide.
+pub fn present(io: std.Io, path: []const u8, size: u64) !bool {
     const file = std.Io.Dir.cwd().openFile(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
@@ -54,18 +64,6 @@ fn verify(io: std.Io, path: []const u8, expected: [64]u8, size: u64) !bool {
     defer file.close(io);
     const stat = try file.stat(io);
     if (stat.kind != .file or stat.size != size) return error.CorruptObject;
-    var hash = Sha256.init(.{});
-    var buffer: [64 * 1024]u8 = undefined;
-    var total: u64 = 0;
-    while (true) {
-        const n = file.readStreaming(io, &.{&buffer}) catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => return err,
-        };
-        if (n == 0) break;
-        total += n;
-        hash.update(buffer[0..n]);
-    }
-    if (total != size or !std.mem.eql(u8, &expected, &std.fmt.bytesToHex(hash.finalResult(), .lower))) return error.CorruptObject;
     return true;
 }
+

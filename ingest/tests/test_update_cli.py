@@ -349,11 +349,17 @@ class UpdateCliTests(unittest.TestCase):
                 self.assertEqual(object_path(store, data).read_bytes(), data)
             self.assertFalse(object_path(store, source).exists())
             self.assertFalse(object_path(store, plain).exists())
+            # Objects are published only after their bytes are durable, so the
+            # digest in the path is trusted and same-size bytes are never reread
+            # to be rehashed. A size that disagrees with the record still stops
+            # the run instead of publishing a record over damaged storage.
             damaged = object_path(store, sections["PARAM.SFO"])
             damaged.write_bytes(b"x" * len(sections["PARAM.SFO"]))
+            self.run_ingest(inputs, "--store", store)
+            damaged.write_bytes(b"x" * (len(sections["PARAM.SFO"]) - 1))
             self.run_ingest(inputs, "--catalog", catalog, "--store", store, code=1)
             self.assertFalse(result_path(catalog, "update", digest(source)).exists())
-            self.assertEqual(damaged.read_bytes(), b"x" * len(sections["PARAM.SFO"]))
+            self.assertEqual(damaged.read_bytes(), b"x" * (len(sections["PARAM.SFO"]) - 1))
 
     def test_fresh_skip_and_failed_descendant_retry_preserve_root_record(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -24,7 +24,8 @@ const nand_fuses = @import("nand_fuses.zig");
 const extractor = @import("extractor.zig");
 const external_extractor = @import("external_extractor.zig");
 const CatalogState = @import("catalog_state.zig").State;
-const StoreWriter = @import("store.zig").Writer;
+const store_objects = @import("store.zig");
+const StoreWriter = store_objects.Writer;
 const umd = @import("umd_data.zig");
 const sfo = @import("sfo.zig");
 const model = @import("inventory.zig");
@@ -1047,6 +1048,7 @@ fn reuse_entries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry
             const nested = (try reuse_entries(allocator, io, tree.entries, dispatch, false)) orelse return null;
             counts.reused += nested.reused;
         } else {
+            const size = entry.size_bytes orelse return error.CatalogConflict;
             const object_path = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ store, hash[0..2], hash[2..4], hash });
             defer allocator.free(object_path);
             const object = std.Io.Dir.cwd().openFile(io, object_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
@@ -1055,15 +1057,14 @@ fn reuse_entries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry
             };
             defer object.close(io);
             const info = try object.stat(io);
-            if (info.kind != .file or entry.size_bytes == null or info.size != entry.size_bytes.?) return error.CorruptObject;
+            if (info.kind != .file or info.size != size) return error.CorruptObject;
             const payload = try allocator.alloc(u8, std.math.cast(usize, info.size) orelse return error.CorruptObject);
             const view = try memory.Owner.take_allocated(allocator, payload);
             defer view.release();
             if (try object.readPositionalAll(io, payload, 0) != payload.len) return error.CorruptObject;
-            var digest: [32]u8 = undefined;
-            std.crypto.hash.sha2.Sha256.hash(payload, &digest, .{});
-            const actual = std.fmt.bytesToHex(digest, .lower);
-            if (payload.len != entry.size_bytes.? or !std.mem.eql(u8, &actual, hash)) return error.CorruptObject;
+            // Atomic publication owns identity: the recorded digest names these
+            // bytes, so reuse never rehashes the object.
+            const actual = hash[0..64].*;
             if (pair_documents and std.mem.eql(u8, std.Io.Dir.path.basename(entry.path), "DOCUMENT.DAT") and extractor.paired_document_candidate(payload)) {
                 const parent = std.Io.Dir.path.dirname(entry.path) orelse "";
                 for (entries) |sibling| {
@@ -1085,37 +1086,21 @@ fn validate_hash(hash: []const u8) !void {
 }
 
 /// Recheck the exact CAS inputs before a contextual helper reads their paths.
-/// Stream validation and an optional bounded prefix, without another payload copy.
+/// Presence and size only, plus an optional bounded prefix: published objects
+/// are atomically named by their digest, so nothing here rereads the payload.
 fn verify_stored_input(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: []const u8, size: u64, prefix: []u8) !bool {
     try validate_hash(hash);
     const path = try std.fmt.allocPrint(allocator, "{s}/sha256/{s}/{s}/{s}", .{ root, hash[0..2], hash[2..4], hash });
     defer allocator.free(path);
+    if (!try store_objects.present(io, path, size)) return false;
+    const wanted = @min(prefix.len, std.math.cast(usize, size) orelse prefix.len);
+    if (wanted == 0) return true;
     const file = std.Io.Dir.cwd().openFile(io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
     defer file.close(io);
-    const info = try file.stat(io);
-    if (info.kind != .file or info.size != size) return error.CorruptObject;
-    var digest = std.crypto.hash.sha2.Sha256.init(.{});
-    var buffer: [64 * 1024]u8 = undefined;
-    var total: u64 = 0;
-    while (true) {
-        const n = file.readStreaming(io, &.{&buffer}) catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => return err,
-        };
-        if (n == 0) break;
-        if (n > size - total) return error.CorruptObject;
-        if (total < prefix.len) {
-            const start: usize = @intCast(total);
-            const copied = @min(n, prefix.len - start);
-            @memcpy(prefix[start..][0..copied], buffer[0..copied]);
-        }
-        total += n;
-        digest.update(buffer[0..n]);
-    }
-    if (total != size or !std.mem.eql(u8, hash, &std.fmt.bytesToHex(digest.finalResult(), .lower))) return error.CorruptObject;
+    if (try file.readPositionalAll(io, prefix[0..wanted], 0) != wanted) return error.CorruptObject;
     return true;
 }
 

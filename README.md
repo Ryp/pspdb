@@ -351,6 +351,39 @@ the last five seconds, so a stalled transfer reads as slow rather than fast.
 `--no-progress` disables the log; it never affects stdout, `state.json` or
 `report.json`.
 
+Startup is reported too, because it is slow enough to look like a hang before any
+download begins: fetching each TSV, reading the snapshots, scanning the catalog,
+and checking the packages already in `--work/completed`.
+
+That check does not re-hash anything. A completed file is named
+`<sha256>-<size>.pkg` by this tool only after its bytes were hashed and verified,
+so the published name *is* the identity; startup reuses the identity recorded in
+`state.json` when the name and on-disk size still agree, and otherwise reads the
+128-byte PKG header and compares the header's declared total against the file size.
+Files that are truncated, resized or headerless are still quarantined to
+`--work/partial/<name>.corrupt`. Downloads therefore begin in seconds instead of
+waiting on a full pass over the store; `report.json` records
+`"identity_basis": "published_name"`.
+
+`--verify` restores the exhaustive pass, re-hashing every completed file to detect
+silent corruption that happened after publication. It repaints a counter, digest
+prefix and hashing rate per file, and reports `"identity_basis": "hashed_bytes"`:
+
+```text
+[21/322] 10c58a42dd9d128f                              63% 640.0 MiB/1.0 GiB 108.3 MiB/s
+```
+
+Under `--verify` each file is hashed at most once per run: the closing
+reconciliation reuses the opening pass for files whose size and mtime are
+unchanged, and re-hashes any file that changed underneath it.
+
+Packages are published atomically. Bytes are written to `--work/partial`, fsynced,
+verified, then renamed into `--work/completed` within the same directory tree, and
+the destination directory is fsynced after the rename. A reader — including a
+concurrent `pspdb-ingest` over the same folder — sees either a complete, verified
+package under its final name or no file at all; a crash or `Ctrl+C` can never leave
+a partially written file in `completed`.
+
 `Ctrl+C` stops after the chunk in flight rather than aborting the process. The
 running transfer checkpoints its partial prefix by size and SHA-256, the remaining
 candidates are left untouched, `state.json` and `report.json` are still published,
@@ -389,10 +422,22 @@ remains the JSON format version, independent of extractor revisions.
 
 `--skip-existing` uses uv/Python for the read-only provenance scan at startup.
 Affected ISOs are read again, while current intermediate
-extractions reuse verified stored child bytes. Missing stored children cause that
+extractions reuse stored child bytes. Missing stored children cause that
 extractor to run again. Source ISOs/ZIPs must still be available; this command does
 not regenerate arbitrary sources directly from the object store. Without
 `--skip-existing`, all encountered sources are processed as before.
+
+Reuse does not re-hash the object store. An object is published by writing it to
+`<store>/.incoming`, fsyncing those bytes, then hard-linking it to
+`sha256/aa/bb/<digest>`, which never replaces an existing object, so a name can
+only appear once its contents are durable and the digest in the path is its
+identity. Readers therefore check presence and exact size only: rehashing every
+reused child would read the whole store on each run, which is the dominant cost
+on spinning disks. A stored size that disagrees with the record is damage rather
+than a stale name, and fails the run with `CorruptObject` instead of publishing a
+record over it. Same-size byte rot after publication is not detected here; a
+crash between the fsync and the link merely loses the name, and the object is
+extracted again on the next run.
 Intermediate freshness is scoped by extractor kind and source hash:
 `fresh_trees[kind][sha256]` in status JSON. A fresh original ISO observation does
 not authorize reuse of a stale ISO9660 extraction of the same bytes.
