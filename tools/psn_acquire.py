@@ -300,6 +300,16 @@ def catalog_identities(root):
     return identities
 
 
+def describe(header, sha, size, package, basis):
+    """One identity shape for both bases, so reports never depend on how it was established."""
+    return {'sha256': sha, 'size_bytes': size, 'pkg_magic': True,
+            'content_id': header[48:96].split(b'\0', 1)[0].decode('ascii', errors='replace') or None,
+            'key_type': header[7],
+            'identity_basis': basis,
+            'hash_confirmed': package['expected_sha256'] == sha,
+            'size_confirmed': package['expected_size'] == size}
+
+
 def inspect_package(path, package, progress=None):
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -314,11 +324,7 @@ def inspect_package(path, package, progress=None):
             if progress:
                 progress.advance(len(block))
     sha = digest.hexdigest()
-    observed = {'sha256': sha, 'size_bytes': size, 'pkg_magic': True,
-                'content_id': header[48:96].split(b'\0', 1)[0].decode('ascii', errors='replace') or None,
-                'key_type': header[7],
-                'hash_confirmed': package['expected_sha256'] == sha,
-                'size_confirmed': package['expected_size'] == size}
+    observed = describe(header, sha, size, package, 'hashed_bytes')
     if int.from_bytes(header[24:32], 'big') != size:
         raise AcquisitionError('integrity_mismatch', 'PKG header total size differs from observed bytes', observed)
     if package['expected_size'] is not None and size != package['expected_size']:
@@ -328,9 +334,49 @@ def inspect_package(path, package, progress=None):
     return observed
 
 
+def inspect_named(path, package, size):
+    """Trust the name this process published: those bytes were hashed before the rename.
+
+    Reads the 128-byte header only. Silent corruption after publication is caught by
+    ingestion, or here on demand with --verify, not by rehashing every file every run.
+    """
+    with path.open('rb') as stream:
+        header = stream.read(128)
+    if len(header) < 128 or header[:4] != b'\x7fPKG':
+        raise AcquisitionError('unsupported_format', 'Not a complete PKG header')
+    observed = describe(header, package['expected_sha256'], size, package, 'published_name')
+    if int.from_bytes(header[24:32], 'big') != size:
+        raise AcquisitionError('integrity_mismatch', 'PKG header total size differs from file size', observed)
+    if size != package['expected_size']:
+        raise AcquisitionError('integrity_mismatch', 'File size differs from its published name', observed)
+    return observed
+
+
 def file_hash(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def publish(part, target):
+    """Rename inside the work directory: a reader sees a complete package or no file.
+
+    The bytes are fsynced before the rename, and the destination directory after it, so
+    a crash cannot leave a name in completed/ whose contents are not on stable storage.
+    """
+    fd = os.open(part, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    part.replace(target)
+    fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    except OSError:
+        # Some network filesystems reject directory fsync; the rename itself stays atomic.
+        pass
+    finally:
+        os.close(fd)
 
 
 def record_partial(part, state):
@@ -555,7 +601,7 @@ def download(package, work, state, save, timeout, retries, floor, progress=None)
                 raise AcquisitionError('network_failure', 'Truncated HTTP body')
             observed = inspect_package(part, package)
             target = completed / f"{observed['sha256']}-{observed['size_bytes']}.pkg"
-            part.replace(target)
+            publish(part, target)
             state.clear()
             state.update(status='verified', observed=observed, file=target.name, url=url, verified_at=now())
             save()
@@ -587,27 +633,40 @@ def download(package, work, state, save, timeout, retries, floor, progress=None)
                 connection.close()
 
 
-def reconcile(data, state, work, identities, progress=None, verified=None):
+def reconcile(data, state, work, identities, progress=None, verified=None, verify=False):
     progress = progress or Progress(False)
     checked = {}
     # Include orphaned publications after a crash, not only files named by state.
     paths = sorted((work / 'completed').glob('*.pkg'))
     if paths:
-        progress.phase(f'verifying {len(paths)} local package(s) in {work / "completed"}')
+        progress.phase(f'{"verifying" if verify else "checking"} {len(paths)} local package(s)'
+                       f' in {work / "completed"}')
+    # Identities this run already established: reuse them instead of reopening every file.
+    known = {entry['file']: entry['observed'] for entry in state['packages'].values()
+             if entry.get('file') and entry.get('observed')}
     for index, path in enumerate(paths, 1):
         match = re.fullmatch(r'([0-9a-f]{64})-([0-9]+)\.pkg', path.name)
         if not match:
             raise ValueError(f'Unexpected file in completed directory: {path.name}')
         status = path.stat()
         stamp = (status.st_size, status.st_mtime_ns)
-        # Hash each package once per run: a second pass over an untouched file proves nothing new.
-        if verified is not None and verified.get(path.name, (None,))[0] == stamp:
-            checked[path.name] = verified[path.name][1]
-            continue
-        progress.scan(index, len(paths), match[1][:16], stamp[0])
+        reference = {'expected_sha256': match[1], 'expected_size': int(match[2])}
+        recorded = known.get(path.name)
         try:
-            observed = inspect_package(path, {'expected_sha256': match[1],
-                                              'expected_size': int(match[2])}, progress)
+            if not verify:
+                if (recorded and recorded.get('sha256') == match[1]
+                        and recorded.get('size_bytes') == stamp[0] == reference['expected_size']):
+                    # Published by this tool and unchanged in size: reopening it learns nothing.
+                    checked[path.name] = dict(recorded, identity_basis='published_name')
+                else:
+                    checked[path.name] = inspect_named(path, reference, stamp[0])
+                continue
+            if verified is not None and verified.get(path.name, (None,))[0] == stamp:
+                # Hash each package once per run: a second pass over untouched bytes proves nothing.
+                checked[path.name] = verified[path.name][1]
+                continue
+            progress.scan(index, len(paths), match[1][:16], stamp[0])
+            observed = inspect_package(path, reference, progress)
         except AcquisitionError:
             path.replace(work / 'partial' / (path.name + '.corrupt'))
             if verified is not None:
@@ -671,7 +730,10 @@ def reconcile(data, state, work, identities, progress=None, verified=None):
         'rows_missing_sha256': sum(r['expected_sha256'] is None for r in data['rows']),
         'rows_missing_size': sum(r['expected_size'] is None for r in data['rows'])}
     data['completed_directory'] = str(work / 'completed')
-    data['coverage_scope'] = 'Exact PKG pairs only; revisions may be stale. No inference of extraction failure from absent catalog pairs.'
+    data['identity_basis'] = 'hashed_bytes' if verify else 'published_name'
+    data['coverage_scope'] = ('Exact PKG pairs only; revisions may be stale. No inference of extraction'
+                              ' failure from absent catalog pairs. Local packages are identified by the'
+                              ' name this tool published after hashing them, unless --verify rehashed them.')
     return data
 
 
@@ -690,6 +752,7 @@ def main():
     parser.add_argument('--retry-failed', action='store_true', help='Retry prior unavailable/integrity/format/redirect failures; transient interrupted downloads resume normally')
     parser.add_argument('--min-free-gib', type=float, default=2, help='Preserve this much free space during acquisition')
     parser.add_argument('--no-progress', action='store_true', help='Disable the stderr progress log; stdout JSON is unaffected')
+    parser.add_argument('--verify', action='store_true', help='Re-hash every package in completed instead of trusting its published name')
     args = parser.parse_args()
     if (args.limit < 0 or not 0 < args.timeout <= 300 or not 0 <= args.retries <= 5 or
             not 0 <= args.min_free_gib < 1024 * 1024):
@@ -725,7 +788,7 @@ def main():
             def save():
                 atomic_json(state_path, state)
             verified = {}
-            reconcile(data, state, work, identities, progress, verified)
+            reconcile(data, state, work, identities, progress, verified, args.verify)
             requested = set(args.package)
             if requested - {p['id'] for p in data['packages']}:
                 raise ValueError('Unknown --package candidate ID')
@@ -775,7 +838,7 @@ def main():
                                 part = work / 'partial' / (package['id'] + '.part')
                                 shutil.copyfile(source, part)
                                 inspect_package(part, package)
-                                part.replace(target)
+                                publish(part, target)
                             entry.clear()
                             entry.update(status='verified', observed=observed, file=target.name,
                                          reused_from=str(source.resolve()), verified_at=now())
@@ -795,7 +858,7 @@ def main():
                 # Downloads checkpoint themselves; still publish an accurate report before exiting.
                 interrupted = True
                 progress.finish('interrupted', 'Ctrl+C')
-            reconcile(data, state, work, identities, progress, verified)
+            reconcile(data, state, work, identities, progress, verified, args.verify)
             data['attempted_this_run'] = attempted
             data['interrupted'] = interrupted
             save()

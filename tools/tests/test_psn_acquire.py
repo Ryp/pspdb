@@ -335,7 +335,7 @@ class AcquisitionTests(unittest.TestCase):
         self.assertNotIn('SECRET', json.dumps(state))
         self.assertEqual(list((self.work / 'completed').iterdir()), [])
 
-    def test_corrupt_completed_file_is_quarantined_not_offered_to_ingester(self):
+    def test_corrupt_completed_file_is_quarantined_under_verify(self):
         payload = pkg_bytes()
         path = self.snapshot('PSP_THEMES.tsv', [{'File Size': str(len(payload)), 'SHA256': ''}])
         data = acquire.inventory([path])
@@ -343,11 +343,28 @@ class AcquisitionTests(unittest.TestCase):
         filename = f'{hashlib.sha256(payload).hexdigest()}-{len(payload)}.pkg'
         (self.work / 'completed' / filename).write_bytes(payload[:-1] + b'y')
         state = {'packages': {package['id']: {'status': 'verified', 'file': filename}}}
-        acquire.reconcile(data, state, self.work, {})
+        acquire.reconcile(data, state, self.work, {}, verify=True)
         self.assertEqual(package['status'], 'local_corrupt')
         self.assertIsNone(package['observed'])
         self.assertIsNone(package['file'])
         self.assertEqual(list((self.work / 'completed').iterdir()), [])
+
+    def test_truncated_or_headerless_completed_file_is_caught_without_hashing(self):
+        payload = pkg_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        for name, content in (('short', payload[:64]), ('resized', payload + b'z'), ('plain', b'n' * len(payload))):
+            with self.subTest(name=name):
+                for stale in (self.work / 'completed').iterdir():
+                    stale.unlink()
+                for stale in (self.work / 'partial').iterdir():
+                    stale.unlink()
+                target = self.work / 'completed' / f'{digest}-{len(payload)}.pkg'
+                target.write_bytes(content)
+                path = self.snapshot('PSP_THEMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
+                data = acquire.inventory([path])
+                acquire.reconcile(data, {'packages': {}}, self.work, {})
+                self.assertEqual(list((self.work / 'completed').iterdir()), [])
+                self.assertTrue((self.work / 'partial' / f'{target.name}.corrupt').is_file())
 
     def test_cli_download_bound_and_repeat_reuses_verified_files(self):
         payload = pkg_bytes()
@@ -440,10 +457,11 @@ class AcquisitionTests(unittest.TestCase):
             self.assertEqual(acquire.main(), 0)
         self.assertEqual((self.work / 'completed' / f'{digest}-{len(payload)}.pkg').read_bytes(), payload)
 
-    def test_local_packages_are_hashed_once_per_run_and_verification_is_reported(self):
+    def test_startup_trusts_published_names_and_never_hashes_local_packages(self):
         payload = pkg_bytes()
         digest = hashlib.sha256(payload).hexdigest()
-        (self.work / 'completed' / f'{digest}-{len(payload)}.pkg').write_bytes(payload)
+        name = f'{digest}-{len(payload)}.pkg'
+        (self.work / 'completed' / name).write_bytes(payload)
         path = self.snapshot('PSP_GAMES.tsv', [{'Name': 'Patapon 2', 'File Size': str(len(payload)),
                                                 'SHA256': digest}])
         argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
@@ -456,28 +474,43 @@ class AcquisitionTests(unittest.TestCase):
         with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), patch('sys.stderr', new=log), \
                 patch.object(acquire, 'inspect_package', counted):
             acquire.main()
-        # Both reconcile passes see this file; re-reading unchanged bytes is pure NAS/disk cost.
-        self.assertEqual(hashed, [f'{digest}-{len(payload)}.pkg'])
-        self.assertIn('verifying 1 local package(s)', log.getvalue())
-        self.assertTrue((self.work / 'report.json').is_file())
+        # Downloads must not wait on rehashing a store that this tool itself hashed at publication.
+        self.assertEqual(hashed, [])
+        self.assertIn('checking 1 local package(s)', log.getvalue())
+        self.assertEqual((self.work / 'completed' / name).read_bytes(), payload)
 
-    def test_changed_completed_file_is_rehashed_and_quarantined(self):
+    def test_verify_rehashes_each_local_package_exactly_once_per_run(self):
+        payload = pkg_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        name = f'{digest}-{len(payload)}.pkg'
+        (self.work / 'completed' / name).write_bytes(payload)
+        path = self.snapshot('PSP_GAMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
+                '--rap-dir', str(self.rap_dir), '--limit', '0', '--verify', '--no-progress']
+        hashed, original = [], acquire.inspect_package
+        def counted(target, package, progress=None):
+            hashed.append(target.name)
+            return original(target, package, progress)
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch.object(acquire, 'inspect_package', counted):
+            acquire.main()
+        # Two reconcile passes, one hash: the closing pass reuses the opening one.
+        self.assertEqual(hashed, [name])
+
+    def test_verify_cache_does_not_shield_bytes_that_changed_mid_run(self):
         payload = pkg_bytes()
         digest = hashlib.sha256(payload).hexdigest()
         target = self.work / 'completed' / f'{digest}-{len(payload)}.pkg'
         target.write_bytes(payload)
         path = self.snapshot('PSP_GAMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
-        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir), '--limit', '0', '--no-progress']
         data = acquire.inventory([path])
         state = {'version': 1, 'packages': {}}
         cache = {}
-        acquire.reconcile(data, state, self.work, {}, None, cache)
-        # The cache is keyed by size and mtime, never by name alone: changed bytes must not pass.
+        acquire.reconcile(data, state, self.work, {}, None, cache, True)
+        # Keyed by size and mtime, never by name alone: same-size corruption must be rehashed.
         target.write_bytes(payload[:-1] + b'y')
         os.utime(target, ns=(0, 0))
-        data = acquire.inventory([path])
-        acquire.reconcile(data, state, self.work, {}, None, cache)
+        acquire.reconcile(acquire.inventory([path]), state, self.work, {}, None, cache, True)
         self.assertEqual(list((self.work / 'completed').iterdir()), [])
         self.assertTrue((self.work / 'partial' / f'{target.name}.corrupt').is_file())
 
