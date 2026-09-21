@@ -32,14 +32,14 @@ def sfo(fields):
 
 
 def pkg_bytes(content_type=7, extra=(), broken_pbp=False, pbp_override=None, files_override=None):
-    inner = sfo({'TITLE': 'Fixture game', 'DISC_ID': 'NPUG00001', 'DISC_VERSION': '1.00', 'PSP_SYSTEM_VER': '3.80'})
+    inner = sfo({'TITLE': 'Fixture game', 'DISC_ID': 'NPUG00001', 'DISC_VERSION': '1.00', 'PSP_SYSTEM_VER': '3.80', 'CATEGORY': 'EG'})
     offsets = [40] + [40 + len(inner)] * 7
     pbp = b'\0PBP' + struct.pack('<I8I', 0x10000, *offsets) + inner + b'payload'
     if pbp_override is not None:
         pbp = pbp_override
     if broken_pbp:
         pbp = bytearray(pbp); struct.pack_into('<I', pbp, 36, len(pbp) + 1); pbp = bytes(pbp)
-    files = [('PARAM.SFO', sfo({'TITLE': 'Outer fixture'}), False), ('USRDIR', None, False),
+    files = [('PARAM.SFO', sfo({'TITLE': 'Outer fixture', 'CATEGORY': 'PP'}), False), ('USRDIR', None, False),
              ('USRDIR/CONTENT', None, False), ('USRDIR/CONTENT/EBOOT.PBP', pbp, True),
              ('USRDIR/ISO.BIN.EDAT', b'opaque bytes', False), ('empty', b'', True), *extra]
     if files_override is not None:
@@ -89,6 +89,9 @@ class PkgCliTests(unittest.TestCase):
                 record = json.loads(result_path(catalog, 'pkg', digest).read_text())
                 self.assertEqual(record['metadata']['title'], 'Fixture game')
                 self.assertEqual(record['metadata']['required_firmware'], '3.80')
+                self.assertEqual(record['metadata']['category'], 'PP')
+                self.assertEqual(record['metadata']['boot_category'], 'EG')
+                self.assertEqual(record['metadata']['boot_file'], 'USRDIR/CONTENT/EBOOT.PBP')
                 tree = json.loads(tree_path(catalog, digest).read_text())
                 self.assertEqual([e['path'] for e in tree['entries']], sorted(name for name, _, _ in files))
                 for entry in tree['entries']:
@@ -127,6 +130,8 @@ class PkgCliTests(unittest.TestCase):
                 self.assertEqual(record['metadata'].get('title'), 'Observed theme' if metadata is not None else None)
                 self.assertIsNone(record['metadata'].get('disc_id'))
                 self.assertIsNone(record['metadata'].get('required_firmware'))
+                for field in ('category', 'boot_category', 'boot_file'):
+                    self.assertNotIn(field, record['metadata'])
                 tree = json.loads(tree_path(catalog, digest).read_text())
                 self.assertEqual(tree['entries'], [
                     dict(path=name, type='file', size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())

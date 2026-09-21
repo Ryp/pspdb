@@ -112,6 +112,9 @@ fn publish_pkg(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
         content_type: u32,
         package_flags: ?u32,
         title_id: []const u8,
+        category: ?[]const u8,
+        boot_category: ?[]const u8,
+        boot_file: ?[]const u8,
         disc_id: ?[]const u8,
         disc_version: ?[]const u8,
         title: ?[]const u8,
@@ -123,7 +126,7 @@ fn publish_pkg(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
         .sha256 = @as([]const u8, &result.sha256),
         .sha1 = @as([]const u8, &result.sha1),
         .size_bytes = result.size_bytes,
-        .metadata = if (result.has_metadata) @as(?Metadata, .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware }) else null,
+        .metadata = if (result.has_metadata) @as(?Metadata, .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .category = fields.category, .boot_category = result.boot_category, .boot_file = result.boot_file, .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware }) else null,
     };
     const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries, .@"error" = result.@"error" };
     try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);

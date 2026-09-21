@@ -211,7 +211,12 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
         fn emit(self: *@This(), name: []const u8, contents: ?memory.View) !void {
             try self.inventory.emit_view(name, contents);
             const view = contents orelse return;
-            if (!std.mem.eql(u8, name, "USRDIR/CONTENT/EBOOT.PBP")) return;
+            const boot = inline for (.{ "USRDIR/CONTENT/EBOOT.PBP", "USRDIR/CONTENT/PBOOT.PBP", "USRDIR/CONTENT/PARAM.PBP" }) |candidate| {
+                if (std.mem.eql(u8, name, candidate)) break @as([]const u8, candidate);
+            } else return;
+            // Measured packages carry exactly one boot PBP: the first consumed
+            // one wins, and a malformed inner PBP is never retried from another.
+            if (self.result.boot_file != null or self.result.pbp_sfo_bytes.len != 0) return;
             // Use the inventory's already-decrypted PBP rather than decrypting
             // its entire game payload a second time just to read PARAM.SFO.
             const parsed = containers.parse_pbp(view.bytes) catch return;
@@ -220,7 +225,12 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
                 error.OutOfMemory => return err,
                 else => return,
             };
-            self.result.metadata = .{ .title = inner.title orelse self.result.metadata.title, .disc_id = inner.disc_id, .disc_version = inner.disc_version, .required_firmware = inner.required_firmware };
+            self.result.boot_file = boot;
+            self.result.boot_category = inner.category;
+            // Only a bootable executable describes the package itself: a patch
+            // or DLC PBP names the game it attaches to, not this content.
+            if (!std.mem.eql(u8, boot, "USRDIR/CONTENT/EBOOT.PBP")) return;
+            self.result.metadata = .{ .title = inner.title orelse self.result.metadata.title, .disc_id = inner.disc_id, .disc_version = inner.disc_version, .required_firmware = inner.required_firmware, .category = self.result.metadata.category };
         }
     };
     var context = PackageInventory{ .inventory = &inventory, .result = &result };

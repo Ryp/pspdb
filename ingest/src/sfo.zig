@@ -7,6 +7,7 @@ pub const Metadata = struct {
     disc_id: ?[]const u8 = null,
     title: ?[]const u8 = null,
     required_firmware: ?[]const u8 = null,
+    category: ?[]const u8 = null,
 };
 
 /// A supplied title owner must start empty and be freed even if parsing fails.
@@ -67,7 +68,7 @@ fn parseImpl(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u
             }
         }
         const target: *?[]const u8 = selected: {
-            inline for (.{ .{ "DISC_ID", "disc_id" }, .{ "DISC_VERSION", "disc_version" }, .{ "TITLE", "title" }, .{ "PSP_SYSTEM_VER", "required_firmware" } }) |field| {
+            inline for (.{ .{ "DISC_ID", "disc_id" }, .{ "DISC_VERSION", "disc_version" }, .{ "TITLE", "title" }, .{ "PSP_SYSTEM_VER", "required_firmware" }, .{ "CATEGORY", "category" } }) |field| {
                 if (std.mem.eql(u8, key, field[0])) break :selected &@field(result, field[1]);
             }
             if (std.mem.eql(u8, key, "UPDATER_VER")) {
@@ -204,4 +205,34 @@ test "selected title normalizes legacy trademark without changing source" {
     const result = try parse(std.testing.allocator, &bytes, &owner);
     try std.testing.expectEqualStrings("Dem™", result.title.?);
     try std.testing.expectEqual(@as(u8, 0x99), bytes[68]);
+}
+
+fn category_fixture(comptime count: usize) [20 + 16 * count + 9 + 3 * count]u8 {
+    var bytes: [20 + 16 * count + 9 + 3 * count]u8 = @splat(0);
+    @memcpy(bytes[0..4], "\x00PSF");
+    std.mem.writeInt(u32, bytes[4..8], 0x101, .little);
+    std.mem.writeInt(u32, bytes[8..12], 20 + 16 * count, .little);
+    std.mem.writeInt(u32, bytes[12..16], 20 + 16 * count + 9, .little);
+    std.mem.writeInt(u32, bytes[16..20], count, .little);
+    inline for (0..count) |index| {
+        const entry = 20 + 16 * index;
+        std.mem.writeInt(u16, bytes[entry + 2 ..][0..2], 0x204, .little);
+        std.mem.writeInt(u32, bytes[entry + 4 ..][0..4], 3, .little);
+        std.mem.writeInt(u32, bytes[entry + 8 ..][0..4], 3, .little);
+        std.mem.writeInt(u32, bytes[entry + 12 ..][0..4], 3 * index, .little);
+        @memcpy(bytes[20 + 16 * count + 9 + 3 * index ..][0..3], "MG\x00");
+    }
+    @memcpy(bytes[20 + 16 * count ..][0..9], "CATEGORY\x00");
+    return bytes;
+}
+
+test "selected CATEGORY borrows the input and rejects duplicates" {
+    var owner: []u8 = &.{};
+    defer std.testing.allocator.free(owner);
+    var bytes = category_fixture(1);
+    const result = try parse(std.testing.allocator, &bytes, &owner);
+    try std.testing.expectEqualStrings("MG", result.category.?);
+    try std.testing.expectEqual(bytes[45..].ptr, result.category.?.ptr);
+    var duplicate = category_fixture(2);
+    try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, &duplicate, &owner));
 }
