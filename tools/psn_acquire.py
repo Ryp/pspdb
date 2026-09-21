@@ -4,7 +4,7 @@ With no local snapshots, fetch the current PSP/PSX TSVs from NoPayStation.
 PKG downloads require --limit N. This does not run ingestion or write the catalog.
 """
 import argparse
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 import csv
 from datetime import datetime, timezone
 import fcntl
@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
@@ -116,14 +117,16 @@ def request(url, headers, timeout):
         raise
 
 
-def fetch_snapshots(work, timeout):
+def fetch_snapshots(work, timeout, progress=None):
     """Validate a fresh batch before replacing the private local TSV cache."""
+    progress = progress or Progress(False)
     cache = work / 'snapshots'
     cache.mkdir(mode=0o700, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.snapshots-', dir=work) as temporary:
         staged = Path(temporary)
-        for category in SNAPSHOT_CATEGORIES:
+        for number, category in enumerate(SNAPSHOT_CATEGORIES, 1):
             filename = category + '.tsv'
+            progress.phase(f'  [{number}/{len(SNAPSHOT_CATEGORIES)}] {filename}')
             connection = http.client.HTTPSConnection('nopaystation.com', timeout=timeout)
             connection._create_connection = public_connection
             try:
@@ -297,7 +300,7 @@ def catalog_identities(root):
     return identities
 
 
-def inspect_package(path, package):
+def inspect_package(path, package, progress=None):
     digest = hashlib.sha256()
     with path.open('rb') as stream:
         header = stream.read(128)
@@ -308,6 +311,8 @@ def inspect_package(path, package):
         while block := stream.read(CHUNK):
             size += len(block)
             digest.update(block)
+            if progress:
+                progress.advance(len(block))
     sha = digest.hexdigest()
     observed = {'sha256': sha, 'size_bytes': size, 'pkg_magic': True,
                 'content_id': header[48:96].split(b'\0', 1)[0].decode('ascii', errors='replace') or None,
@@ -328,12 +333,157 @@ def file_hash(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def record_partial(part, state):
+    """Bind the saved prefix to its exact bytes; a later run resumes only what it can verify."""
+    if part.exists():
+        state['partial_size'] = part.stat().st_size
+        state['partial_sha256'] = file_hash(part)
+    else:
+        state.pop('partial_size', None)
+        state.pop('partial_sha256', None)
+
+
 def capacity(directory, floor, needed=0):
     if shutil.disk_usage(directory).free - needed < floor:
         raise AcquisitionError('capacity_blocked', 'Free-space floor would be crossed')
 
 
-def download(package, work, state, save, timeout, retries, floor):
+def human_size(count):
+    value = float(count)
+    for unit in ('B', 'KiB', 'MiB', 'GiB'):
+        if value < 1024 or unit == 'GiB':
+            return f'{value:.0f} {unit}' if unit == 'B' else f'{value:.1f} {unit}'
+        value /= 1024
+
+
+def package_label(package, rows):
+    """Identify a candidate by its first named reference row; ids are not human-readable."""
+    for reference in package['references']:
+        row = rows[reference]
+        name = row['name'] or row['original_name']
+        identifier = row['content_id'] or row['title_id']
+        if name and identifier:
+            return f'{name} [{identifier}]'
+        if name or identifier:
+            return name or identifier
+    return package['id'][:12]
+
+
+class Progress:
+    """Readable acquisition progress on stderr, keeping stdout machine-readable.
+
+    A terminal gets one repainted line per package; a redirected stream gets a
+    start and a result line, so logs stay greppable without control codes.
+    """
+    WINDOW = 5.0
+    INTERVAL = 0.2
+
+    def __init__(self, enabled, stream=None):
+        self.stream = sys.stderr if stream is None else stream
+        self.enabled = enabled
+        self.tty = bool(enabled and self.stream.isatty())
+        self.index = self.total = 0
+        self.label = ''
+        self.expected = None
+        self.received = 0
+        self.started = 0.0
+        self.painted = 0.0
+        self.drawn = False
+        self.samples = deque()
+
+    def package(self, index, total, label, expected):
+        self.index, self.total, self.label = index, total, label
+        self.attempt(0, expected)
+        self.started = time.monotonic()
+        if self.tty:
+            self.draw()
+        else:
+            size = f' ({human_size(expected)})' if expected else ''
+            self.write(f'{self.counter()} start {label}{size}')
+
+    def phase(self, text):
+        """Announce a startup step: these are slow enough to look like a hang."""
+        self.clear()
+        self.write(text)
+
+    def scan(self, index, total, label, expected):
+        """Local hashing: repaint on a terminal, stay quiet per file in a redirected log."""
+        self.index, self.total, self.label = index, total, label
+        self.attempt(0, expected)
+        self.started = time.monotonic()
+        if self.tty:
+            self.draw()
+
+    def attempt(self, received, expected):
+        """Reset the rate window: a resumed or retried transfer starts its own measurement."""
+        self.received, self.expected = received, expected
+        self.samples.clear()
+        self.samples.append((time.monotonic(), received))
+
+    def advance(self, count):
+        self.received += count
+        if not self.tty:
+            return
+        moment = time.monotonic()
+        self.samples.append((moment, self.received))
+        while len(self.samples) > 2 and moment - self.samples[0][0] > self.WINDOW:
+            self.samples.popleft()
+        if moment - self.painted >= self.INTERVAL:
+            self.draw()
+
+    def finish(self, status, detail=None):
+        elapsed = time.monotonic() - self.started
+        self.clear()
+        summary = f'{self.counter()} {status} {self.label}'
+        if self.received:
+            summary += f' - {human_size(self.received)} in {elapsed:.0f}s'
+            if elapsed > 0:
+                summary += f' at {human_size(self.received / elapsed)}/s'
+        if detail:
+            summary += f' ({detail})'
+        self.write(summary)
+
+    def counter(self):
+        return f'[{self.index}/{self.total}]'
+
+    def rate(self):
+        """Recent speed, not a run average: a stalled transfer must show as slow."""
+        if len(self.samples) < 2:
+            return None
+        (first_at, first_bytes), (last_at, last_bytes) = self.samples[0], self.samples[-1]
+        span = last_at - first_at
+        return (last_bytes - first_bytes) / span if span >= 0.5 else None
+
+    def draw(self):
+        self.painted = time.monotonic()
+        rate = self.rate()
+        if self.expected:
+            share = f'{100 * self.received / self.expected:3.0f}% '
+            volume = f'{human_size(self.received)}/{human_size(self.expected)}'
+        else:
+            share, volume = '', human_size(self.received)
+        stats = f'{share}{volume} {human_size(rate) + "/s" if rate else "-- B/s"}'
+        head = self.counter()
+        width = shutil.get_terminal_size((100, 24)).columns - 1
+        room = max(8, width - len(head) - len(stats) - 2)
+        label = self.label if len(self.label) <= room else self.label[:room - 3] + '...'
+        self.stream.write('\r\x1b[K' + f'{head} {label.ljust(room)} {stats}'[:width])
+        self.stream.flush()
+        self.drawn = True
+
+    def clear(self):
+        if self.drawn:
+            self.stream.write('\r\x1b[K')
+            self.stream.flush()
+            self.drawn = False
+
+    def write(self, text):
+        if self.enabled:
+            print(text, file=self.stream, flush=True)
+
+
+def download(package, work, state, save, timeout, retries, floor, progress=None):
+    progress = progress or Progress(False)
     part = work / 'partial' / (package['id'] + '.part')
     completed = work / 'completed'
     url = package['urls'][0]
@@ -388,10 +538,12 @@ def download(package, work, state, save, timeout, retries, floor):
             state.update(status='downloading', url=url,
                          etag=validator if re.fullmatch(r'"[^"\r\n]*"', validator) else None)
             save()
+            progress.attempt(offset, total if total is not None else expected)
             received = offset
             with part.open('ab' if offset else 'wb') as stream:
                 while block := response.read(CHUNK):
                     received += len(block)
+                    progress.advance(len(block))
                     if ((total is not None and received > total) or
                             (expected is not None and received > expected)):
                         raise AcquisitionError('integrity_mismatch', 'HTTP body exceeds declared size')
@@ -418,30 +570,53 @@ def download(package, work, state, save, timeout, retries, floor):
             if status in ('integrity_mismatch', 'unsupported_format') and part.exists():
                 part.unlink()
                 state.pop('etag', None)
-            elif part.exists():
-                state['partial_size'] = part.stat().st_size
-                state['partial_sha256'] = file_hash(part)
+            else:
+                record_partial(part, state)
             save()
             if status != 'network_failure' or attempt == retries:
                 return
             time.sleep(min(2 ** attempt, 8))
+        except KeyboardInterrupt:
+            # Checkpoint before unwinding: the transferred prefix is the point of resuming.
+            state.update(status='interrupted', detail='Cancelled by user', attempted_at=now())
+            record_partial(part, state)
+            save()
+            raise
         finally:
             if connection:
                 connection.close()
 
 
-def reconcile(data, state, work, identities):
+def reconcile(data, state, work, identities, progress=None, verified=None):
+    progress = progress or Progress(False)
     checked = {}
     # Include orphaned publications after a crash, not only files named by state.
-    for path in sorted((work / 'completed').glob('*.pkg')):
+    paths = sorted((work / 'completed').glob('*.pkg'))
+    if paths:
+        progress.phase(f'verifying {len(paths)} local package(s) in {work / "completed"}')
+    for index, path in enumerate(paths, 1):
         match = re.fullmatch(r'([0-9a-f]{64})-([0-9]+)\.pkg', path.name)
         if not match:
             raise ValueError(f'Unexpected file in completed directory: {path.name}')
+        status = path.stat()
+        stamp = (status.st_size, status.st_mtime_ns)
+        # Hash each package once per run: a second pass over an untouched file proves nothing new.
+        if verified is not None and verified.get(path.name, (None,))[0] == stamp:
+            checked[path.name] = verified[path.name][1]
+            continue
+        progress.scan(index, len(paths), match[1][:16], stamp[0])
         try:
-            checked[path.name] = inspect_package(path, {'expected_sha256': match[1],
-                                                       'expected_size': int(match[2])})
+            observed = inspect_package(path, {'expected_sha256': match[1],
+                                              'expected_size': int(match[2])}, progress)
         except AcquisitionError:
             path.replace(work / 'partial' / (path.name + '.corrupt'))
+            if verified is not None:
+                verified.pop(path.name, None)
+            continue
+        checked[path.name] = observed
+        if verified is not None:
+            verified[path.name] = (stamp, observed)
+    progress.clear()
     for package in data['packages']:
         previous = state['packages'].get(package['id'], {})
         observed = None
@@ -514,10 +689,12 @@ def main():
     parser.add_argument('--retries', type=int, default=2, help='Retries per attempted package (0..5)')
     parser.add_argument('--retry-failed', action='store_true', help='Retry prior unavailable/integrity/format/redirect failures; transient interrupted downloads resume normally')
     parser.add_argument('--min-free-gib', type=float, default=2, help='Preserve this much free space during acquisition')
+    parser.add_argument('--no-progress', action='store_true', help='Disable the stderr progress log; stdout JSON is unaffected')
     args = parser.parse_args()
     if (args.limit < 0 or not 0 < args.timeout <= 300 or not 0 <= args.retries <= 5 or
             not 0 <= args.min_free_gib < 1024 * 1024):
         parser.error('Invalid limit, timeout, retries, or capacity floor')
+    progress = Progress(not args.no_progress)
     try:
         work = args.work.expanduser().resolve()
         work.mkdir(parents=True, exist_ok=True)
@@ -528,12 +705,18 @@ def main():
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise ValueError('Another acquisition process owns this work directory') from None
-            snapshots = args.snapshots or fetch_snapshots(work, args.timeout)
+            if args.snapshots:
+                snapshots = args.snapshots
+            else:
+                progress.phase(f'fetching {len(SNAPSHOT_CATEGORIES)} NoPayStation snapshots from {SNAPSHOT_BASE}')
+                snapshots = fetch_snapshots(work, args.timeout, progress)
+            progress.phase(f'reading {len(snapshots)} snapshot(s)')
             data = inventory(snapshots, license_directory(args.rap_dir))
             if not args.snapshots:
                 for snapshot in data['snapshots']:
                     for origin in snapshot['origins']:
                         origin['url'] = SNAPSHOT_BASE + Path(origin['path']).name
+            progress.phase(f'scanning catalog {args.catalog} for ingested PKG pairs')
             identities = catalog_identities(args.catalog.expanduser())
             state_path = work / 'state.json'
             state = json.loads(state_path.read_text()) if state_path.exists() else {'version': 1, 'packages': {}}
@@ -541,7 +724,8 @@ def main():
                 raise ValueError('Unsupported acquisition state')
             def save():
                 atomic_json(state_path, state)
-            reconcile(data, state, work, identities)
+            verified = {}
+            reconcile(data, state, work, identities, progress, verified)
             requested = set(args.package)
             if requested - {p['id'] for p in data['packages']}:
                 raise ValueError('Unknown --package candidate ID')
@@ -554,6 +738,7 @@ def main():
                           and (not args.category or any(args.category in categories[r] for r in p['references']))]
             candidates.sort(key=lambda p: (p['status'] == 'network_failure', p['expected_size'] is None,
                                             p['expected_size'] or 0, p['id']))
+            progress.phase(f'{len(candidates)} candidate(s) after filtering; attempting up to {args.limit}')
             local = {}
             # Reuse is explicit; do not crawl source media or the object store implicitly.
             for item in args.reuse:
@@ -569,42 +754,62 @@ def main():
                 match = re.fullmatch(r'([0-9a-f]{64})-([0-9]+)\.pkg', path.name)
                 if match:
                     local.setdefault((match[1], int(match[2])), path)
-            attempted = 0
-            for package in candidates:
-                if attempted >= args.limit:
-                    break
-                attempted += 1
-                entry = state['packages'].setdefault(package['id'], {})
-                source = local.get((package['expected_sha256'], package['expected_size']))
-                if source:
-                    try:
-                        observed = inspect_package(source, package)
-                        target = work / 'completed' / f"{observed['sha256']}-{observed['size_bytes']}.pkg"
-                        if source.resolve() != target.resolve():
-                            capacity(work, int(args.min_free_gib * 1024 ** 3), observed['size_bytes'])
-                            part = work / 'partial' / (package['id'] + '.part')
-                            shutil.copyfile(source, part)
-                            inspect_package(part, package)
-                            part.replace(target)
-                        entry.clear()
-                        entry.update(status='verified', observed=observed, file=target.name,
-                                     reused_from=str(source.resolve()), verified_at=now())
-                        save()
-                        continue
-                    except (AcquisitionError, OSError):
-                        # A corrupt reuse source is not evidence; acquire the listed URL instead.
-                        pass
-                download(package, work, entry, save, args.timeout, args.retries, int(args.min_free_gib * 1024 ** 3))
-                if entry.get('observed'):
-                    observed = entry['observed']
-                    local[(observed['sha256'], observed['size_bytes'])] = work / 'completed' / entry['file']
-            reconcile(data, state, work, identities)
+            rows_by_id = {row['id']: row for row in data['rows']}
+            planned = min(len(candidates), args.limit)
+            attempted, interrupted = 0, False
+            try:
+                for package in candidates:
+                    if attempted >= args.limit:
+                        break
+                    attempted += 1
+                    progress.package(attempted, planned, package_label(package, rows_by_id),
+                                     package['expected_size'])
+                    entry = state['packages'].setdefault(package['id'], {})
+                    source = local.get((package['expected_sha256'], package['expected_size']))
+                    if source:
+                        try:
+                            observed = inspect_package(source, package)
+                            target = work / 'completed' / f"{observed['sha256']}-{observed['size_bytes']}.pkg"
+                            if source.resolve() != target.resolve():
+                                capacity(work, int(args.min_free_gib * 1024 ** 3), observed['size_bytes'])
+                                part = work / 'partial' / (package['id'] + '.part')
+                                shutil.copyfile(source, part)
+                                inspect_package(part, package)
+                                part.replace(target)
+                            entry.clear()
+                            entry.update(status='verified', observed=observed, file=target.name,
+                                         reused_from=str(source.resolve()), verified_at=now())
+                            save()
+                            progress.finish('reused', source.name)
+                            continue
+                        except (AcquisitionError, OSError):
+                            # A corrupt reuse source is not evidence; acquire the listed URL instead.
+                            pass
+                    download(package, work, entry, save, args.timeout, args.retries,
+                             int(args.min_free_gib * 1024 ** 3), progress)
+                    progress.finish(entry.get('status', 'pending'), entry.get('detail'))
+                    if entry.get('observed'):
+                        observed = entry['observed']
+                        local[(observed['sha256'], observed['size_bytes'])] = work / 'completed' / entry['file']
+            except KeyboardInterrupt:
+                # Downloads checkpoint themselves; still publish an accurate report before exiting.
+                interrupted = True
+                progress.finish('interrupted', 'Ctrl+C')
+            reconcile(data, state, work, identities, progress, verified)
             data['attempted_this_run'] = attempted
+            data['interrupted'] = interrupted
             save()
             atomic_json(work / 'report.json', data)
             print(json.dumps({'summary': data['summary'], 'attempted_this_run': attempted,
+                              'interrupted': interrupted,
                               'licenses': {key: data['licenses'][key] for key in ('directory', 'counts')},
                               'report': str(work / 'report.json'), 'completed_directory': data['completed_directory']}, sort_keys=True))
+            if interrupted:
+                return 130
+    except KeyboardInterrupt:
+        # Cancelled before or between attempts: nothing to checkpoint, no traceback.
+        print('psn-acquire: cancelled', file=sys.stderr)
+        return 130
     except (OSError, ValueError, csv.Error) as exc:
         parser.exit(2, f'psn-acquire: {exc}\n')
     return 0

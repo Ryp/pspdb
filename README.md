@@ -335,6 +335,30 @@ Supported sources are `zeus.dl.playstation.net/cdn/` and the update host
 and credential-free URLs are enforced. Other hosts and redirects remain
 explicitly unhandled rather than followed.
 
+Acquisition reports progress on stderr while stdout stays a single machine-readable
+JSON object. A terminal gets one repainted line per package with the attempt
+counter, package name, transferred share and a recent-window transfer rate:
+
+```text
+[3/25] Patapon 2 [UP0001-TEST00001_00-ABCDEFGHIJKLMNOP]   43% 3.0 MiB/7.0 MiB 4.0 MiB/s
+```
+
+A redirected stderr gets plain `start` and result lines per package instead, with
+the elapsed time, average rate, and the failure status and cause when one applies.
+The counter's denominator is the number of packages this run plans to attempt,
+which is `--limit` bounded by the candidates left after filtering. Rates measure
+the last five seconds, so a stalled transfer reads as slow rather than fast.
+`--no-progress` disables the log; it never affects stdout, `state.json` or
+`report.json`.
+
+`Ctrl+C` stops after the chunk in flight rather than aborting the process. The
+running transfer checkpoints its partial prefix by size and SHA-256, the remaining
+candidates are left untouched, `state.json` and `report.json` are still published,
+the final JSON object is still printed with `"interrupted": true`, and the exit
+status is 130 with no traceback. The interrupted package keeps status `interrupted`,
+which is retryable without `--retry-failed`; the next run resumes its prefix when
+the ETag and saved bytes still match, and restarts it otherwise.
+
 Re-run inventory against the resulting catalog to distinguish exact ingested
 hash/size matches from downloaded packages. Catalog matching does not establish
 extractor freshness or support for every inner format. Keep extraction failures

@@ -2,6 +2,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import tempfile
@@ -32,7 +33,7 @@ class Response:
 
     def read(self, size):
         block = next(self.blocks, b'')
-        if isinstance(block, Exception):
+        if isinstance(block, BaseException):
             raise block
         return block
 
@@ -86,7 +87,7 @@ class AcquisitionTests(unittest.TestCase):
         key = bytes(range(16))
         body = self.snapshot('PSP_GAMES.tsv', [{'Content ID': CONTENT_ID, 'RAP': key.hex()}]).read_bytes()
         argv = ['psn-acquire', '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir)]
+                '--rap-dir', str(self.rap_dir), '--no-progress']
         with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
                 patch.object(acquire.http.client, 'HTTPSConnection') as connect, \
                 patch.object(acquire, 'request') as packages:
@@ -182,7 +183,7 @@ class AcquisitionTests(unittest.TestCase):
             {'Content ID': missing_id, 'RAP': 'MISSING', 'PKG direct link': 'MISSING'}])
         self.catalog_pair(digest, len(payload))
         argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir), '--limit', '0', '--category', 'PSX_GAMES']
+                '--rap-dir', str(self.rap_dir), '--limit', '0', '--category', 'PSX_GAMES', '--no-progress']
         for status in ('imported', 'present'):
             output = io.StringIO()
             with patch('sys.argv', argv), patch('sys.stdout', new=output), patch.object(acquire, 'request') as request:
@@ -354,11 +355,11 @@ class AcquisitionTests(unittest.TestCase):
         path = self.snapshot('PSP_THEMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest},
             {'File Size': str(len(payload) + 1), 'SHA256': 'b' * 64}])
         argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir)]
+                '--rap-dir', str(self.rap_dir), '--no-progress']
         with patch('sys.argv', argv), patch.object(acquire, 'request') as request, patch('sys.stdout', new=io.StringIO()):
             acquire.main()
             request.assert_not_called()
-        with patch('sys.argv', argv + ['--limit', '1']), patch('sys.stdout', new=io.StringIO()), patch.object(acquire, 'request',
+        with patch('sys.argv', argv + ['--limit', '1', '--no-progress']), patch('sys.stdout', new=io.StringIO()), patch.object(acquire, 'request',
                 return_value=(Mock(), Response(200, {'Content-Length': str(len(payload))}, [payload]))):
             acquire.main()
         report = json.loads((self.work / 'report.json').read_text())
@@ -373,6 +374,112 @@ class AcquisitionTests(unittest.TestCase):
             request.assert_not_called()
         self.assertEqual(json.loads((self.work / 'report.json').read_text())['attempted_this_run'], 0)
         self.assertEqual((self.rap_dir / f'{CONTENT_ID}.rap').read_bytes(), key)
+
+    def test_progress_log_names_each_package_without_polluting_machine_output(self):
+        payload = pkg_bytes()
+        path = self.snapshot('PSP_THEMES.tsv', [{'Name': 'Patapon 2', 'Content ID': CONTENT_ID,
+            'File Size': str(len(payload)), 'SHA256': hashlib.sha256(payload).hexdigest()}])
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
+                '--rap-dir', str(self.rap_dir), '--limit', '1']
+        out, log = io.StringIO(), io.StringIO()
+        with patch('sys.argv', argv), patch('sys.stdout', new=out), patch('sys.stderr', new=log), \
+                patch.object(acquire, 'request', return_value=(Mock(), Response(
+                    200, {'Content-Length': str(len(payload))}, [payload]))):
+            acquire.main()
+        # Redirected output stays plain text: startup phases, then a start and a result line.
+        lines = [line for line in log.getvalue().splitlines() if line.startswith('[1/1]')]
+        self.assertEqual(lines[0], f'[1/1] start Patapon 2 [{CONTENT_ID}] (512 B)')
+        self.assertRegex(lines[1], rf'^\[1/1\] verified Patapon 2 \[{CONTENT_ID}\] - 512 B in \d+s at .+/s$')
+        self.assertNotIn('\x1b', log.getvalue())
+        self.assertEqual(json.loads(out.getvalue())['attempted_this_run'], 1)
+
+    def test_progress_is_silenced_on_request_and_reports_failure_cause(self):
+        payload = pkg_bytes()
+        path = self.snapshot('PSP_THEMES.tsv', [{'Name': 'Patapon 2', 'File Size': str(len(payload)),
+                                                 'SHA256': hashlib.sha256(payload).hexdigest()}])
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
+                '--rap-dir', str(self.rap_dir), '--limit', '1']
+        for quiet in (False, True):
+            log = io.StringIO()
+            with self.subTest(quiet=quiet), patch('sys.argv', argv + (['--no-progress'] if quiet else [])), \
+                    patch('sys.stdout', new=io.StringIO()), patch('sys.stderr', new=log), \
+                    patch.object(acquire, 'request', return_value=(Mock(), Response(404, {}, []))):
+                acquire.main()
+            if quiet:
+                self.assertEqual(log.getvalue(), '')
+            else:
+                self.assertIn('[1/1] unavailable Patapon 2 [REFERENCE-ID] (HTTP 404)', log.getvalue())
+
+    def test_interrupt_checkpoints_a_resumable_prefix_and_exits_without_traceback(self):
+        payload = pkg_bytes(b'y' * 1024)
+        digest = hashlib.sha256(payload).hexdigest()
+        head, tail = payload[:512], payload[512:]
+        path = self.snapshot('PSP_GAMES.tsv', [{'Name': 'Patapon 2', 'File Size': str(len(payload)),
+                                                'SHA256': digest}])
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
+                '--rap-dir', str(self.rap_dir), '--limit', '1']
+        out, log = io.StringIO(), io.StringIO()
+        with patch('sys.argv', argv), patch('sys.stdout', new=out), patch('sys.stderr', new=log), \
+                patch.object(acquire, 'request', return_value=(Mock(), Response(200, {
+                    'Content-Length': str(len(payload)), 'ETag': '"v1"'}, [head, KeyboardInterrupt()]))):
+            self.assertEqual(acquire.main(), 130)
+        self.assertNotIn('Traceback', log.getvalue())
+        self.assertIn('[1/1] interrupted Patapon 2', log.getvalue())
+        self.assertTrue(json.loads(out.getvalue())['interrupted'])
+        self.assertTrue((self.work / 'report.json').is_file())
+        self.assertEqual(list((self.work / 'completed').iterdir()), [])
+        entry = next(iter(json.loads((self.work / 'state.json').read_text())['packages'].values()))
+        self.assertEqual(entry['status'], 'interrupted')
+        self.assertEqual((entry['partial_size'], entry['partial_sha256']),
+                         (len(head), hashlib.sha256(head).hexdigest()))
+        # The checkpoint exists to be resumed: the next run must transfer only the missing tail.
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch('sys.stderr', new=io.StringIO()), patch.object(acquire, 'request',
+                return_value=(Mock(), Response(206, {'Content-Length': str(len(tail)), 'ETag': '"v1"',
+                    'Content-Range': f'bytes {len(head)}-{len(payload) - 1}/{len(payload)}'}, [tail]))):
+            self.assertEqual(acquire.main(), 0)
+        self.assertEqual((self.work / 'completed' / f'{digest}-{len(payload)}.pkg').read_bytes(), payload)
+
+    def test_local_packages_are_hashed_once_per_run_and_verification_is_reported(self):
+        payload = pkg_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        (self.work / 'completed' / f'{digest}-{len(payload)}.pkg').write_bytes(payload)
+        path = self.snapshot('PSP_GAMES.tsv', [{'Name': 'Patapon 2', 'File Size': str(len(payload)),
+                                                'SHA256': digest}])
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
+                '--rap-dir', str(self.rap_dir), '--limit', '0']
+        hashed, original = [], acquire.inspect_package
+        def counted(target, package, progress=None):
+            hashed.append(target.name)
+            return original(target, package, progress)
+        log = io.StringIO()
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), patch('sys.stderr', new=log), \
+                patch.object(acquire, 'inspect_package', counted):
+            acquire.main()
+        # Both reconcile passes see this file; re-reading unchanged bytes is pure NAS/disk cost.
+        self.assertEqual(hashed, [f'{digest}-{len(payload)}.pkg'])
+        self.assertIn('verifying 1 local package(s)', log.getvalue())
+        self.assertTrue((self.work / 'report.json').is_file())
+
+    def test_changed_completed_file_is_rehashed_and_quarantined(self):
+        payload = pkg_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        target = self.work / 'completed' / f'{digest}-{len(payload)}.pkg'
+        target.write_bytes(payload)
+        path = self.snapshot('PSP_GAMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
+                '--rap-dir', str(self.rap_dir), '--limit', '0', '--no-progress']
+        data = acquire.inventory([path])
+        state = {'version': 1, 'packages': {}}
+        cache = {}
+        acquire.reconcile(data, state, self.work, {}, None, cache)
+        # The cache is keyed by size and mtime, never by name alone: changed bytes must not pass.
+        target.write_bytes(payload[:-1] + b'y')
+        os.utime(target, ns=(0, 0))
+        data = acquire.inventory([path])
+        acquire.reconcile(data, state, self.work, {}, None, cache)
+        self.assertEqual(list((self.work / 'completed').iterdir()), [])
+        self.assertTrue((self.work / 'partial' / f'{target.name}.corrupt').is_file())
 
 
 if __name__ == '__main__':
