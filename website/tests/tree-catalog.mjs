@@ -150,7 +150,7 @@ assert.deepEqual(named,['OPNSSMP.prx.gz','OPNSSMP.prx','ALIAS.prx.gz','ALIAS.prx
 console.log('PASS: shared executable trees inherit each occurrence name through decompression.');
 
 // PSN packages are root siblings of UMD and retain their exact package hash.
-context.pkgFixture = {records:{iso:[],pkg:[{sha256:'9'.repeat(64),size_bytes:123,
+context.pkgFixture = {records:{iso:[],pkg:[{sha256:'9'.repeat(64),size_bytes:123,psn_kind:'neogeo',
   metadata:{content_type:16,content_id:'UP9000-NPUG00001_00-FIXTURE',title:'Demo'}}]},trees:{pkg:{
     ['9'.repeat(64)]:{size_bytes:123,extractor:{name:'pspdb-ingest'},entries:[{path:'PARAM.SFO',type:'file',size_bytes:10,sha256:'8'.repeat(64)}]}}}};
 await vm.runInContext('build(pkgFixture)',context);
@@ -177,22 +177,25 @@ assert.equal(vm.runInContext("packageSerial({title_id:'npug80135'})", context), 
 assert.equal(vm.runInContext("packageSerial({title_id:'NPUG-80135'})", context), 'NPUG-80135');
 console.log('PASS: serial-first package labels share UMD ID formatting.');
 
+// Server-computed kinds own the grouping; package_flags and content_type stay ignored.
 context.updateFixture = {records:{pkg:[
-  {sha256:'1'.repeat(64),size_bytes:1,metadata:{content_type:7,package_flags:0x8000021c}},
-  {sha256:'2'.repeat(64),size_bytes:1,metadata:{content_type:7,package_flags:0x20c}},
-  {sha256:'3'.repeat(64),size_bytes:1,metadata:{content_type:9,package_flags:0x21c}},
-  {sha256:'4'.repeat(64),size_bytes:1,metadata:{content_type:7}},
+  {sha256:'1'.repeat(64),size_bytes:1,psn_kind:'patch',metadata:{content_type:7,package_flags:0x8000021c}},
+  {sha256:'2'.repeat(64),size_bytes:1,psn_kind:'game',metadata:{content_type:7,package_flags:0x20c}},
+  {sha256:'3'.repeat(64),size_bytes:1,psn_kind:'theme',metadata:{content_type:9,package_flags:0x21c}},
+  {sha256:'4'.repeat(64),size_bytes:1,psn_kind:'dlc',metadata:{content_type:7}},
+  {sha256:'5'.repeat(64),size_bytes:1,metadata:{content_type:7,package_flags:0x8000021c}},
 ]},trees:{}};
 await vm.runInContext('build(updateFixture)',context);
 const updatePaths = JSON.parse(vm.runInContext(
   "JSON.stringify([...nodes.values()].filter(n=>n.type==='file').map(n=>n.path).sort())",context));
 assert.deepEqual(updatePaths,[
-  'psn/'+'2'.repeat(64)+'.pkg',
-  'psn/'+'4'.repeat(64)+'.pkg',
+  'psn/dlc/'+'4'.repeat(64)+'.pkg',
+  'psn/game/'+'2'.repeat(64)+'.pkg',
+  'psn/patch/'+'1'.repeat(64)+'.pkg',
   'psn/theme/'+'3'.repeat(64)+'.pkg',
-  'psn/update/'+'1'.repeat(64)+'.pkg',
+  'psn/unknown/'+'5'.repeat(64)+'.pkg',
 ]);
-console.log('PASS: update bit grouping preserves generic, legacy, and non-PSP category routes.');
+console.log('PASS: server kinds group every package, no package sits at the PSN root, missing kinds fall back to unknown.');
 
 // Contextual output is bound to one file occurrence, not globally to its hash.
 const sourceHash = '1'.repeat(64), payloadHash = '2'.repeat(64);
@@ -317,7 +320,7 @@ context.updaterFixture = {
       updateRecord(variantHash, 43, {updater_version:'6.61', title:'System Software Variant', disc_id:'UCJS10041'}),
       updateRecord(missingTreeHash, 44),
     ],
-    pkg:[{sha256:parentHash, size_bytes:100, metadata:{content_type:7, package_flags:0x10}}],
+    pkg:[{sha256:parentHash, size_bytes:100, psn_kind:'patch', metadata:{content_type:7}}],
   },
   trees:{
     update:{[updaterHash]:updateTree(42, 'DATA.BIN'), [variantHash]:updateTree(43, 'DATA.BIN')},
@@ -339,7 +342,7 @@ const updaterRoles = JSON.parse(vm.runInContext(`JSON.stringify((() => {
       children:node.children.map(child=>child.name),
     })).sort((a,b)=>a.hash.localeCompare(b.hash)),
     total:updates.size,
-    nested:nodeAtPath('psn/update/'+'8'.repeat(64)+'.pkg/EBOOT.PBP').children.map(node=>node.name),
+    nested:nodeAtPath('psn/patch/'+'8'.repeat(64)+'.pkg/EBOOT.PBP').children.map(node=>node.name),
   };
 })())`,context));
 assert.deepEqual(updaterRoles.roots, [

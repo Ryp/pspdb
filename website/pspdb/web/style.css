@@ -158,3 +158,18 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
   #tree-search { min-height: 44px; font-size: 16px; }
   #clear-search { min-width: 44px; min-height: 44px; }
 }
+
+/* Population coverage: one right-aligned chip on the group its reference population maps onto. */
+.coverage-chip { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; margin-left: auto; padding: 1px 8px; border: 1px solid #385444; border-radius: 10px; background: #1a2a22; color: #b7e6c9; font-size: 11px; text-decoration: none; }
+a.coverage-chip { cursor: pointer; }
+a.coverage-chip:hover { border-color: #6fbf90; background: #1f352a; color: #e1fbea; }
+.coverage-source { color: #8fd7b0; text-transform: uppercase; letter-spacing: 0.6px; font-size: 10px; }
+.coverage-figure, .coverage-count { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.coverage-bar { width: 58px; height: 5px; flex-shrink: 0; border-radius: 3px; background: #26342c; overflow: hidden; }
+.coverage-bar::after { content: ""; display: block; width: var(--filled); height: 100%; background: #6fbf90; }
+tr.node:hover .coverage-chip, tr.node.selected .coverage-chip { border-color: #4e7862; color: #d5f7e2; }
+@media (max-width: 760px) {
+  .coverage-chip { gap: 5px; padding: 0 6px; }
+  .coverage-bar, .coverage-count { display: none; }
+  .virtual .name { min-width: 3.5em; }
+}

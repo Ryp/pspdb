@@ -638,20 +638,6 @@ function packageSerial(metadata) {
   return id.toUpperCase().replace(/^([A-Z0-9]{4})-?([0-9]{5})$/, "$1-$2");
 }
 
-function packageGroup(contentType, packageFlags) {
-  switch (contentType) {
-    case 6: return "psone_classic";
-    case 7:
-      // PSP update heuristic: package metadata entry 3, bit 4.
-      return Number.isInteger(packageFlags) && (packageFlags & 0x10) !== 0 ? "update" : null;
-    case 14: return null;
-    case 15: return "minis";
-    case 9: return "theme";
-    case 16: return "neogeo";
-    default: return "unknown";
-  }
-}
-
 function packageLabels(packages) {
   const groups = new Map();
   for (const pkg of packages) {
@@ -693,7 +679,16 @@ function* buildCatalog(data) {
   root = addGroup(null, "");
   // Show the aggregate root without changing existing UMD/PSN URL paths.
   root.name = "psp";
-  const umd = addGroup(root, "umd");
+  const population = data.coverage || {};
+  const umdPopulation = population.umd || null, psnPopulation = population.psn || null;
+  const umdSnapshot = [umdPopulation?.source?.name, umdPopulation?.source?.version].filter(Boolean).join(" ");
+  // One chip per reference population, on the group that population maps onto. Each
+  // links to that source's own coverage view: Redump's PSP disc list, and the
+  // NoPayStation home page, which draws its own per-list coverage bars.
+  const umd = addGroup(root, "umd", umdPopulation
+    ? { coverage: { present: umdPopulation.present, total: umdPopulation.total, noun: "UMD discs",
+                    source: "Redump", snapshot: umdSnapshot, href: "http://redump.org/discs/system/psp/" } }
+    : {});
   const categories = new Map();
   function mediaGroup(code) {
     const name = code === "G" ? "game" : code === "V" ? "video" : "other";
@@ -728,12 +723,15 @@ function* buildCatalog(data) {
   }
   const packages = data.records.pkg || [];
   if (packages.length) {
-    const psn = addGroup(root, "psn");
+    const psn = addGroup(root, "psn", psnPopulation
+      ? { coverage: { present: psnPopulation.present, total: psnPopulation.total, noun: "PSN packages",
+                      source: "NoPayStation", href: "https://nopaystation.com/" } }
+      : {});
     const labels = packageLabels(packages);
-    const groups = new Map([[null, psn]]);
+    const groups = new Map();
     for (const pkg of packages) {
       const metadata = pkg.metadata || {};
-      const category = packageGroup(metadata.content_type, metadata.package_flags);
+      const category = pkg.psn_kind || "unknown";
       if (!groups.has(category)) groups.set(category, addGroup(psn, category));
       const node = add(groups.get(category), `${pkg.sha256}.pkg`, {
         type: "file", hash: pkg.sha256, size: pkg.size_bytes,
@@ -787,7 +785,7 @@ function* buildCatalog(data) {
     if (parent.type === "directory") parent.size += node.size;
     if (i % 8192 === 0) yield;
   }
-  $("catalog-count").textContent = `${isos.length} UMD images · ${packages.length} PSN packages · ${nands.length} NAND dumps · ${updates.length} updater PBPs · ${number.format(root.files)} files`;
+  $("catalog-count").textContent = `${number.format(root.files)} files`;
 }
 
 function url(node) { return "#" + node.path.split("/").map(encodeURIComponent).join("/"); }
@@ -886,6 +884,7 @@ function createRow(node) {
     }
     name.title = node.error ? `error: ${node.error}` : node.extraction ? `${node.path} — extracted with ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
     content.append(name);
+    if (node.coverage) content.append(coverageChip(node.coverage));
     for (const [source, matches] of [["Redump", node.redump || []], ["UMDatabase", node.umdatabase || []]]) {
       for (const match of matches) {
         const redump = source === "Redump";
@@ -970,6 +969,33 @@ function restore(focus = true) {
   let path;
   try { path = location.hash.slice(1).split("/").map(decodeURIComponent).join("/"); } catch { path = ""; }
   jump(nodeAtPath(path) || root, focus);
+}
+
+function coveragePercent(present, total) {
+  return total ? `${Math.round(present / total * 1000) / 10}%` : "—";
+}
+
+// One right-aligned chip per reference population, on the `umd`/`psn` group that
+// population maps onto: source, share and a filled bar, linking to that source's
+// own population listing. Subgroups carry nothing.
+function coverageChip({ present, total, noun, source, snapshot, href }) {
+  const chip = element(href ? "a" : "span", "coverage-chip");
+  const bar = element("span", "coverage-bar");
+  bar.style.setProperty("--filled", total ? `${Math.min(100, present / total * 100)}%` : "0%");
+  bar.setAttribute("aria-hidden", "true");
+  chip.append(element("span", "coverage-source", source), bar,
+    element("span", "coverage-figure", coveragePercent(present, total)),
+    element("span", "coverage-count", `· ${number.format(present)}/${number.format(total)}`));
+  chip.title = `${number.format(present)} of ${number.format(total)} ${noun} listed by ${source}${snapshot ? ` (${snapshot})` : ""} are held`;
+  if (href) {
+    chip.href = href;
+    chip.title += ` — open ${source}`;
+    chip.target = "_blank";
+    chip.rel = "noopener noreferrer";
+    chip.onclick = event => event.stopPropagation();
+  }
+  chip.setAttribute("aria-label", chip.title);
+  return chip;
 }
 
 $("tree-search").value = new URLSearchParams(location.search).get("q") || "";

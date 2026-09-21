@@ -76,7 +76,7 @@ const result=await evaluate(`(async()=>{
  jump(leaf);
  check(!rowElements.get(leaf.index).hidden,'Jump must reveal collapsed ancestors');
  check(document.getElementById('tree').getAttribute('aria-activedescendant')===leaf.id,'Active row');
- check(![...rowElements.values()].some(row=>row.querySelector('a:not(.download-link):not(.redump-link):not(.umdatabase-link)')),'No cross-tree links');
+ check(![...rowElements.values()].some(row=>row.querySelector('a:not(.download-link):not(.redump-link):not(.umdatabase-link):not(.coverage-chip)')),'No cross-tree links');
  for(const node of [...nodes.values()].filter(n=>(n.redump||[]).length)){
   jump(node);
   const links=[...rowElements.get(node.index).querySelectorAll('.redump-link')];
@@ -378,5 +378,43 @@ const extractionErrors=await evaluate(`(async()=>{
  return 'PASS: source-scoped errors, empty failures, partial children, inert long text, accessibility, search and virtual remount';
 })()`);
 console.log(extractionErrors);
+// Earlier blocks rebuilt the tree from fixtures; coverage needs the served catalog.
+await cmd('Page.navigate',{url:process.env.PSPDB_SITE_URL || 'http://127.0.0.1:8000'});
+for(let i=0;i<600;i++){if(await evaluate('!!document.querySelector("#browser:not([hidden]) tr.node")'))break;await new Promise(r=>setTimeout(r,50));}
+const views=await evaluate(`(async()=>{
+ const check=(value,message)=>{if(!value)throw new Error(message)};
+ check(!document.querySelector('[role="tablist"], #view-browse, #view-coverage, #coverage, #coverage-toggle'),'No separate coverage view, drawer or header toggle remains');
+ check(!document.getElementById('browser').hidden,'The tree owns the viewport');
+ check(/^[\\d,]+ files$/.test(document.getElementById('catalog-count').textContent),'Header states only the total file count');
+ const groups=[...nodes.values()].filter(n=>n.coverage);
+ if(!groups.length)return {coverage:'absent',path:(selected||visible[0]).path};
+ check(groups.every(n=>n.virtual&&n.depth===1&&n.coverage.total>0),'Only the top-level source groups carry coverage');
+ check(groups.every(n=>n.path==='umd'||n.path==='psn'),'Coverage sits on umd and psn, never on a subgroup');
+ const sources=groups.map(n=>n.coverage.source);
+ check(new Set(sources).size===sources.length,'One chip per reference population');
+ for(const group of groups){
+  jump(group);
+  const content=rowElements.get(group.index).querySelector('.name-content');
+  const chip=content.querySelector('.coverage-chip');
+  check(chip,'Source groups show their held share inline');
+  check(chip===content.lastElementChild&&getComputedStyle(chip).marginLeft==='auto'||chip.getBoundingClientRect().right>content.querySelector('.name').getBoundingClientRect().right,'Coverage is right-aligned in the name column');
+  check(chip.querySelector('.coverage-source').textContent===group.coverage.source,'Inline chip names its reference source');
+  const figure=chip.querySelector('.coverage-figure').textContent+chip.querySelector('.coverage-count').textContent;
+  check(figure.includes(group.coverage.total.toLocaleString('en-US'))&&!figure.includes('NaN'),'Inline chip states the held share over its population');
+  check(chip.getAttribute('aria-label').includes(group.coverage.source),'Inline chip is announced with its source');
+  const expected={Redump:'http://redump.org/discs/system/psp/',NoPayStation:'https://nopaystation.com/'};
+  check(chip.tagName==='A'&&chip.href===expected[group.coverage.source],'Chip opens its source population listing');
+  check(chip.target==='_blank'&&chip.rel.includes('noopener'),'Source link isolation');
+  check(chip.getAttribute('aria-label').includes('open '+group.coverage.source),'Chip announces that it opens the source');
+  const before=selected,expansion=[...collapsed].sort().join('|');
+  chip.addEventListener('click',event=>event.preventDefault(),{once:true});
+  chip.click();
+  check(selected===before&&[...collapsed].sort().join('|')===expansion,'Chip click neither selects nor toggles its row');
+ }
+ check([...new Set(sources)].every(s=>s==='Redump'||s==='NoPayStation'),'Only supplied reference populations are named');
+ check(!document.querySelector('tr.node .coverage-chip ~ .coverage-chip'),'No row carries two chips');
+ return {coverage:'rendered',sources:[...new Set(sources)],path:selected.path};
+})()`);
+console.log('PASS: coverage reads inline on its grouping rows, with no separate view ('+views.coverage+(views.sources?': '+views.sources.join(', '):'')+')');
 await cmd('Page.navigate',{url:process.env.PSPDB_SITE_URL || 'http://127.0.0.1:8000'});
 ws.close();
