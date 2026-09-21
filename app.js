@@ -3,6 +3,22 @@
 const $ = id => document.getElementById(id);
 const number = new Intl.NumberFormat("en-US");
 const sizeNumber = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
+// Validate reference identifiers before constructing same-source outbound links.
+const referenceUUID = id => typeof id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id);
+const REFERENCE_SOURCES = [
+  { source: "Redump", field: "redump", className: "redump-link",
+    valid: id => Number.isSafeInteger(id) && id > 0,
+    href: id => `http://redump.org/disc/${id}/` },
+  { source: "UMDatabase", field: "umdatabase", className: "umdatabase-link",
+    valid: id => /^[0-9A-F]{8}$/.test(id),
+    href: id => `https://umdatabase.net/view.php?id=${id}` },
+  { source: "SerialStation", field: "serialstation", className: "serialstation-link",
+    valid: referenceUUID,
+    href: id => `https://serialstation.com/pkgs/${id}/` },
+  { source: "SerialStation", field: "serialstation_discs", className: "serialstation-link",
+    valid: referenceUUID,
+    href: id => `https://serialstation.com/discs/${id}` },
+];
 function formatSize(bytes) {
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
   let unit = 0, value = bytes;
@@ -638,20 +654,6 @@ function packageSerial(metadata) {
   return id.toUpperCase().replace(/^([A-Z0-9]{4})-?([0-9]{5})$/, "$1-$2");
 }
 
-function packageGroup(contentType, packageFlags) {
-  switch (contentType) {
-    case 6: return "psone_classic";
-    case 7:
-      // PSP update heuristic: package metadata entry 3, bit 4.
-      return Number.isInteger(packageFlags) && (packageFlags & 0x10) !== 0 ? "update" : null;
-    case 14: return null;
-    case 15: return "minis";
-    case 9: return "theme";
-    case 16: return "neogeo";
-    default: return "unknown";
-  }
-}
-
 function packageLabels(packages) {
   const groups = new Map();
   for (const pkg of packages) {
@@ -693,7 +695,16 @@ function* buildCatalog(data) {
   root = addGroup(null, "");
   // Show the aggregate root without changing existing UMD/PSN URL paths.
   root.name = "psp";
-  const umd = addGroup(root, "umd");
+  const population = data.coverage || {};
+  const umdPopulation = population.umd || null, psnPopulation = population.psn || null;
+  const umdSnapshot = [umdPopulation?.source?.name, umdPopulation?.source?.version].filter(Boolean).join(" ");
+  // One chip per reference population, on the group that population maps onto. Each
+  // links to that source's own coverage view: Redump's PSP disc list, and the
+  // NoPayStation home page, which draws its own per-list coverage bars.
+  const umd = addGroup(root, "umd", umdPopulation
+    ? { coverage: { present: umdPopulation.present, total: umdPopulation.total, noun: "UMD discs",
+                    source: "Redump", snapshot: umdSnapshot, href: "http://redump.org/discs/system/psp/" } }
+    : {});
   const categories = new Map();
   function mediaGroup(code) {
     const name = code === "G" ? "game" : code === "V" ? "video" : "other";
@@ -718,9 +729,11 @@ function* buildCatalog(data) {
     const displayName = metadata.media_code === "V"
       ? metadata.title?.trim() || identity
       : [identity, metadata.title?.trim()].filter(Boolean).join(" ");
+    const serialstationDiscs = (iso.serialstation_discs || []).filter(match => referenceUUID(match.id));
     const node = add(category, `${iso.sha256}.iso`, {
       type: "file",
-      redump: iso.redump || [], umdatabase: iso.umdatabase || [], hash: iso.sha256, size: iso.size_bytes,
+      redump: (iso.redump || []).filter(match => !serialstationDiscs.some(disc => disc.redump_id === match.id)),
+      serialstation_discs: serialstationDiscs, umdatabase: iso.umdatabase || [], hash: iso.sha256, size: iso.size_bytes,
       displayName,
       gamePrefix: metadata.media_code === "G" ? identity : null,
     });
@@ -728,15 +741,19 @@ function* buildCatalog(data) {
   }
   const packages = data.records.pkg || [];
   if (packages.length) {
-    const psn = addGroup(root, "psn");
+    const psn = addGroup(root, "psn", psnPopulation
+      ? { coverage: { present: psnPopulation.present, total: psnPopulation.total, noun: "PSN packages",
+                      source: "NoPayStation", href: "https://nopaystation.com/" } }
+      : {});
     const labels = packageLabels(packages);
-    const groups = new Map([[null, psn]]);
+    const groups = new Map();
     for (const pkg of packages) {
       const metadata = pkg.metadata || {};
-      const category = packageGroup(metadata.content_type, metadata.package_flags);
+      const category = pkg.psn_kind || "unknown";
       if (!groups.has(category)) groups.set(category, addGroup(psn, category));
       const node = add(groups.get(category), `${pkg.sha256}.pkg`, {
         type: "file", hash: pkg.sha256, size: pkg.size_bytes,
+        serialstation: pkg.serialstation || null,
         displayName: labels.get(pkg.sha256),
         gamePrefix: packageSerial(metadata) || null,
         searchMetadata: metadata.content_id || "",
@@ -787,7 +804,7 @@ function* buildCatalog(data) {
     if (parent.type === "directory") parent.size += node.size;
     if (i % 8192 === 0) yield;
   }
-  $("catalog-count").textContent = `${isos.length} UMD images · ${packages.length} PSN packages · ${nands.length} NAND dumps · ${updates.length} updater PBPs · ${number.format(root.files)} files`;
+  $("catalog-count").textContent = `${number.format(root.files)} files`;
 }
 
 function url(node) { return "#" + node.path.split("/").map(encodeURIComponent).join("/"); }
@@ -886,17 +903,19 @@ function createRow(node) {
     }
     name.title = node.error ? `error: ${node.error}` : node.extraction ? `${node.path} — extracted with ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
     content.append(name);
-    for (const [source, matches] of [["Redump", node.redump || []], ["UMDatabase", node.umdatabase || []]]) {
-      for (const match of matches) {
-        const redump = source === "Redump";
-        if (redump ? !Number.isSafeInteger(match.id) || match.id <= 0 : !/^[0-9A-F]{8}$/.test(match.id)) continue;
-        const label = matches.length === 1 ? source : `${source} #${match.id}`;
-        const link = element("a", redump ? "redump-link" : "umdatabase-link");
+    if (node.coverage) content.append(coverageChip(node.coverage));
+    for (const { source, field, className, valid, href } of REFERENCE_SOURCES) {
+      const value = node[field];
+      const matches = value == null ? [] : Array.isArray(value) ? value : [value];
+      for (const [index, match] of matches.entries()) {
+        if (!valid(match.id)) continue;
+        const label = matches.length === 1 ? source : `${source} #${source === "SerialStation" ? index + 1 : match.id}`;
+        const link = element("a", className);
         link.append(element("span", "reference-label", `${label} `));
         const icon = element("span", "reference-icon", "↗");
         icon.setAttribute("aria-hidden", "true");
         link.append(icon);
-        link.href = redump ? `http://redump.org/disc/${match.id}/` : `https://umdatabase.net/view.php?id=${match.id}`;
+        link.href = href(match.id);
         link.title = `${label}: ${match.name}`;
         link.setAttribute("aria-label", link.title);
         link.target = "_blank";
@@ -970,6 +989,33 @@ function restore(focus = true) {
   let path;
   try { path = location.hash.slice(1).split("/").map(decodeURIComponent).join("/"); } catch { path = ""; }
   jump(nodeAtPath(path) || root, focus);
+}
+
+function coveragePercent(present, total) {
+  return total ? `${Math.round(present / total * 1000) / 10}%` : "—";
+}
+
+// One right-aligned chip per reference population, on the `umd`/`psn` group that
+// population maps onto: source, share and a filled bar, linking to that source's
+// own population listing. Subgroups carry nothing.
+function coverageChip({ present, total, noun, source, snapshot, href }) {
+  const chip = element(href ? "a" : "span", "coverage-chip");
+  const bar = element("span", "coverage-bar");
+  bar.style.setProperty("--filled", total ? `${Math.min(100, present / total * 100)}%` : "0%");
+  bar.setAttribute("aria-hidden", "true");
+  chip.append(element("span", "coverage-source", source), bar,
+    element("span", "coverage-figure", coveragePercent(present, total)),
+    element("span", "coverage-count", `· ${number.format(present)}/${number.format(total)}`));
+  chip.title = `${number.format(present)} of ${number.format(total)} ${noun} listed by ${source}${snapshot ? ` (${snapshot})` : ""} are held`;
+  if (href) {
+    chip.href = href;
+    chip.title += ` — open ${source}`;
+    chip.target = "_blank";
+    chip.rel = "noopener noreferrer";
+    chip.onclick = event => event.stopPropagation();
+  }
+  chip.setAttribute("aria-label", chip.title);
+  return chip;
 }
 
 $("tree-search").value = new URLSearchParams(location.search).get("q") || "";
@@ -1118,7 +1164,10 @@ function decodeCatalog(payload) {
 
 loadCatalog().then(async data => {
   await build(data);
-  for (const node of nodes) if (node.extraction) collapsed.add(node.index);
+  for (const node of nodes) {
+    if (node.extraction || (node.virtual && node.parent && !node.children.some(child => child.virtual)))
+      collapsed.add(node.index);
+  }
   $("message").hidden = true;
   $("browser").hidden = false;
   restore(document.activeElement !== $("tree-search") && document.activeElement !== $("clear-search"));
