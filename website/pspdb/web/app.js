@@ -3,6 +3,22 @@
 const $ = id => document.getElementById(id);
 const number = new Intl.NumberFormat("en-US");
 const sizeNumber = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
+// Validate reference identifiers before constructing same-source outbound links.
+const referenceUUID = id => typeof id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id);
+const REFERENCE_SOURCES = [
+  { source: "Redump", field: "redump", className: "redump-link",
+    valid: id => Number.isSafeInteger(id) && id > 0,
+    href: id => `http://redump.org/disc/${id}/` },
+  { source: "UMDatabase", field: "umdatabase", className: "umdatabase-link",
+    valid: id => /^[0-9A-F]{8}$/.test(id),
+    href: id => `https://umdatabase.net/view.php?id=${id}` },
+  { source: "SerialStation", field: "serialstation", className: "serialstation-link",
+    valid: referenceUUID,
+    href: id => `https://serialstation.com/pkgs/${id}/` },
+  { source: "SerialStation", field: "serialstation_discs", className: "serialstation-link",
+    valid: referenceUUID,
+    href: id => `https://serialstation.com/discs/${id}` },
+];
 function formatSize(bytes) {
   const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
   let unit = 0, value = bytes;
@@ -713,9 +729,11 @@ function* buildCatalog(data) {
     const displayName = metadata.media_code === "V"
       ? metadata.title?.trim() || identity
       : [identity, metadata.title?.trim()].filter(Boolean).join(" ");
+    const serialstationDiscs = (iso.serialstation_discs || []).filter(match => referenceUUID(match.id));
     const node = add(category, `${iso.sha256}.iso`, {
       type: "file",
-      redump: iso.redump || [], umdatabase: iso.umdatabase || [], hash: iso.sha256, size: iso.size_bytes,
+      redump: (iso.redump || []).filter(match => !serialstationDiscs.some(disc => disc.redump_id === match.id)),
+      serialstation_discs: serialstationDiscs, umdatabase: iso.umdatabase || [], hash: iso.sha256, size: iso.size_bytes,
       displayName,
       gamePrefix: metadata.media_code === "G" ? identity : null,
     });
@@ -735,6 +753,7 @@ function* buildCatalog(data) {
       if (!groups.has(category)) groups.set(category, addGroup(psn, category));
       const node = add(groups.get(category), `${pkg.sha256}.pkg`, {
         type: "file", hash: pkg.sha256, size: pkg.size_bytes,
+        serialstation: pkg.serialstation || null,
         displayName: labels.get(pkg.sha256),
         gamePrefix: packageSerial(metadata) || null,
         searchMetadata: metadata.content_id || "",
@@ -885,17 +904,18 @@ function createRow(node) {
     name.title = node.error ? `error: ${node.error}` : node.extraction ? `${node.path} — extracted with ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
     content.append(name);
     if (node.coverage) content.append(coverageChip(node.coverage));
-    for (const [source, matches] of [["Redump", node.redump || []], ["UMDatabase", node.umdatabase || []]]) {
-      for (const match of matches) {
-        const redump = source === "Redump";
-        if (redump ? !Number.isSafeInteger(match.id) || match.id <= 0 : !/^[0-9A-F]{8}$/.test(match.id)) continue;
-        const label = matches.length === 1 ? source : `${source} #${match.id}`;
-        const link = element("a", redump ? "redump-link" : "umdatabase-link");
+    for (const { source, field, className, valid, href } of REFERENCE_SOURCES) {
+      const value = node[field];
+      const matches = value == null ? [] : Array.isArray(value) ? value : [value];
+      for (const [index, match] of matches.entries()) {
+        if (!valid(match.id)) continue;
+        const label = matches.length === 1 ? source : `${source} #${source === "SerialStation" ? index + 1 : match.id}`;
+        const link = element("a", className);
         link.append(element("span", "reference-label", `${label} `));
         const icon = element("span", "reference-icon", "↗");
         icon.setAttribute("aria-hidden", "true");
         link.append(icon);
-        link.href = redump ? `http://redump.org/disc/${match.id}/` : `https://umdatabase.net/view.php?id=${match.id}`;
+        link.href = href(match.id);
         link.title = `${label}: ${match.name}`;
         link.setAttribute("aria-label", link.title);
         link.target = "_blank";
@@ -1144,7 +1164,10 @@ function decodeCatalog(payload) {
 
 loadCatalog().then(async data => {
   await build(data);
-  for (const node of nodes) if (node.extraction) collapsed.add(node.index);
+  for (const node of nodes) {
+    if (node.extraction || (node.virtual && node.parent && !node.children.some(child => child.virtual)))
+      collapsed.add(node.index);
+  }
   $("message").hidden = true;
   $("browser").hidden = false;
   restore(document.activeElement !== $("tree-search") && document.activeElement !== $("clear-search"));

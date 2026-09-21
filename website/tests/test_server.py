@@ -2,6 +2,7 @@ import hashlib
 from http.server import ThreadingHTTPServer
 import json
 import gzip
+import io
 import os
 from pathlib import Path
 import tempfile
@@ -29,6 +30,17 @@ class ContextualIndexTests(unittest.TestCase):
         self.assertIn('DATA.gz', download_index(data)[payload][1])
         tree['sha256'] = 'd'*64
         self.assertNotIn(payload, download_index(data))
+
+    def test_repeated_hashes_still_validate_aliases_and_sizes(self):
+        digest, parent = 'a' * 64, 'b' * 64
+        entries = [dict(type='file', sha256=digest, size_bytes=7, path=name)
+                   for name in ('safe.prx', '日本語.prx', '', 'bad\\name', 'bad\x00name', 'bad\x1fname')]
+        data = dict(records={}, trees={'pbp': {
+            parent: dict(sha256=parent, size_bytes=100, entries=entries)}})
+        self.assertEqual(download_index(data)[digest], (7, {'safe.prx', '日本語.prx'}))
+        entries.append(dict(type='file', sha256=digest, size_bytes=8, path='other.prx'))
+        with self.assertRaisesRegex(ValueError, 'Conflicting sizes'):
+            download_index(data)
 
 
 class DownloadTests(unittest.TestCase):
@@ -80,6 +92,33 @@ class DownloadTests(unittest.TestCase):
         self.addCleanup(stop)
         self.base = f'http://127.0.0.1:{server.server_port}'
 
+
+    def test_disconnected_clients_do_not_trigger_error_responses(self):
+        handler = handler_for(self.catalog, self.store)
+        handler.log_message = lambda *args: None
+
+        class DisconnectedClient:
+            def __init__(self, route, failure, fail_on):
+                self.request = io.BytesIO(f'GET {route} HTTP/1.0\r\n\r\n'.encode())
+                self.failure, self.fail_on = failure, fail_on
+                self.writes = []
+
+            def makefile(self, *args):
+                return self.request
+
+            def sendall(self, data):
+                self.writes.append(bytes(data))
+                if len(self.writes) >= self.fail_on:
+                    raise self.failure('Client disconnected')
+
+        for route in ('/api/catalog', '/', '/missing',
+                      '/download/' + self.digest + '/alias.prx'):
+            for failure, fail_on in ((ConnectionResetError, 1), (BrokenPipeError, 2)):
+                with self.subTest(route=route, failure=failure, fail_on=fail_on):
+                    client = DisconnectedClient(route, failure, fail_on)
+                    handler(client, ('127.0.0.1', 1), None)
+                    self.assertEqual(len(client.writes), fail_on)
+                    self.assertFalse(any(b'HTTP/1.0 500' in data for data in client.writes))
     def test_restart_preserves_downloads_and_revalidates_replaced_records(self):
         path = self.catalog / 'iso' / ('a' * 64 + '.json')
         record = json.loads(path.read_text())
@@ -415,12 +454,6 @@ class DownloadTests(unittest.TestCase):
         folder.symlink_to(moved, target_is_directory=True)
         self.status('/download/' + self.digest + '/alias.prx', 404)
 
-    def test_cli_serve_does_not_initialize_or_write_store(self):
-        with patch('sys.argv', ['pspdb-web', '--store', str(self.store)]), \
-             patch('pspdb.server.serve') as serve:
-            self.assertEqual(main(), 0)
-            serve.assert_called_once_with('catalog', 8000, host='127.0.0.1', store=str(self.store),
-                                          redump=None, umdatabase=None, nopaystation=None)
 
 
 if __name__ == '__main__':

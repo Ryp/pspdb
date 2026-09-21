@@ -24,8 +24,12 @@ const result=await evaluate(`(async()=>{
  check(document.querySelector('header').getBoundingClientRect().height<=48,'Compact header');
  check(!document.querySelector('header button:not(#clear-search), .brand-dot, .subtitle'),'Header decorations and bulk controls removed');
  check(document.querySelector('header .search-bar'),'Search lives in the header');
- check(visible.some(n=>n.extraction)&&visible.every(n=>!n.parent?.extraction),'Initially show categories and collapsed source files');
- check([...nodes.values()].filter(n=>n.type==='directory').every(n=>!collapsed.has(n.index)),'Ordinary folders expanded by default');
+ check(visible.every(n=>n.virtual),'Initially show only virtual groups, not source files');
+ for(const group of visible.filter(n=>n.virtual&&n.parent&&!n.children.some(child=>child.virtual))){
+  check(rowElements.get(group.index).getAttribute('aria-expanded')==='false','Leaf virtual groups start folded');
+  check(group.children.every(child=>!visible.includes(child)),'Folded group hides source rows');
+ }
+ check([...nodes.values()].filter(n=>n.type==='directory'&&!n.virtual).every(n=>!collapsed.has(n.index)),'Real inventory folders remain expanded by default');
  check([...nodes.values()].filter(n=>n.extraction).every(n=>collapsed.has(n.index)),'Extracted files collapsed locally by default');
  for(const item of [...nodes.values()].filter(n=>n.displayName&&n.extraction)){
   jump(item);
@@ -76,7 +80,7 @@ const result=await evaluate(`(async()=>{
  jump(leaf);
  check(!rowElements.get(leaf.index).hidden,'Jump must reveal collapsed ancestors');
  check(document.getElementById('tree').getAttribute('aria-activedescendant')===leaf.id,'Active row');
- check(![...rowElements.values()].some(row=>row.querySelector('a:not(.download-link):not(.redump-link):not(.umdatabase-link):not(.coverage-chip)')),'No cross-tree links');
+ check(![...rowElements.values()].some(row=>row.querySelector('a:not(.download-link):not(.redump-link):not(.umdatabase-link):not(.serialstation-link):not(.coverage-chip)')),'No cross-tree links');
  for(const node of [...nodes.values()].filter(n=>(n.redump||[]).length)){
   jump(node);
   const links=[...rowElements.get(node.index).querySelectorAll('.redump-link')];
@@ -89,6 +93,16 @@ const result=await evaluate(`(async()=>{
    link.click();
    check(selected===before,'Redump click does not select or toggle tree');
   });
+ }
+ for(const node of nodes.filter(n=>n.serialstation)){
+  jump(node);
+  const link=rowElements.get(node.index).querySelector('.serialstation-link');
+  check(link.href==='https://serialstation.com/pkgs/'+node.serialstation.id+'/','SerialStation package UUID URL');
+  check(link.target==='_blank'&&link.rel.includes('noopener'),'SerialStation external link isolation');
+  const before=selected;
+  link.addEventListener('click',event=>event.preventDefault(),{once:true});
+  link.click();
+  check(selected===before,'SerialStation click preserves selection');
  }
  for(const node of [...nodes.values()].filter(n=>(n.umdatabase||[]).length)){
   jump(node);

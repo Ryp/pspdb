@@ -92,9 +92,9 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
 #selected-error-message { min-width: 0; }
 #selected-error:focus-visible { outline: 2px solid #ffc0bb; outline-offset: -2px; }
 
-.redump-link, .umdatabase-link { flex-shrink: 0; color: #b6d9fa; font-size: 0.8em; margin-left: 0.7em; white-space: nowrap; text-decoration: none; }
-.redump-link:hover, .umdatabase-link:hover { text-decoration: underline; }
-@media (max-width: 760px) { .reference-label { display: none; } .redump-link, .umdatabase-link { margin-left: 0; font-size: 12px; } }
+.redump-link, .umdatabase-link, .serialstation-link { flex-shrink: 0; color: #b6d9fa; font-size: 0.8em; margin-left: 0.7em; white-space: nowrap; text-decoration: none; }
+.redump-link:hover, .umdatabase-link:hover, .serialstation-link:hover { text-decoration: underline; }
+@media (max-width: 760px) { .reference-label { display: none; } .redump-link, .umdatabase-link, .serialstation-link { margin-left: 0; font-size: 12px; } }
 
 .search-results .name-cell { padding-left: 12px; }
 .search-results .toggle, .search-results .file-mark { display: none; }
@@ -135,7 +135,7 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
   .file-mark { width: 44px; }
   .extraction-tags { gap: 2px; }
   .extraction-tag + .extraction-tag, .note { display: none; }
-  .redump-link, .umdatabase-link { min-width: 44px; min-height: calc(var(--row-height) - 1px); display: inline-flex; align-items: center; justify-content: center; }
+  .redump-link, .umdatabase-link, .serialstation-link { min-width: 44px; min-height: calc(var(--row-height) - 1px); display: inline-flex; align-items: center; justify-content: center; }
   .extraction-error { min-width: 13px; flex: 0 0 auto; }
   .error-message { display: none; }
   .extraction-failed .name { max-width: none; min-width: 0; }

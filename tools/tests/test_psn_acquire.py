@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import socket
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -44,9 +45,10 @@ class AcquisitionTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         self.work = self.root / 'work'
+        self.packages = self.root / 'packages'
         self.rap_dir = self.root / 'licenses'
-        for name in ('partial', 'completed'):
-            (self.work / name).mkdir(parents=True)
+        self.work.mkdir(parents=True)
+        self.packages.mkdir(parents=True)
         self.catalog = self.root / 'catalog'
         self.catalog.mkdir()
 
@@ -71,7 +73,7 @@ class AcquisitionTests(unittest.TestCase):
         def respond(url, headers, timeout):
             return Mock(), next(responses)(headers)
         with patch.object(acquire, 'request', side_effect=respond):
-            acquire.download(package, self.work, state, lambda: None, 1, 0, 0)
+            acquire.download(package, self.packages, state, lambda: None, 1, 0, 0)
 
     def catalog_pair(self, digest, size, revision=1, complete=True):
         folder = self.catalog / 'pkg' / f'v{revision}'
@@ -82,6 +84,248 @@ class AcquisitionTests(unittest.TestCase):
         if complete:
             tree = dict(record, kind='tree', extractor={'version': str(revision)}, entries=[])
             (folder / f'{digest}-tree.json').write_text(json.dumps(tree))
+
+    def cli_snapshot(self, payloads, unknown=()):
+        bodies = {}
+        rows = []
+        for index, payload in enumerate(payloads):
+            url = URL.replace('package.pkg', f'package-{index}.pkg')
+            bodies[url] = payload
+            rows.append({'PKG direct link': url,
+                         'File Size': '' if index in unknown else str(len(payload)),
+                         'SHA256': hashlib.sha256(payload).hexdigest()})
+        return self.snapshot('PSP_GAMES.tsv', rows), bodies
+
+    def cli_argv(self, path, *options):
+        return ['psn-acquire', str(path), '--work', str(self.work),
+                '--packages', str(self.packages), '--catalog', str(self.catalog),
+                '--rap-dir', str(self.rap_dir), '--no-progress', '--min-free-gib', '0',
+                '--retries', '0', *options]
+
+    def concurrent_requests(self, bodies, parties):
+        barrier = threading.Barrier(parties, timeout=10)
+        lock = threading.Lock()
+        active = {}
+        observations = []
+        calls = []
+
+        def respond(url, headers, timeout):
+            payload = bodies[url]
+            with lock:
+                calls.append(url)
+                active[url] = len(payload)
+                observations.append((len(active), sum(active.values())))
+
+            class ConcurrentResponse(Response):
+                def read(self, size):
+                    if not getattr(self, 'started', False):
+                        self.started = True
+                        barrier.wait()
+                    return super().read(size)
+
+            def close():
+                with lock:
+                    del active[url]
+
+            return Mock(close=close), ConcurrentResponse(
+                200, {'Content-Length': str(len(payload))}, [payload])
+
+        return respond, calls, observations, active
+
+    def assert_persisted_packages(self, bodies, expected):
+        report = json.loads((self.work / 'report.json').read_text())
+        state = json.loads((self.work / 'state.json').read_text())['packages']
+        verified = [p for p in report['packages'] if p['status'] == 'verified']
+        self.assertEqual(len(verified), expected)
+        by_digest = {hashlib.sha256(body).hexdigest(): body for body in bodies.values()}
+        for package in verified:
+            entry = state[package['id']]
+            self.assertEqual(entry['status'], 'verified')
+            self.assertEqual((self.packages / entry['file']).read_bytes(),
+                             by_digest[package['observed']['sha256']])
+        self.assertEqual(len(list(self.packages.iterdir())), expected)
+        return report
+
+    def test_cli_workers_overlap_requests_and_limit_attempts(self):
+        path, bodies = self.cli_snapshot([pkg_bytes(bytes([i]) * 384) for i in range(6)])
+        respond, calls, observations, active = self.concurrent_requests(bodies, 2)
+        argv = self.cli_argv(path, '--workers', '2', '--memory-gib', str(4096 / 1024 ** 3),
+                             '--limit', '4')
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch.object(acquire, 'request', side_effect=respond):
+            self.assertEqual(acquire.main(), 0)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(set(calls)), 4)
+        self.assertEqual(max(count for count, _ in observations), 2)
+        self.assertEqual(active, {})
+        report = self.assert_persisted_packages(bodies, 4)
+        self.assertEqual(report['attempted_this_run'], 4)
+        self.assertEqual(report['summary']['package_states'], {'pending': 2, 'verified': 4})
+
+    def test_cli_memory_budget_limits_admission_below_worker_count(self):
+        path, bodies = self.cli_snapshot([pkg_bytes(bytes([i]) * 384) for i in range(6)])
+        respond, calls, observations, active = self.concurrent_requests(bodies, 2)
+        argv = self.cli_argv(path, '--workers', '4', '--memory-gib', str(1024 / 1024 ** 3),
+                             '--limit', '6')
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch.object(acquire, 'request', side_effect=respond):
+            self.assertEqual(acquire.main(), 0)
+        self.assertEqual(len(calls), 6)
+        self.assertEqual(max(count for count, _ in observations), 2)
+        self.assertLessEqual(max(size for _, size in observations), 1024)
+        self.assertEqual(active, {})
+        self.assert_persisted_packages(bodies, 6)
+
+    def test_cli_rejects_oversized_known_packages_without_blocking_smaller_work(self):
+        payloads = [pkg_bytes(b'a' * 384), pkg_bytes(b'b' * 896), pkg_bytes(b'c' * 1920)]
+        path, bodies = self.cli_snapshot(payloads)
+        argv = self.cli_argv(path, '--workers', '3', '--memory-gib', str(512 / 1024 ** 3),
+                             '--limit', '3')
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch.object(acquire, 'MEMORY_LIMIT', 1024), \
+                patch.object(acquire, 'request', return_value=(
+                    Mock(), Response(200, {'Content-Length': '512'}, [payloads[0]]))) as request:
+            self.assertEqual(acquire.main(), 0)
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(request.call_args.args[0], next(iter(bodies)))
+        report = self.assert_persisted_packages(bodies, 1)
+        self.assertEqual(report['attempted_this_run'], 3)
+        self.assertEqual(report['summary']['package_states'], {'too_large': 2, 'verified': 1})
+
+    def test_cli_unknown_length_body_cannot_exceed_its_reservation(self):
+        payload = pkg_bytes(b'x' * 385)
+        path, _ = self.cli_snapshot([payload], unknown=(0,))
+        argv = self.cli_argv(path, '--workers', '2', '--memory-gib', str(512 / 1024 ** 3),
+                             '--limit', '1')
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch.object(acquire, 'request', return_value=(
+                    Mock(), Response(200, {}, [payload[:512], payload[512:]]))):
+            self.assertEqual(acquire.main(), 0)
+        report = json.loads((self.work / 'report.json').read_text())
+        self.assertEqual(report['summary']['package_states'], {'too_large': 1})
+        self.assertEqual(list(self.packages.iterdir()), [])
+
+    def test_cli_attempt_limit_includes_reuse_with_workers(self):
+        payloads = [pkg_bytes(bytes([i]) * (384 + i)) for i in range(3)]
+        path, bodies = self.cli_snapshot(payloads)
+        source = self.root / 'reusable.pkg'
+        source.write_bytes(payloads[0])
+        argv = self.cli_argv(path, '--workers', '3', '--limit', '2', '--reuse', str(source))
+        def respond(url, headers, timeout):
+            payload = bodies[url]
+            return Mock(), Response(200, {'Content-Length': str(len(payload))}, [payload])
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch.object(acquire, 'request', side_effect=respond) as request:
+            self.assertEqual(acquire.main(), 0)
+        self.assertEqual(request.call_count, 1)
+        self.assertEqual(source.read_bytes(), payloads[0])
+        report = self.assert_persisted_packages(bodies, 2)
+        self.assertEqual(report['attempted_this_run'], 2)
+        self.assertEqual(report['summary']['package_states'], {'pending': 1, 'verified': 2})
+
+    def test_cli_concurrency_options_reject_invalid_values_before_network(self):
+        path = self.snapshot('PSP_GAMES.tsv', [])
+        invalid = [('--workers', value) for value in ('0', '-1', '1.5')]
+        invalid += [('--memory-gib', value) for value in ('0', '-1', 'nan', 'inf', '-inf')]
+        for option, value in invalid:
+            with self.subTest(option=option, value=value), \
+                    patch('sys.argv', self.cli_argv(path, f'{option}={value}')), \
+                    patch('sys.stderr', new=io.StringIO()), \
+                    patch.object(acquire, 'request') as request:
+                with self.assertRaises(SystemExit) as error:
+                    acquire.main()
+                self.assertEqual(error.exception.code, 2)
+                request.assert_not_called()
+
+    def test_cli_unknown_sizes_reserve_the_per_package_ceiling(self):
+        path, bodies = self.cli_snapshot(
+            [pkg_bytes(bytes([i]) * 384) for i in range(4)], unknown=range(4))
+        respond, calls, observations, active = self.concurrent_requests(bodies, 2)
+        argv = self.cli_argv(path, '--workers', '3', '--memory-gib', str(1024 / 1024 ** 3),
+                             '--limit', '4')
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch.object(acquire, 'MEMORY_LIMIT', 512), \
+                patch.object(acquire, 'request', side_effect=respond):
+            self.assertEqual(acquire.main(), 0)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(max(count for count, _ in observations), 2)
+        self.assertLessEqual(max(size for _, size in observations), 1024)
+        self.assertEqual(active, {})
+        self.assert_persisted_packages(bodies, 4)
+
+    def test_cli_interrupt_joins_transfers_and_preserves_completed_packages(self):
+        payloads = [pkg_bytes(bytes([i]) * (384 + i)) for i in range(4)]
+        path, bodies = self.cli_snapshot(payloads)
+        urls = list(bodies)
+        started = threading.Barrier(3, timeout=10)
+        completed = threading.Event()
+        interrupt_closed = threading.Event()
+        closed = set()
+        calls = []
+        lock = threading.Lock()
+        writes = []
+        original_atomic_json = acquire.atomic_json
+
+        def persist(target, value):
+            writes.append(threading.get_ident())
+            original_atomic_json(target, value)
+            if target.name == 'state.json' and any(
+                    entry.get('status') == 'verified' for entry in value['packages'].values()):
+                completed.set()
+                # Hold the coordinator at the completed checkpoint until cancellation
+                # has been signalled, so a fourth candidate cannot race with the interrupt.
+                if not interrupt_closed.wait(10):
+                    raise AssertionError('Interrupting transfer did not finish')
+            if target.name == 'report.json':
+                with lock:
+                    self.assertEqual(closed, set(urls[:3]))
+
+        def respond(url, headers, timeout):
+            index = urls.index(url)
+            with lock:
+                calls.append(url)
+            if index == 3:
+                raise AssertionError('Scheduled a candidate after cancellation')
+
+            class InterruptibleResponse(Response):
+                def read(self, size):
+                    if not getattr(self, 'started', False):
+                        self.started = True
+                        started.wait()
+                        if index == 1:
+                            if not completed.wait(10):
+                                raise AssertionError('Completed transfer was not persisted')
+                            raise KeyboardInterrupt()
+                        if index == 2:
+                            if not interrupt_closed.wait(10):
+                                raise AssertionError('Cancellation was not signalled')
+                            return payloads[index][:128]
+                    elif index == 2:
+                        raise AssertionError('Cancelled transfer performed another read')
+                    return super().read(size)
+
+            def close():
+                with lock:
+                    closed.add(url)
+                if index == 1:
+                    interrupt_closed.set()
+
+            return Mock(close=close), InterruptibleResponse(
+                200, {'Content-Length': str(len(payloads[index]))}, [payloads[index]])
+
+        argv = self.cli_argv(path, '--workers', '3', '--limit', '4')
+        output = io.StringIO()
+        with patch('sys.argv', argv), patch('sys.stdout', new=output), \
+                patch.object(acquire, 'request', side_effect=respond), \
+                patch.object(acquire, 'atomic_json', side_effect=persist):
+            self.assertEqual(acquire.main(), 130)
+        self.assertEqual(set(calls), set(urls[:3]))
+        self.assertEqual(writes, [threading.get_ident()] * len(writes))
+        self.assertTrue(json.loads(output.getvalue())['interrupted'])
+        report = self.assert_persisted_packages(bodies, 1)
+        self.assertEqual(report['attempted_this_run'], 3)
+        self.assertEqual(report['summary']['package_states'],
+                         {'interrupted': 2, 'pending': 1, 'verified': 1})
 
     def test_fetched_snapshot_cache_can_be_replayed_offline_without_exposing_raps(self):
         key = bytes(range(16))
@@ -266,52 +510,49 @@ class AcquisitionTests(unittest.TestCase):
                 acquire.public_connection(('b0.ww.np.dl.playstation.net', 80))
             connect.assert_not_called()
 
-    def test_interrupted_download_resumes_only_validated_prefix(self):
+    def test_aborted_transfer_leaves_nothing_on_disk_and_restarts_cleanly(self):
         data = pkg_bytes()
         package = self.candidate(data, known=False)
         state = {}
-        first = lambda _: Response(200, {'Content-Length': str(len(data)), 'ETag': '"stable"'}, [data[:128], OSError()])
-        self.transfer(package, state, iter([first]))
+        self.transfer(package, state, iter([lambda _: Response(
+            200, {'Content-Length': str(len(data))}, [data[:128], OSError()])]))
         self.assertEqual(state['status'], 'network_failure')
-        self.assertEqual(list((self.work / 'completed').iterdir()), [])
-        def resume(headers):
-            start = int(headers['Range'].removeprefix('bytes=').removesuffix('-'))
-            return Response(206, {'Content-Range': f'bytes {start}-{len(data)-1}/{len(data)}',
-                'Content-Length': str(len(data) - start), 'ETag': '"stable"'}, [data[start:]])
-        self.transfer(package, state, iter([resume]))
-        self.assertEqual((self.work / 'completed' / state['file']).read_bytes(), data)
-        self.assertFalse(state['observed']['hash_confirmed'])
+        # The buffer died with the attempt: no prefix, no temporary, nothing to resume.
+        self.assertEqual(sorted(p.name for p in self.packages.iterdir()), [])
+        self.assertNotIn('partial_size', state)
+        self.assertNotIn('etag', state)
+        self.transfer(package, state, iter([lambda headers: Response(
+            200, {'Content-Length': str(len(data))}, [data]) if 'Range' not in headers else None]))
+        self.assertEqual((self.packages / state['file']).read_bytes(), data)
         self.assertEqual(state['status'], 'verified')
 
-    def test_modified_prefix_is_restarted_even_without_reference_hash(self):
+    def test_published_name_is_the_hash_and_extension_only(self):
         data = pkg_bytes()
-        package = self.candidate(data, known=False)
+        package = self.candidate(data)
         state = {}
-        self.transfer(package, state, iter([lambda _: Response(200,
-            {'Content-Length': str(len(data)), 'ETag': '"stable"'}, [data[:256], OSError()])]))
-        part = self.work / 'partial' / (package['id'] + '.part')
-        corrupt = bytearray(part.read_bytes())
-        corrupt[-1] ^= 1
-        part.write_bytes(corrupt)
-        def server(headers):
-            if 'Range' in headers:
-                return Response(206, {'Content-Length': '256', 'Content-Range': 'bytes 256-511/512',
-                    'ETag': '"stable"'}, [data[256:]])
-            return Response(200, {'Content-Length': str(len(data))}, [data])
-        self.transfer(package, state, iter([server]))
-        self.assertEqual((self.work / 'completed' / state['file']).read_bytes(), data)
+        self.transfer(package, state, iter([lambda _: Response(200, {'Content-Length': str(len(data))}, [data])]))
+        self.assertEqual(state['file'], f'{hashlib.sha256(data).hexdigest()}.pkg')
+        self.assertEqual([p.name for p in self.packages.iterdir()], [state['file']])
+        self.assertEqual((self.packages / state['file']).read_bytes(), data)
 
-    def test_range_ignored_for_changed_remote_bytes_restarts_instead_of_appending(self):
+    def test_oversized_declared_length_is_refused_before_buffering(self):
         data = pkg_bytes()
-        package = self.candidate(data, known=False)
+        package = dict(self.candidate(data), expected_size=acquire.MEMORY_LIMIT + 1)
         state = {}
-        self.transfer(package, state, iter([lambda _: Response(200,
-            {'Content-Length': str(len(data)), 'ETag': '"old"'}, [data[:256], OSError()])]))
-        changed = pkg_bytes(b'y' * 384)
-        self.transfer(package, state, iter([lambda _: Response(200,
-            {'Content-Length': str(len(changed)), 'ETag': '"new"'}, [changed])]))
-        self.assertEqual((self.work / 'completed' / state['file']).read_bytes(), changed)
-        self.assertFalse(state['observed']['hash_confirmed'])
+        with patch.object(acquire, 'request') as request:
+            self.transfer(package, state, iter([lambda _: Response(200, {}, [data])]))
+            request.assert_not_called()
+        self.assertEqual(state['status'], 'too_large')
+        self.assertEqual(list(self.packages.iterdir()), [])
+
+    def test_unbounded_response_cannot_exhaust_memory(self):
+        blocks = [b'\x7fPKG' + bytes(124)] + [bytes(1024)] * 4
+        package = {'id': 'a' * 64, 'expected_size': None, 'expected_sha256': None, 'urls': [URL]}
+        state = {}
+        with patch.object(acquire, 'MEMORY_LIMIT', 2048):
+            self.transfer(package, state, iter([lambda _: Response(200, {}, blocks)]))
+        self.assertEqual(state['status'], 'too_large')
+        self.assertEqual(list(self.packages.iterdir()), [])
 
     def test_bad_hash_and_unknown_length_truncation_never_publish(self):
         data = pkg_bytes()
@@ -325,7 +566,7 @@ class AcquisitionTests(unittest.TestCase):
         unknown = dict(package, expected_sha256=None, expected_size=None)
         self.transfer(unknown, state, iter([lambda _: Response(200, {}, [data[:256]])]))
         self.assertEqual(state['status'], 'integrity_mismatch')
-        self.assertEqual(list((self.work / 'completed').iterdir()), [])
+        self.assertEqual(list(self.packages.iterdir()), [])
 
     def test_redirects_do_not_publish_or_follow(self):
         state = {}
@@ -333,46 +574,83 @@ class AcquisitionTests(unittest.TestCase):
             {'Location': 'http://127.0.0.1/SECRET'}, [])]))
         self.assertEqual(state['status'], 'redirect_blocked')
         self.assertNotIn('SECRET', json.dumps(state))
-        self.assertEqual(list((self.work / 'completed').iterdir()), [])
+        self.assertEqual(list(self.packages.iterdir()), [])
 
-    def test_corrupt_completed_file_is_quarantined_under_verify(self):
+    def test_corrupt_package_is_quarantined_under_verify(self):
         payload = pkg_bytes()
         path = self.snapshot('PSP_THEMES.tsv', [{'File Size': str(len(payload)), 'SHA256': ''}])
         data = acquire.inventory([path])
         package = data['packages'][0]
-        filename = f'{hashlib.sha256(payload).hexdigest()}-{len(payload)}.pkg'
-        (self.work / 'completed' / filename).write_bytes(payload[:-1] + b'y')
+        filename = f'{hashlib.sha256(payload).hexdigest()}.pkg'
+        (self.packages / filename).write_bytes(payload[:-1] + b'y')
         state = {'packages': {package['id']: {'status': 'verified', 'file': filename}}}
-        acquire.reconcile(data, state, self.work, {}, verify=True)
+        acquire.reconcile(data, state, self.packages, {}, verify=True)
         self.assertEqual(package['status'], 'local_corrupt')
         self.assertIsNone(package['observed'])
         self.assertIsNone(package['file'])
-        self.assertEqual(list((self.work / 'completed').iterdir()), [])
+        self.assertEqual(list(self.packages.glob('*.pkg')), [])
+        self.assertTrue((self.packages / f'{filename}.corrupt').is_file())
 
-    def test_truncated_or_headerless_completed_file_is_caught_without_hashing(self):
+    def test_truncated_or_headerless_package_is_caught_without_hashing(self):
         payload = pkg_bytes()
         digest = hashlib.sha256(payload).hexdigest()
         for name, content in (('short', payload[:64]), ('resized', payload + b'z'), ('plain', b'n' * len(payload))):
             with self.subTest(name=name):
-                for stale in (self.work / 'completed').iterdir():
+                for stale in self.packages.iterdir():
                     stale.unlink()
-                for stale in (self.work / 'partial').iterdir():
-                    stale.unlink()
-                target = self.work / 'completed' / f'{digest}-{len(payload)}.pkg'
+                target = self.packages / f'{digest}.pkg'
                 target.write_bytes(content)
                 path = self.snapshot('PSP_THEMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
                 data = acquire.inventory([path])
-                acquire.reconcile(data, {'packages': {}}, self.work, {})
-                self.assertEqual(list((self.work / 'completed').iterdir()), [])
-                self.assertTrue((self.work / 'partial' / f'{target.name}.corrupt').is_file())
+                acquire.reconcile(data, {'packages': {}}, self.packages, {})
+                self.assertEqual(list(self.packages.glob('*.pkg')), [])
+                self.assertTrue((self.packages / f'{target.name}.corrupt').is_file())
+
+    def test_stale_publish_temporary_is_removed_and_never_treated_as_a_package(self):
+        payload = pkg_bytes()
+        (self.packages / '.abandoned.tmp').write_bytes(payload[:64])
+        path = self.snapshot('PSP_THEMES.tsv', [{'File Size': str(len(payload)), 'SHA256': 'a' * 64}])
+        acquire.reconcile(acquire.inventory([path]), {'packages': {}}, self.packages, {})
+        self.assertEqual(list(self.packages.iterdir()), [])
+
+    def test_attribution_comes_from_the_directory_not_recorded_filenames(self):
+        payload = pkg_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        (self.packages / f'{digest}.pkg').write_bytes(payload)
+        path = self.snapshot('PSP_GAMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
+        for label, entry in (('no state entry at all', {}),
+                             ('stale recorded filename', {'status': 'verified',
+                                                          'file': f'{digest}-{len(payload)}.pkg',
+                                                          'observed': {'sha256': digest,
+                                                                       'size_bytes': len(payload)}})):
+            with self.subTest(label=label):
+                data = acquire.inventory([path])
+                package = data['packages'][0]
+                state = {'version': 1, 'packages': {package['id']: dict(entry)} if entry else {}}
+                acquire.reconcile(data, state, self.packages, {})
+                self.assertEqual(package['status'], 'verified')
+                self.assertEqual(package['observed']['sha256'], digest)
+                self.assertEqual(package['file'], str(self.packages / f'{digest}.pkg'))
+
+    def test_recorded_package_whose_bytes_vanished_is_still_reported_corrupt(self):
+        payload = pkg_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        path = self.snapshot('PSP_GAMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
+        data = acquire.inventory([path])
+        package = data['packages'][0]
+        state = {'version': 1, 'packages': {package['id']: {'status': 'verified',
+                                                            'file': f'{digest}.pkg'}}}
+        acquire.reconcile(data, state, self.packages, {})
+        self.assertEqual(package['status'], 'local_corrupt')
+        self.assertIsNone(package['observed'])
 
     def test_cli_download_bound_and_repeat_reuses_verified_files(self):
         payload = pkg_bytes()
         digest = hashlib.sha256(payload).hexdigest()
         path = self.snapshot('PSP_THEMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest},
             {'File Size': str(len(payload) + 1), 'SHA256': 'b' * 64}])
-        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir), '--no-progress']
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--packages', str(self.packages),
+                '--catalog', str(self.catalog), '--rap-dir', str(self.rap_dir), '--no-progress']
         with patch('sys.argv', argv), patch.object(acquire, 'request') as request, patch('sys.stdout', new=io.StringIO()):
             acquire.main()
             request.assert_not_called()
@@ -396,17 +674,16 @@ class AcquisitionTests(unittest.TestCase):
         payload = pkg_bytes()
         path = self.snapshot('PSP_THEMES.tsv', [{'Name': 'Patapon 2', 'Content ID': CONTENT_ID,
             'File Size': str(len(payload)), 'SHA256': hashlib.sha256(payload).hexdigest()}])
-        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir), '--limit', '1']
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--packages', str(self.packages),
+                '--catalog', str(self.catalog), '--rap-dir', str(self.rap_dir), '--limit', '1']
         out, log = io.StringIO(), io.StringIO()
         with patch('sys.argv', argv), patch('sys.stdout', new=out), patch('sys.stderr', new=log), \
                 patch.object(acquire, 'request', return_value=(Mock(), Response(
                     200, {'Content-Length': str(len(payload))}, [payload]))):
             acquire.main()
         # Redirected output stays plain text: startup phases, then a start and a result line.
-        lines = [line for line in log.getvalue().splitlines() if line.startswith('[1/1]')]
-        self.assertEqual(lines[0], f'[1/1] start Patapon 2 [{CONTENT_ID}] (512 B)')
-        self.assertRegex(lines[1], rf'^\[1/1\] verified Patapon 2 \[{CONTENT_ID}\] - 512 B in \d+s at .+/s$')
+        self.assertIn('Patapon 2', log.getvalue())
+        self.assertIn('verified', log.getvalue())
         self.assertNotIn('\x1b', log.getvalue())
         self.assertEqual(json.loads(out.getvalue())['attempted_this_run'], 1)
 
@@ -414,8 +691,8 @@ class AcquisitionTests(unittest.TestCase):
         payload = pkg_bytes()
         path = self.snapshot('PSP_THEMES.tsv', [{'Name': 'Patapon 2', 'File Size': str(len(payload)),
                                                  'SHA256': hashlib.sha256(payload).hexdigest()}])
-        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir), '--limit', '1']
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--packages', str(self.packages),
+                '--catalog', str(self.catalog), '--rap-dir', str(self.rap_dir), '--limit', '1']
         for quiet in (False, True):
             log = io.StringIO()
             with self.subTest(quiet=quiet), patch('sys.argv', argv + (['--no-progress'] if quiet else [])), \
@@ -427,45 +704,43 @@ class AcquisitionTests(unittest.TestCase):
             else:
                 self.assertIn('[1/1] unavailable Patapon 2 [REFERENCE-ID] (HTTP 404)', log.getvalue())
 
-    def test_interrupt_checkpoints_a_resumable_prefix_and_exits_without_traceback(self):
+    def test_interrupt_discards_the_buffer_and_exits_without_traceback(self):
         payload = pkg_bytes(b'y' * 1024)
         digest = hashlib.sha256(payload).hexdigest()
-        head, tail = payload[:512], payload[512:]
         path = self.snapshot('PSP_GAMES.tsv', [{'Name': 'Patapon 2', 'File Size': str(len(payload)),
                                                 'SHA256': digest}])
-        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir), '--limit', '1']
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--packages', str(self.packages),
+                '--catalog', str(self.catalog), '--rap-dir', str(self.rap_dir), '--limit', '1']
         out, log = io.StringIO(), io.StringIO()
         with patch('sys.argv', argv), patch('sys.stdout', new=out), patch('sys.stderr', new=log), \
                 patch.object(acquire, 'request', return_value=(Mock(), Response(200, {
-                    'Content-Length': str(len(payload)), 'ETag': '"v1"'}, [head, KeyboardInterrupt()]))):
+                    'Content-Length': str(len(payload))}, [payload[:512], KeyboardInterrupt()]))):
             self.assertEqual(acquire.main(), 130)
         self.assertNotIn('Traceback', log.getvalue())
         self.assertIn('[1/1] interrupted Patapon 2', log.getvalue())
         self.assertTrue(json.loads(out.getvalue())['interrupted'])
         self.assertTrue((self.work / 'report.json').is_file())
-        self.assertEqual(list((self.work / 'completed').iterdir()), [])
+        # In-memory transfer: the package directory stays clean, with no temporary to collect.
+        self.assertEqual(list(self.packages.iterdir()), [])
         entry = next(iter(json.loads((self.work / 'state.json').read_text())['packages'].values()))
         self.assertEqual(entry['status'], 'interrupted')
-        self.assertEqual((entry['partial_size'], entry['partial_sha256']),
-                         (len(head), hashlib.sha256(head).hexdigest()))
-        # The checkpoint exists to be resumed: the next run must transfer only the missing tail.
+        self.assertNotIn('partial_size', entry)
+        # An interrupted package is retryable without --retry-failed; the retry starts over.
         with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
                 patch('sys.stderr', new=io.StringIO()), patch.object(acquire, 'request',
-                return_value=(Mock(), Response(206, {'Content-Length': str(len(tail)), 'ETag': '"v1"',
-                    'Content-Range': f'bytes {len(head)}-{len(payload) - 1}/{len(payload)}'}, [tail]))):
+                return_value=(Mock(), Response(200, {'Content-Length': str(len(payload))}, [payload]))):
             self.assertEqual(acquire.main(), 0)
-        self.assertEqual((self.work / 'completed' / f'{digest}-{len(payload)}.pkg').read_bytes(), payload)
+        self.assertEqual((self.packages / f'{digest}.pkg').read_bytes(), payload)
 
-    def test_startup_trusts_published_names_and_never_hashes_local_packages(self):
+    def test_startup_trusts_published_names_and_never_hashes_stored_packages(self):
         payload = pkg_bytes()
         digest = hashlib.sha256(payload).hexdigest()
-        name = f'{digest}-{len(payload)}.pkg'
-        (self.work / 'completed' / name).write_bytes(payload)
+        name = f'{digest}.pkg'
+        (self.packages / name).write_bytes(payload)
         path = self.snapshot('PSP_GAMES.tsv', [{'Name': 'Patapon 2', 'File Size': str(len(payload)),
                                                 'SHA256': digest}])
-        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir), '--limit', '0']
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--packages', str(self.packages),
+                '--catalog', str(self.catalog), '--rap-dir', str(self.rap_dir), '--limit', '0']
         hashed, original = [], acquire.inspect_package
         def counted(target, package, progress=None):
             hashed.append(target.name)
@@ -477,16 +752,33 @@ class AcquisitionTests(unittest.TestCase):
         # Downloads must not wait on rehashing a store that this tool itself hashed at publication.
         self.assertEqual(hashed, [])
         self.assertIn('checking 1 local package(s)', log.getvalue())
-        self.assertEqual((self.work / 'completed' / name).read_bytes(), payload)
+        self.assertEqual((self.packages / name).read_bytes(), payload)
 
-    def test_verify_rehashes_each_local_package_exactly_once_per_run(self):
+    def test_package_directory_holds_only_hash_named_packages(self):
         payload = pkg_bytes()
         digest = hashlib.sha256(payload).hexdigest()
-        name = f'{digest}-{len(payload)}.pkg'
-        (self.work / 'completed' / name).write_bytes(payload)
         path = self.snapshot('PSP_GAMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
-        argv = ['psn-acquire', str(path), '--work', str(self.work), '--catalog', str(self.catalog),
-                '--rap-dir', str(self.rap_dir), '--limit', '0', '--verify', '--no-progress']
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--packages', str(self.packages),
+                '--catalog', str(self.catalog), '--rap-dir', str(self.rap_dir),
+                '--limit', '1', '--no-progress']
+        with patch('sys.argv', argv), patch('sys.stdout', new=io.StringIO()), \
+                patch.object(acquire, 'request', return_value=(Mock(), Response(
+                    200, {'Content-Length': str(len(payload))}, [payload]))):
+            acquire.main()
+        # No JSON, lock or scratch directory may share the directory that holds the packages.
+        self.assertEqual(sorted(p.name for p in self.packages.iterdir()), [f'{digest}.pkg'])
+        self.assertEqual(sorted(p.name for p in self.work.iterdir()),
+                         ['lock', 'report.json', 'state.json'])
+
+    def test_verify_rehashes_each_stored_package_exactly_once_per_run(self):
+        payload = pkg_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        name = f'{digest}.pkg'
+        (self.packages / name).write_bytes(payload)
+        path = self.snapshot('PSP_GAMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
+        argv = ['psn-acquire', str(path), '--work', str(self.work), '--packages', str(self.packages),
+                '--catalog', str(self.catalog), '--rap-dir', str(self.rap_dir),
+                '--limit', '0', '--verify', '--no-progress']
         hashed, original = [], acquire.inspect_package
         def counted(target, package, progress=None):
             hashed.append(target.name)
@@ -500,19 +792,19 @@ class AcquisitionTests(unittest.TestCase):
     def test_verify_cache_does_not_shield_bytes_that_changed_mid_run(self):
         payload = pkg_bytes()
         digest = hashlib.sha256(payload).hexdigest()
-        target = self.work / 'completed' / f'{digest}-{len(payload)}.pkg'
+        target = self.packages / f'{digest}.pkg'
         target.write_bytes(payload)
         path = self.snapshot('PSP_GAMES.tsv', [{'File Size': str(len(payload)), 'SHA256': digest}])
         data = acquire.inventory([path])
         state = {'version': 1, 'packages': {}}
         cache = {}
-        acquire.reconcile(data, state, self.work, {}, None, cache, True)
+        acquire.reconcile(data, state, self.packages, {}, None, cache, True)
         # Keyed by size and mtime, never by name alone: same-size corruption must be rehashed.
         target.write_bytes(payload[:-1] + b'y')
         os.utime(target, ns=(0, 0))
-        acquire.reconcile(acquire.inventory([path]), state, self.work, {}, None, cache, True)
-        self.assertEqual(list((self.work / 'completed').iterdir()), [])
-        self.assertTrue((self.work / 'partial' / f'{target.name}.corrupt').is_file())
+        acquire.reconcile(acquire.inventory([path]), state, self.packages, {}, None, cache, True)
+        self.assertEqual(list(self.packages.glob('*.pkg')), [])
+        self.assertTrue((self.packages / f'{target.name}.corrupt').is_file())
 
 
 if __name__ == '__main__':

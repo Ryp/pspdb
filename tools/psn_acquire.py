@@ -13,13 +13,16 @@ import http.client
 import ipaddress
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import socket
 import sys
 import tempfile
+import threading
 import time
 from urllib.parse import urlsplit
 
@@ -38,6 +41,8 @@ HOST_PATHS = {
     'b0.ww.np.dl.playstation.net': re.compile(r'/tppkg/np/[A-Za-z0-9_./-]+\.pkg'),
 }
 CHUNK = 1024 * 1024
+MEMORY_LIMIT = 4 * 1024 ** 3
+PACKAGE = re.compile(r'([0-9a-f]{64})\.pkg\Z')
 FIELDS = {'Title ID': 'title_id', 'Region': 'region', 'Name': 'name',
           'Content ID': 'content_id', 'Last Modification Date': 'modified',
           'Type': 'type', 'Original Name': 'original_name'}
@@ -310,7 +315,23 @@ def describe(header, sha, size, package, basis):
             'size_confirmed': package['expected_size'] == size}
 
 
+def inspect_bytes(data, package):
+    """Hash and validate a transferred package without ever touching the filesystem."""
+    if len(data) < 128 or data[:4] != b'\x7fPKG':
+        raise AcquisitionError('unsupported_format', 'Not a complete PKG header')
+    sha = hashlib.sha256(data).hexdigest()
+    observed = describe(data[:128], sha, len(data), package, 'hashed_bytes')
+    if int.from_bytes(data[24:32], 'big') != len(data):
+        raise AcquisitionError('integrity_mismatch', 'PKG header total size differs from received bytes', observed)
+    if package['expected_size'] is not None and len(data) != package['expected_size']:
+        raise AcquisitionError('integrity_mismatch', 'Reference size differs from received bytes', observed)
+    if package['expected_sha256'] is not None and sha != package['expected_sha256']:
+        raise AcquisitionError('integrity_mismatch', 'Reference SHA-256 differs from received bytes', observed)
+    return observed
+
+
 def inspect_package(path, package, progress=None):
+    """Streaming equivalent for files already on disk: --reuse sources and --verify."""
     digest = hashlib.sha256()
     with path.open('rb') as stream:
         header = stream.read(128)
@@ -334,7 +355,7 @@ def inspect_package(path, package, progress=None):
     return observed
 
 
-def inspect_named(path, package, size):
+def inspect_named(path, sha, size):
     """Trust the name this process published: those bytes were hashed before the rename.
 
     Reads the 128-byte header only. Silent corruption after publication is caught by
@@ -344,31 +365,31 @@ def inspect_named(path, package, size):
         header = stream.read(128)
     if len(header) < 128 or header[:4] != b'\x7fPKG':
         raise AcquisitionError('unsupported_format', 'Not a complete PKG header')
-    observed = describe(header, package['expected_sha256'], size, package, 'published_name')
+    reference = {'expected_sha256': sha, 'expected_size': size}
+    observed = describe(header, sha, size, reference, 'published_name')
     if int.from_bytes(header[24:32], 'big') != size:
         raise AcquisitionError('integrity_mismatch', 'PKG header total size differs from file size', observed)
-    if size != package['expected_size']:
-        raise AcquisitionError('integrity_mismatch', 'File size differs from its published name', observed)
     return observed
 
 
-def file_hash(path):
-    with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+def publish(data, target):
+    """Write bytes to a temporary name, fsync, then rename: readers never see a prefix.
 
-
-def publish(part, target):
-    """Rename inside the work directory: a reader sees a complete package or no file.
-
-    The bytes are fsynced before the rename, and the destination directory after it, so
-    a crash cannot leave a name in completed/ whose contents are not on stable storage.
+    The temporary lives beside the target so the rename stays within one filesystem and
+    is therefore atomic; the directory is fsynced afterwards so the name is durable too.
     """
-    fd = os.open(part, os.O_RDONLY)
+    handle, staged = tempfile.mkstemp(dir=target.parent, prefix='.', suffix='.tmp')
+    staged = Path(staged)
     try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    part.replace(target)
+        with os.fdopen(handle, 'wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(staged, 0o644)
+        staged.replace(target)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
     fd = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
         os.fsync(fd)
@@ -377,16 +398,6 @@ def publish(part, target):
         pass
     finally:
         os.close(fd)
-
-
-def record_partial(part, state):
-    """Bind the saved prefix to its exact bytes; a later run resumes only what it can verify."""
-    if part.exists():
-        state['partial_size'] = part.stat().st_size
-        state['partial_sha256'] = file_hash(part)
-    else:
-        state.pop('partial_size', None)
-        state.pop('partial_sha256', None)
 
 
 def capacity(directory, floor, needed=0):
@@ -528,30 +539,70 @@ class Progress:
             print(text, file=self.stream, flush=True)
 
 
-def download(package, work, state, save, timeout, retries, floor, progress=None):
+def check_cancel(cancel):
+    if cancel is not None and cancel.is_set():
+        raise KeyboardInterrupt
+
+
+def read_payload(stream, limit, expected, total, progress, cancel):
+    """Keep one bounded payload buffer, including when a server omits its length."""
+    body = bytearray()
+    bound = min(value for value in (limit, expected, total) if value is not None)
+    while True:
+        check_cancel(cancel)
+        # Once full, probe a single byte for an oversized response without growing the buffer.
+        block = stream.read(min(CHUNK, max(1, bound - len(body))))
+        check_cancel(cancel)
+        if not block:
+            break
+        size = len(body) + len(block)
+        if ((total is not None and size > total) or
+                (expected is not None and size > expected)):
+            raise AcquisitionError('integrity_mismatch', 'HTTP body exceeds declared size')
+        if size > limit:
+            raise AcquisitionError('too_large', f'Response exceeds the {human_size(limit)} payload reservation')
+        body += block
+        progress.advance(len(block))
+    if total is not None and len(body) != total:
+        raise AcquisitionError('network_failure', 'Truncated HTTP body')
+    return body
+
+
+def publish_payload(data, packages, observed, floor, cancel, publication_lock):
+    """Serialize the free-space check with the write that consumes that space."""
+    with publication_lock:
+        check_cancel(cancel)
+        capacity(packages, floor, observed['size_bytes'])
+        target = packages / f"{observed['sha256']}.pkg"
+        publish(data, target)
+    return target
+
+
+def download(package, packages, state, save, timeout, retries, floor, progress=None,
+             cancel=None, reservation=None, publication_lock=None):
+    """Transfer into memory, hash there, and publish one complete file.
+
+    No partial file is ever written, so an aborted transfer leaves nothing behind and
+    nothing to resume: the next run starts the package again. Callers may reserve a
+    smaller payload budget and share a publication lock with concurrent transfers.
+    """
     progress = progress or Progress(False)
-    part = work / 'partial' / (package['id'] + '.part')
-    completed = work / 'completed'
+    publication_lock = publication_lock or threading.Lock()
+    limit = min(MEMORY_LIMIT, reservation) if reservation is not None else MEMORY_LIMIT
     url = package['urls'][0]
     for attempt in range(retries + 1):
-        connection = None
+        connection = data = None
+        retry = False
         try:
-            offset = part.stat().st_size if part.exists() else 0
-            # Both remote identity and the saved local prefix must still match.
-            # An uncheckpointed process crash safely restarts instead of guessing.
-            etag = state.get('etag')
-            if offset and (not etag or state.get('url') != url or
-                           state.get('partial_size') != offset or
-                           state.get('partial_sha256') != file_hash(part)):
-                part.unlink()
-                offset = 0
+            check_cancel(cancel)
             headers = {'User-Agent': 'pspdb-psn-acquire/1', 'Accept-Encoding': 'identity'}
-            if offset:
-                headers.update(Range=f'bytes={offset}-', **{'If-Range': etag})
             expected = package['expected_size']
-            capacity(work, floor, max(0, expected - offset) if expected is not None else CHUNK)
+            if expected is not None and expected > limit:
+                raise AcquisitionError('too_large', f'Package exceeds the {human_size(limit)} payload limit')
+            capacity(packages, floor, expected if expected is not None else min(CHUNK, limit))
             connection, response = request(url, headers, timeout)
-            if response.status not in (200, 206):
+            check_cancel(cancel)
+            if response.status != 200:
                 status = 'unavailable' if response.status in (401, 403, 404, 410) else 'network_failure'
                 # No redirects are followed, even to another public host.
                 if 300 <= response.status < 400:
@@ -562,50 +613,20 @@ def download(package, work, state, save, timeout, retries, floor, progress=None)
             length = response.getheader('Content-Length')
             if length is not None and not re.fullmatch(r'[0-9]+', length):
                 raise AcquisitionError('integrity_mismatch', 'Invalid HTTP content length')
-            length = int(length) if length is not None else None
-            total = length
-            if response.status == 206:
-                match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.getheader('Content-Range', ''))
-                if (not offset or not match or int(match[1]) != offset or
-                        int(match[2]) + 1 != int(match[3]) or
-                        response.getheader('ETag') != etag):
-                    raise AcquisitionError('integrity_mismatch', 'Invalid or changed ranged response')
-                total = int(match[3])
-                if length is not None and length != total - offset:
-                    raise AcquisitionError('integrity_mismatch', 'Ranged response length mismatch')
-            else:
-                offset = 0
+            total = int(length) if length is not None else None
             if expected is not None and total is not None and total != expected:
                 raise AcquisitionError('integrity_mismatch', 'HTTP size differs from reference')
-            capacity(work, floor, max(0, total - offset) if total is not None else CHUNK)
-            validator = response.getheader('ETag', '')
-            state.pop('partial_sha256', None)
-            state.pop('partial_size', None)
-            state.update(status='downloading', url=url,
-                         etag=validator if re.fullmatch(r'"[^"\r\n]*"', validator) else None)
+            if total is not None and total > limit:
+                raise AcquisitionError('too_large', f'Response exceeds the {human_size(limit)} payload limit')
+            state.update(status='downloading', url=url)
             save()
-            progress.attempt(offset, total if total is not None else expected)
-            received = offset
-            with part.open('ab' if offset else 'wb') as stream:
-                while block := response.read(CHUNK):
-                    received += len(block)
-                    progress.advance(len(block))
-                    if ((total is not None and received > total) or
-                            (expected is not None and received > expected)):
-                        raise AcquisitionError('integrity_mismatch', 'HTTP body exceeds declared size')
-                    capacity(work, floor, len(block))
-                    stream.write(block)
-                stream.flush()
-                os.fsync(stream.fileno())
-            if total is not None and received != total:
-                raise AcquisitionError('network_failure', 'Truncated HTTP body')
-            observed = inspect_package(part, package)
-            target = completed / f"{observed['sha256']}-{observed['size_bytes']}.pkg"
-            publish(part, target)
+            progress.attempt(0, total if total is not None else expected)
+            data = read_payload(response, limit, expected, total, progress, cancel)
+            observed = inspect_bytes(data, package)
+            target = publish_payload(data, packages, observed, floor, cancel, publication_lock)
             state.clear()
             state.update(status='verified', observed=observed, file=target.name, url=url, verified_at=now())
             save()
-            return
         except (OSError, http.client.HTTPException, AcquisitionError) as exc:
             status = exc.status if isinstance(exc, AcquisitionError) else 'network_failure'
             # Never persist raw network exceptions: they may contain server-controlled data.
@@ -613,62 +634,248 @@ def download(package, work, state, save, timeout, retries, floor, progress=None)
             state.update(status=status, detail=detail, attempted_at=now())
             if isinstance(exc, AcquisitionError) and exc.observed:
                 state['mismatch_observed'] = exc.observed
-            if status in ('integrity_mismatch', 'unsupported_format') and part.exists():
-                part.unlink()
-                state.pop('etag', None)
-            else:
-                record_partial(part, state)
             save()
-            if status != 'network_failure' or attempt == retries:
-                return
-            time.sleep(min(2 ** attempt, 8))
+            retry = status == 'network_failure' and attempt < retries
         except KeyboardInterrupt:
-            # Checkpoint before unwinding: the transferred prefix is the point of resuming.
+            if cancel is not None:
+                cancel.set()
             state.update(status='interrupted', detail='Cancelled by user', attempted_at=now())
-            record_partial(part, state)
             save()
             raise
         finally:
+            data = None
             if connection:
                 connection.close()
+        if not retry:
+            return
+        delay = min(2 ** attempt, 8)
+        if cancel is None:
+            time.sleep(delay)
+        elif cancel.wait(delay):
+            state.update(status='interrupted', detail='Cancelled by user', attempted_at=now())
+            save()
+            raise KeyboardInterrupt
 
 
-def reconcile(data, state, work, identities, progress=None, verified=None, verify=False):
+class TransferUpdates:
+    """A coalesced mailbox: chunk progress never queues behind coordinator fsyncs."""
+
+    def __init__(self, wake):
+        self.lock = threading.Lock()
+        self.wake = wake
+        self.state = None
+        self.received = 0
+        self.expected = None
+        self.attempt_id = 0
+        self.done = False
+        self.error = None
+
+    def save(self, state):
+        with self.lock:
+            self.state = dict(state)
+        self.wake.set()
+
+    def attempt(self, received, expected):
+        with self.lock:
+            self.received, self.expected = received, expected
+            self.attempt_id += 1
+        self.wake.set()
+
+    def advance(self, count):
+        with self.lock:
+            self.received += count
+        self.wake.set()
+
+    def finish(self, error):
+        with self.lock:
+            self.done, self.error = True, error
+        self.wake.set()
+
+    def take(self):
+        with self.lock:
+            result = (self.state, self.attempt_id, self.received, self.expected, self.done, self.error)
+            self.state = None
+            return result
+
+
+def transfer(package, packages, source, reservation, updates, cancel, publication_lock, args):
+    """Own all mutable transfer state; only the coordinator writes state.json."""
+    entry = {}
+    error = None
+    floor = int(args.min_free_gib * 1024 ** 3)
+    try:
+        check_cancel(cancel)
+        if source:
+            payload = None
+            try:
+                updates.attempt(0, package['expected_size'])
+                with source.open('rb') as stream:
+                    payload = read_payload(stream, reservation, package['expected_size'],
+                                           None, updates, cancel)
+                observed = inspect_bytes(payload, package)
+                target = packages / f"{observed['sha256']}.pkg"
+                if source.resolve() != target.resolve():
+                    target = publish_payload(payload, packages, observed, floor, cancel, publication_lock)
+                entry.update(status='verified', observed=observed, file=target.name,
+                             reused_from=str(source.resolve()), verified_at=now())
+                updates.save(entry)
+                return
+            except (AcquisitionError, OSError):
+                # A corrupt reuse source is not evidence; acquire the listed URL instead.
+                pass
+            finally:
+                payload = None
+        download(package, packages, entry, lambda: updates.save(entry), args.timeout,
+                 args.retries, floor, updates, cancel, reservation, publication_lock)
+    except BaseException as exc:
+        # Do not retain a cancelled read's traceback (and therefore its payload buffer).
+        error = None if isinstance(exc, KeyboardInterrupt) else exc.with_traceback(None)
+        cancel.set()
+        if isinstance(exc, KeyboardInterrupt):
+            entry.update(status='interrupted', detail='Cancelled by user', attempted_at=now())
+            updates.save(entry)
+    finally:
+        updates.finish(error)
+
+
+def acquire_candidates(candidates, packages, state, save, local, rows, args, progress):
+    """Schedule only reserved work and join every transfer before reconciliation."""
+    # Avoid overflow for any positive finite CLI float; reservations are integral bytes.
+    budget = int(args.memory_gib) * 1024 ** 3 + int((args.memory_gib % 1) * 1024 ** 3)
+    maximum = min(MEMORY_LIMIT, budget)
+    planned = min(len(candidates), args.limit)
+    active = []
+    reserved = attempted = 0
+    cancel, wake = threading.Event(), threading.Event()
+    publication_lock = threading.Lock()
+    previous_handler = None
+    failure = None
+    if threading.current_thread() is threading.main_thread():
+        previous_handler = signal.signal(signal.SIGINT, lambda signum, frame: cancel.set())
+
+    def consume(job):
+        snapshot, attempt_id, received, expected, done, error = job['updates'].take()
+        view = job['progress']
+        if attempt_id != job['attempt_id']:
+            view.attempt(0, expected)
+            job['attempt_id'] = attempt_id
+        if received != view.received:
+            view.advance(received - view.received)
+        if snapshot is not None:
+            state['packages'][job['package']['id']] = snapshot
+            save()
+        return done, error
+
+    try:
+        while active or (attempted < planned and not cancel.is_set()):
+            wake.clear()
+            for job in active[:]:
+                done, error = consume(job)
+                if not done:
+                    continue
+                job['thread'].join()
+                entry = state['packages'].get(job['package']['id'], {})
+                if entry.get('observed'):
+                    local[entry['observed']['sha256']] = packages / entry['file']
+                status = 'reused' if entry.get('reused_from') else entry.get('status', 'pending')
+                detail = Path(entry['reused_from']).name if entry.get('reused_from') else entry.get('detail')
+                job['progress'].finish(status, detail)
+                reserved -= job['reservation']
+                active.remove(job)
+                if error is not None and not isinstance(error, KeyboardInterrupt):
+                    failure = failure or error
+            while not cancel.is_set() and len(active) < args.workers and attempted < planned:
+                package = candidates[attempted]
+                expected = package['expected_size']
+                reservation = expected if expected is not None else maximum
+                oversized = reservation > maximum
+                if not oversized and reserved + reservation > budget:
+                    break
+                attempted += 1
+                view = Progress(progress.enabled, progress.stream)
+                if args.workers > 1:
+                    # Concurrent packages use stable start/result lines, never competing repaints.
+                    view.tty = False
+                view.package(attempted, planned, package_label(package, rows), expected)
+                if oversized:
+                    entry = {'status': 'too_large', 'attempted_at': now(),
+                             'detail': f'Package exceeds the {human_size(maximum)} payload limit'}
+                    state['packages'][package['id']] = entry
+                    save()
+                    view.finish(entry['status'], entry['detail'])
+                    continue
+                updates = TransferUpdates(wake)
+                source = local.get(package['expected_sha256']) if package['expected_sha256'] else None
+                thread = threading.Thread(target=transfer,
+                    args=(package, packages, source, reservation, updates, cancel, publication_lock, args),
+                    name=f"psn-acquire-{attempted}")
+                job = {'thread': thread, 'updates': updates, 'package': package,
+                       'reservation': reservation, 'progress': view, 'attempt_id': 0}
+                reserved += reservation
+                thread.start()
+                active.append(job)
+            if active:
+                wake.wait(Progress.INTERVAL)
+    except KeyboardInterrupt:
+        cancel.set()
+    finally:
+        interrupted = cancel.is_set()
+        cancel.set()
+        try:
+            # Join everyone before doing fallible persistence or terminal I/O.
+            for job in active:
+                job['thread'].join()
+            for job in active:
+                consume(job)
+                entry = state['packages'].get(job['package']['id'], {})
+                job['progress'].finish(entry.get('status', 'interrupted'), entry.get('detail'))
+        finally:
+            if previous_handler is not None:
+                signal.signal(signal.SIGINT, previous_handler)
+    if failure is not None:
+        raise failure
+    return attempted, interrupted
+
+
+def reconcile(data, state, packages, identities, progress=None, verified=None, verify=False):
     progress = progress or Progress(False)
     checked = {}
     # Include orphaned publications after a crash, not only files named by state.
-    paths = sorted((work / 'completed').glob('*.pkg'))
+    paths = sorted(packages.glob('*.pkg'))
+    for stale in packages.glob('.*.tmp'):
+        # An interrupted publish leaves a hidden temporary; it is never a package.
+        stale.unlink(missing_ok=True)
     if paths:
         progress.phase(f'{"verifying" if verify else "checking"} {len(paths)} local package(s)'
-                       f' in {work / "completed"}')
+                       f' in {packages}')
     # Identities this run already established: reuse them instead of reopening every file.
     known = {entry['file']: entry['observed'] for entry in state['packages'].values()
              if entry.get('file') and entry.get('observed')}
     for index, path in enumerate(paths, 1):
-        match = re.fullmatch(r'([0-9a-f]{64})-([0-9]+)\.pkg', path.name)
+        match = PACKAGE.fullmatch(path.name)
         if not match:
-            raise ValueError(f'Unexpected file in completed directory: {path.name}')
+            raise ValueError(f'Unexpected file in package directory: {path.name}')
         status = path.stat()
         stamp = (status.st_size, status.st_mtime_ns)
-        reference = {'expected_sha256': match[1], 'expected_size': int(match[2])}
         recorded = known.get(path.name)
         try:
             if not verify:
                 if (recorded and recorded.get('sha256') == match[1]
-                        and recorded.get('size_bytes') == stamp[0] == reference['expected_size']):
+                        and recorded.get('size_bytes') == stamp[0]):
                     # Published by this tool and unchanged in size: reopening it learns nothing.
                     checked[path.name] = dict(recorded, identity_basis='published_name')
                 else:
-                    checked[path.name] = inspect_named(path, reference, stamp[0])
+                    checked[path.name] = inspect_named(path, match[1], stamp[0])
                 continue
             if verified is not None and verified.get(path.name, (None,))[0] == stamp:
                 # Hash each package once per run: a second pass over untouched bytes proves nothing.
                 checked[path.name] = verified[path.name][1]
                 continue
             progress.scan(index, len(paths), match[1][:16], stamp[0])
-            observed = inspect_package(path, reference, progress)
+            observed = inspect_package(path, {'expected_sha256': match[1],
+                                              'expected_size': stamp[0]}, progress)
         except AcquisitionError:
-            path.replace(work / 'partial' / (path.name + '.corrupt'))
+            path.replace(path.with_suffix('.pkg.corrupt'))
             if verified is not None:
                 verified.pop(path.name, None)
             continue
@@ -680,6 +887,14 @@ def reconcile(data, state, work, identities, progress=None, verified=None, verif
         previous = state['packages'].get(package['id'], {})
         observed = None
         filename = previous.get('file')
+        recorded = (previous.get('observed') or {}).get('sha256')
+        # The name is the identity: attribution comes from the directory, not bookkeeping.
+        # A recorded name that no longer exists is not evidence of loss when the very bytes
+        # it named are present under their own digest, and a file nobody recorded still counts.
+        for digest in (recorded, package['expected_sha256']):
+            if digest and f'{digest}.pkg' in checked:
+                filename = f'{digest}.pkg'
+                break
         if filename:
             candidate = checked.get(filename)
             if (candidate and
@@ -687,14 +902,14 @@ def reconcile(data, state, work, identities, progress=None, verified=None, verif
                     (package['expected_size'] is None or candidate['size_bytes'] == package['expected_size'])):
                 observed = dict(candidate, hash_confirmed=package['expected_sha256'] is not None,
                                 size_confirmed=package['expected_size'] is not None)
-            else:
+            elif previous.get('file'):
                 previous.update(status='local_corrupt', detail='Previously verified file is missing or changed')
                 previous.pop('observed', None)
         identity = (observed['sha256'], observed['size_bytes']) if observed else (
             package['expected_sha256'], package['expected_size'])
         package['catalog'] = identities.get(identity)
         package['observed'] = observed
-        package['file'] = str(work / 'completed' / filename) if observed else None
+        package['file'] = str(packages / filename) if observed else None
         package['acquisition'] = 'verified' if observed else previous.get('status', 'pending')
         package['acquisition_url'] = previous.get('url')
         package['reused_from'] = previous.get('reused_from')
@@ -712,6 +927,8 @@ def reconcile(data, state, work, identities, progress=None, verified=None, verif
             package['status'] = previous.get('status', 'pending')
         if previous.get('detail'):
             package['detail'] = previous['detail']
+        else:
+            package.pop('detail', None)
         package['mismatch_observed'] = previous.get('mismatch_observed')
     by_id = {p['id']: p for p in data['packages']}
     for row in data['rows']:
@@ -729,7 +946,7 @@ def reconcile(data, state, work, identities, progress=None, verified=None, verif
         'package_states': dict(sorted(Counter(states.values()).items())),
         'rows_missing_sha256': sum(r['expected_sha256'] is None for r in data['rows']),
         'rows_missing_size': sum(r['expected_size'] is None for r in data['rows'])}
-    data['completed_directory'] = str(work / 'completed')
+    data['packages_directory'] = str(packages)
     data['identity_basis'] = 'hashed_bytes' if verify else 'published_name'
     data['coverage_scope'] = ('Exact PKG pairs only; revisions may be stale. No inference of extraction'
                               ' failure from absent catalog pairs. Local packages are identified by the'
@@ -740,29 +957,34 @@ def reconcile(data, state, work, identities, progress=None, verified=None, verif
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('snapshots', nargs='*', type=Path, help='Local TSV files/directories; omit to fetch current PSP/PSX snapshots from NoPayStation')
-    parser.add_argument('--work', type=Path, default=Path('.work/psn-acquire'), help='Machine-local state and completed/partial directories')
+    parser.add_argument('--work', type=Path, default=Path('.work/psn-acquire'), help='Machine-local state: lock, state.json, report.json and TSV snapshots')
+    parser.add_argument('--packages', type=Path, help='Directory holding only <sha256>.pkg files (default: <work>/packages)')
     parser.add_argument('--catalog', type=Path, default=Path('catalog'), help='Read-only catalog to reconcile exact PKG identities')
     parser.add_argument('--rap-dir', type=Path, help='Private inline RAP store (default: PSPDB_RAP_DIR, then ${XDG_DATA_HOME:-~/.local/share}/pspdb/licenses)')
     parser.add_argument('--limit', type=int, default=0, help='Maximum PKG attempts; 0 inventories and imports RAPs only (default)')
+    parser.add_argument('--workers', type=int, default=1, help='Maximum concurrent PKG transfers (default: 1)')
+    parser.add_argument('--memory-gib', type=float, default=4, help='Shared in-flight payload budget in GiB (default: 4; excludes Python/socket overhead)')
     parser.add_argument('--package', action='append', default=[], help='Restrict downloads to candidate ID from report.json; repeatable')
     parser.add_argument('--category', choices=SNAPSHOT_CATEGORIES, help='Restrict PKG downloads, not snapshot fetching or inventory denominator')
     parser.add_argument('--reuse', action='append', type=Path, default=[], help='Read-only local PKG or directory to hash and reuse; repeatable')
     parser.add_argument('--timeout', type=float, default=30, help='Network socket timeout in seconds')
     parser.add_argument('--retries', type=int, default=2, help='Retries per attempted package (0..5)')
-    parser.add_argument('--retry-failed', action='store_true', help='Retry prior unavailable/integrity/format/redirect failures; transient interrupted downloads resume normally')
+    parser.add_argument('--retry-failed', action='store_true', help='Retry prior unavailable/integrity/format/redirect failures')
     parser.add_argument('--min-free-gib', type=float, default=2, help='Preserve this much free space during acquisition')
     parser.add_argument('--no-progress', action='store_true', help='Disable the stderr progress log; stdout JSON is unaffected')
-    parser.add_argument('--verify', action='store_true', help='Re-hash every package in completed instead of trusting its published name')
+    parser.add_argument('--verify', action='store_true', help='Re-hash every stored package instead of trusting its published name')
     args = parser.parse_args()
     if (args.limit < 0 or not 0 < args.timeout <= 300 or not 0 <= args.retries <= 5 or
             not 0 <= args.min_free_gib < 1024 * 1024):
         parser.error('Invalid limit, timeout, retries, or capacity floor')
+    if args.workers <= 0 or not math.isfinite(args.memory_gib) or args.memory_gib <= 0:
+        parser.error('Workers must be positive and memory-gib must be positive and finite')
     progress = Progress(not args.no_progress)
     try:
         work = args.work.expanduser().resolve()
         work.mkdir(parents=True, exist_ok=True)
-        for name in ('partial', 'completed'):
-            (work / name).mkdir(exist_ok=True)
+        packages = (args.packages.expanduser().resolve() if args.packages else work / 'packages')
+        packages.mkdir(parents=True, exist_ok=True)
         with (work / 'lock').open('a') as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -788,7 +1010,7 @@ def main():
             def save():
                 atomic_json(state_path, state)
             verified = {}
-            reconcile(data, state, work, identities, progress, verified, args.verify)
+            reconcile(data, state, packages, identities, progress, verified, args.verify)
             requested = set(args.package)
             if requested - {p['id'] for p in data['packages']}:
                 raise ValueError('Unknown --package candidate ID')
@@ -809,56 +1031,18 @@ def main():
                 for path in sorted(item.glob('*.pkg')) if item.is_dir() else [item]:
                     try:
                         observed = inspect_package(path, {'expected_sha256': None, 'expected_size': None})
-                        local[(observed['sha256'], observed['size_bytes'])] = path
+                        local[observed['sha256']] = path
                     except AcquisitionError:
                         continue
-            # Completed files can also be reused after a crash before state publication.
-            for path in sorted((work / 'completed').glob('*.pkg')):
-                match = re.fullmatch(r'([0-9a-f]{64})-([0-9]+)\.pkg', path.name)
+            # Stored packages can also be reused after a crash before state publication.
+            for path in sorted(packages.glob('*.pkg')):
+                match = PACKAGE.fullmatch(path.name)
                 if match:
-                    local.setdefault((match[1], int(match[2])), path)
+                    local.setdefault(match[1], path)
             rows_by_id = {row['id']: row for row in data['rows']}
-            planned = min(len(candidates), args.limit)
-            attempted, interrupted = 0, False
-            try:
-                for package in candidates:
-                    if attempted >= args.limit:
-                        break
-                    attempted += 1
-                    progress.package(attempted, planned, package_label(package, rows_by_id),
-                                     package['expected_size'])
-                    entry = state['packages'].setdefault(package['id'], {})
-                    source = local.get((package['expected_sha256'], package['expected_size']))
-                    if source:
-                        try:
-                            observed = inspect_package(source, package)
-                            target = work / 'completed' / f"{observed['sha256']}-{observed['size_bytes']}.pkg"
-                            if source.resolve() != target.resolve():
-                                capacity(work, int(args.min_free_gib * 1024 ** 3), observed['size_bytes'])
-                                part = work / 'partial' / (package['id'] + '.part')
-                                shutil.copyfile(source, part)
-                                inspect_package(part, package)
-                                publish(part, target)
-                            entry.clear()
-                            entry.update(status='verified', observed=observed, file=target.name,
-                                         reused_from=str(source.resolve()), verified_at=now())
-                            save()
-                            progress.finish('reused', source.name)
-                            continue
-                        except (AcquisitionError, OSError):
-                            # A corrupt reuse source is not evidence; acquire the listed URL instead.
-                            pass
-                    download(package, work, entry, save, args.timeout, args.retries,
-                             int(args.min_free_gib * 1024 ** 3), progress)
-                    progress.finish(entry.get('status', 'pending'), entry.get('detail'))
-                    if entry.get('observed'):
-                        observed = entry['observed']
-                        local[(observed['sha256'], observed['size_bytes'])] = work / 'completed' / entry['file']
-            except KeyboardInterrupt:
-                # Downloads checkpoint themselves; still publish an accurate report before exiting.
-                interrupted = True
-                progress.finish('interrupted', 'Ctrl+C')
-            reconcile(data, state, work, identities, progress, verified, args.verify)
+            attempted, interrupted = acquire_candidates(candidates, packages, state, save, local,
+                                                        rows_by_id, args, progress)
+            reconcile(data, state, packages, identities, progress, verified, args.verify)
             data['attempted_this_run'] = attempted
             data['interrupted'] = interrupted
             save()
@@ -866,7 +1050,8 @@ def main():
             print(json.dumps({'summary': data['summary'], 'attempted_this_run': attempted,
                               'interrupted': interrupted,
                               'licenses': {key: data['licenses'][key] for key in ('directory', 'counts')},
-                              'report': str(work / 'report.json'), 'completed_directory': data['completed_directory']}, sort_keys=True))
+                              'report': str(work / 'report.json'),
+                              'packages_directory': data['packages_directory']}, sort_keys=True))
             if interrupted:
                 return 130
     except KeyboardInterrupt:

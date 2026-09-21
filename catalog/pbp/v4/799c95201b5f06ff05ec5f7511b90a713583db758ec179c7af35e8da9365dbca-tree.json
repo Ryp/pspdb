@@ -1,0 +1,83 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "799c95201b5f06ff05ec5f7511b90a713583db758ec179c7af35e8da9365dbca",
+  "size_bytes": 108869635,
+  "extractor": {
+    "name": "Zig-PSP zPBPTool",
+    "version": "4",
+    "options": [
+      "in-memory"
+    ]
+  },
+  "entries": [
+    {
+      "path": "DATA.BIN",
+      "type": "file",
+      "size_bytes": 108804099,
+      "sha256": "f92e9427d9ceb479ba640f54958e7b66dd367d0e0a0ab5be0452f42e414911db",
+      "extraction": {
+        "sha256": "f92e9427d9ceb479ba640f54958e7b66dd367d0e0a0ab5be0452f42e414911db",
+        "size_bytes": 108804099,
+        "extractor": {
+          "name": "pspdb-ingest",
+          "version": "2",
+          "options": []
+        },
+        "name_rule": "identity",
+        "entries": [],
+        "error": "ExtractionFailed"
+      }
+    },
+    {
+      "path": "DATA.PSP",
+      "type": "file",
+      "size_bytes": 27278,
+      "sha256": "f9332a5853ab5a231e3ef615e0b41767161f7cbcd66725afaa9d334691ddaf2e",
+      "extraction": {
+        "sha256": "f9332a5853ab5a231e3ef615e0b41767161f7cbcd66725afaa9d334691ddaf2e",
+        "size_bytes": 27278,
+        "extractor": {
+          "name": "pspdb-pops",
+          "version": "2",
+          "options": [
+            "in-memory"
+          ]
+        },
+        "name_rule": "source_stem",
+        "entries": [
+          {
+            "path": "payload.gz",
+            "type": "file",
+            "size_bytes": 7130,
+            "sha256": "cba6c6f4ca1a316029460f8f5e6dff2d9899954185431e74d69f39e3679a9412"
+          }
+        ]
+      }
+    },
+    {
+      "path": "ICON0.PNG",
+      "type": "file",
+      "size_bytes": 5097,
+      "sha256": "132134da516465250a9fa3584e9d6f62f48f69815aebc306625e6a7cbf6d5ba2"
+    },
+    {
+      "path": "PARAM.SFO",
+      "type": "file",
+      "size_bytes": 944,
+      "sha256": "804ab9aa2ce408fa717b02278286ae3bbed3ff1ff023477903d72293ab9ca206"
+    },
+    {
+      "path": "PIC0.PNG",
+      "type": "file",
+      "size_bytes": 29526,
+      "sha256": "0d87311270b8c37a541c9c026fe4dab0d5219c76d9366984fc4d2c8eb00be3c2"
+    },
+    {
+      "path": "PIC1.PNG",
+      "type": "file",
+      "size_bytes": 2651,
+      "sha256": "3350f606604ed7153a9b60b45c3483738cb45c3ef1a30a730116c0923d6d68f1"
+    }
+  ]
+}

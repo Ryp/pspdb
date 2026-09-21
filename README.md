@@ -318,26 +318,70 @@ Download a bounded batch from listed public Sony package URLs, then ingest separ
 
 ```sh
 uv run --locked python tools/psn_acquire.py \
-  --work .work/psn-acquire --catalog catalog --category PSP_DLCS --limit 5
-./ingest/zig-out/bin/pspdb-ingest .work/psn-acquire/completed \
+  --work .work/psn-acquire --packages /path/to/packages \
+  --catalog catalog --category PSP_DLCS --limit 5
+./ingest/zig-out/bin/pspdb-ingest /path/to/packages \
   --catalog .work/psn-catalog --store /path/to/store
 ```
 
-Acquisition is sequential, uses finite retries/timeouts, preserves 2 GiB free by
-default, and publishes completed `.pkg` files only after PKG-header and supplied
-size/hash checks. Missing reference hashes never become hash-confirmed.
-Interrupted transfers resume only with a strong remote ETag and a matching saved
-local prefix; otherwise they restart. Repeated runs reuse verified files.
-Use `--package` with a report candidate ID for exact selection, `--reuse` for
-existing local packages, and `--retry-failed` to revisit permanent failures.
+Two directories, deliberately separate. `--work` is machine-local bookkeeping: the
+lock, `state.json`, `report.json` and the TSV snapshot cache. `--packages` holds
+packages and nothing else — one `<sha256>.pkg` per package, no JSON, no lock, no
+scratch subdirectory — so it can live on slow or shared storage and be handed
+straight to `pspdb-ingest`. It defaults to `<work>/packages`.
+
+The name is the identity: the SHA-256 of the file's own bytes. The size is not in
+the name because `stat` already reports it, and the PKG header declares it too.
+
+Transfers happen entirely in memory. A package is buffered, hashed and validated
+before anything is written, then published with a single fsynced write to a hidden
+temporary beside the target followed by an atomic rename. Nothing partial ever
+appears in the package directory, there is no `.part` file, and no file is read
+back to hash it. The cost is that an aborted transfer has nothing to resume:
+the next run starts that package again. Transfers are capped at 4 GiB, refused
+before the request when the reference size already exceeds it and aborted with
+status `too_large` if a response tries to exceed it mid-stream.
+
+Acquisition defaults to one transfer. Set `--workers 8` for up to eight concurrent
+PKG transfers; `--limit` still caps total attempts, including local reuse.
+`--memory-gib 4` (the default) bounds the sum of reserved in-flight payload bytes,
+not process RSS: Python buffers, allocator and socket overhead require extra RAM.
+Known sizes reserve their full size before starting; unknown sizes conservatively
+reserve the smaller of the shared budget and the 4 GiB per-package ceiling.
+The memory budget can therefore reduce effective concurrency. Packages larger
+than either limit report `too_large`; increasing the shared budget does not raise
+the per-package ceiling.
+
+For example:
+
+```sh
+uv run --locked python tools/psn_acquire.py \
+  --work .work/psn-acquire --packages /path/to/packages \
+  --catalog catalog --limit 10000 --workers 8 --memory-gib 4
+```
+
+Stop an existing acquisition before restarting with these options. Ctrl+C stops
+scheduling and cancels active transfers between reads or retry waits, then joins
+them before writing the final report and exiting with status 130. A blocked
+network operation may need to return or time out first. Completed packages remain;
+incomplete transfers restart on the next run. Do not run separate work directories
+against the same package directory concurrently.
+
+Acquisition uses finite retries/timeouts, preserves 2 GiB free by default, and
+serializes publication so concurrent writers cannot race its free-space checks.
+It publishes `.pkg` files only after PKG-header and supplied size/hash
+checks. Missing reference hashes never become hash-confirmed. Repeated runs reuse
+packages already present. Use `--package` with a report candidate ID for exact
+selection, `--reuse` for existing local packages, and `--retry-failed` to revisit
+permanent failures.
 Supported sources are `zeus.dl.playstation.net/cdn/` and the update host
 `b0.ww.np.dl.playstation.net/tppkg/np/`. Host-specific paths, public DNS targets,
 and credential-free URLs are enforced. Other hosts and redirects remain
 explicitly unhandled rather than followed.
 
 Acquisition reports progress on stderr while stdout stays a single machine-readable
-JSON object. A terminal gets one repainted line per package with the attempt
-counter, package name, transferred share and a recent-window transfer rate:
+JSON object. With `--workers 1`, a terminal gets one repainted line per package with
+the attempt counter, package name, transferred share and a recent-window transfer rate:
 
 ```text
 [3/25] Patapon 2 [UP0001-TEST00001_00-ABCDEFGHIJKLMNOP]   43% 3.0 MiB/7.0 MiB 4.0 MiB/s
@@ -345,27 +389,29 @@ counter, package name, transferred share and a recent-window transfer rate:
 
 A redirected stderr gets plain `start` and result lines per package instead, with
 the elapsed time, average rate, and the failure status and cause when one applies.
+With multiple workers, terminals also use these stable lines; completion order can
+differ from start order. There is no live aggregate rate display.
 The counter's denominator is the number of packages this run plans to attempt,
-which is `--limit` bounded by the candidates left after filtering. Rates measure
-the last five seconds, so a stalled transfer reads as slow rather than fast.
+which is `--limit` bounded by the candidates left after filtering. Single-worker
+live rates use a five-second window, updated as transfer progress arrives.
 `--no-progress` disables the log; it never affects stdout, `state.json` or
 `report.json`.
 
 Startup is reported too, because it is slow enough to look like a hang before any
 download begins: fetching each TSV, reading the snapshots, scanning the catalog,
-and checking the packages already in `--work/completed`.
+and checking the packages already in `--packages`.
 
-That check does not re-hash anything. A completed file is named
-`<sha256>-<size>.pkg` by this tool only after its bytes were hashed and verified,
-so the published name *is* the identity; startup reuses the identity recorded in
-`state.json` when the name and on-disk size still agree, and otherwise reads the
-128-byte PKG header and compares the header's declared total against the file size.
-Files that are truncated, resized or headerless are still quarantined to
-`--work/partial/<name>.corrupt`. Downloads therefore begin in seconds instead of
-waiting on a full pass over the store; `report.json` records
+That check does not re-hash anything. A stored file is named `<sha256>.pkg` by this
+tool only after its bytes were hashed and verified in memory, so the published name
+*is* the identity; startup reuses the identity recorded in `state.json` when the
+name and on-disk size still agree, and otherwise reads the 128-byte PKG header and
+compares the header's declared total against the file size. Files that are
+truncated, resized or headerless are quarantined beside themselves as
+`<sha256>.pkg.corrupt`, which no longer matches `*.pkg`. Downloads therefore begin
+in seconds instead of waiting on a full pass over the store; `report.json` records
 `"identity_basis": "published_name"`.
 
-`--verify` restores the exhaustive pass, re-hashing every completed file to detect
+`--verify` restores the exhaustive pass, re-hashing every stored package to detect
 silent corruption that happened after publication. It repaints a counter, digest
 prefix and hashing rate per file, and reports `"identity_basis": "hashed_bytes"`:
 
@@ -377,20 +423,12 @@ Under `--verify` each file is hashed at most once per run: the closing
 reconciliation reuses the opening pass for files whose size and mtime are
 unchanged, and re-hashes any file that changed underneath it.
 
-Packages are published atomically. Bytes are written to `--work/partial`, fsynced,
-verified, then renamed into `--work/completed` within the same directory tree, and
-the destination directory is fsynced after the rename. A reader — including a
-concurrent `pspdb-ingest` over the same folder — sees either a complete, verified
-package under its final name or no file at all; a crash or `Ctrl+C` can never leave
-a partially written file in `completed`.
-
 `Ctrl+C` stops after the chunk in flight rather than aborting the process. The
-running transfer checkpoints its partial prefix by size and SHA-256, the remaining
-candidates are left untouched, `state.json` and `report.json` are still published,
-the final JSON object is still printed with `"interrupted": true`, and the exit
-status is 130 with no traceback. The interrupted package keeps status `interrupted`,
-which is retryable without `--retry-failed`; the next run resumes its prefix when
-the ETag and saved bytes still match, and restarts it otherwise.
+in-memory buffer is discarded, the remaining candidates are left untouched,
+`state.json` and `report.json` are still published, the final JSON object is still
+printed with `"interrupted": true`, and the exit status is 130 with no traceback.
+The interrupted package keeps status `interrupted`, which is retryable without
+`--retry-failed`; the next run transfers it again from the start.
 
 Re-run inventory against the resulting catalog to distinguish exact ingested
 hash/size matches from downloaded packages. Catalog matching does not establish
@@ -485,6 +523,60 @@ Add `--nopaystation /path/to/snapshots` (a folder of NoPayStation TSV snapshots,
 one `.tsv`) for the PSN population denominator. Coverage totals come only from the
 snapshots supplied on the command line; nothing is fetched.
 
+Add `--serialstation /path/to/serialstation.json` for links to SerialStation's
+PKG-specific `/pkgs/<UUID>/` pages. Matches require the package's SHA-1, exact
+byte size, and full PSN content ID; a content-ID match alone is insufficient.
+Build the snapshot by discovering PKG links on content-ID pages and checking
+each candidate package's published identity:
+
+```sh
+uv run python tools/serialstation_acquire.py --catalog catalog \
+  --output .work/serialstation/catalog.json
+uv run pspdb-web --catalog catalog --serialstation .work/serialstation/catalog.json
+```
+
+The same `--serialstation` option works with `pspdb-web export`. Only exact
+matches receive links; there is no fallback to a content-ID page. Serving and
+exporting never query SerialStation. Re-running acquisition checks new package
+identities only; `--refresh` rechecks the current catalog, including misses.
+Version 1 content-ID-only snapshots must be rebuilt with `--refresh`; the viewer
+accepts only version 2 package snapshots.
+
+For UMDs, acquire SerialStation's explicitly published Redump cross-references
+into the same snapshot:
+
+```sh
+uv run python tools/serialstation_discs_acquire.py \
+  --output .work/serialstation/catalog.json
+uv run pspdb-web --catalog catalog --redump /path/to/dat.zip \
+  --serialstation .work/serialstation/catalog.json
+```
+
+The viewer first matches ISO SHA-1 and byte size against the Redump DAT, then
+uses SerialStation's published Redump ID to attach `/discs/UUID` links.
+Verified SerialStation links replace the corresponding Redump links in the
+tree; unmapped Redump links remain. Multiple verified editions are retained.
+Titles and serial numbers are not match keys. Redump remains the UMD coverage
+denominator and must still be supplied for disc matching.
+
+Disc acquisition caches validated listing and detail HTML under
+`.work/serialstation/discs`; rerun to resume, or use `--refresh` to fetch again.
+A failed scan merges any verified mappings, retains prior mappings, marks
+`disc_index_complete` false, and exits nonzero. With no new mappings, the
+snapshot is unchanged. A complete scan replaces the disc index; package entries
+are preserved. Partial indexes are usable but do not establish absence of a
+SerialStation page for an unmapped disc.
+
+Unlike the content-ID API, the package pages may require Cloudflare clearance.
+Acquisition accepts `SERIALSTATION_COOKIE` and `SERIALSTATION_USER_AGENT` in its
+environment for an authorized session; credentials are never written into the
+snapshot. Do not put cookie values in shell history or committed files.
+HTTP 403/challenges, malformed pages, and ambiguous package matches fail
+acquisition rather than becoming misses. Failed package acquisition leaves the
+previous snapshot intact; disc acquisition follows the partial-index rules above.
+Matching records evidence at acquisition time, not a guarantee that an external
+page remains available.
+
 Coverage is stated inline in the tree, not on a separate page or panel: one
 right-aligned chip per reference population, on the single group that population
 maps onto — `umd` for Redump, `psn` for NoPayStation. It names the source and the
@@ -538,6 +630,19 @@ files are private, atomically replaced and checksum-checked; missing, corrupt or
 unwritable caches fall back to the authoritative catalog. Invalid catalog data
 still fails validation. A source change during generation prevents publishing that
 generation to disk. This cache is disposable, not another catalog or database.
+
+The live server uses gzip level 1 to reduce preparation latency; static exports
+retain level 9 compression. With downloads enabled on the 2026-09-21 catalog
+(814,263 indexed objects), native filename validation and avoiding redundant
+hash serialization reduced cold preparation from 19.5 to 12.1 seconds and
+disk-cache restart preparation from 9.6 to 5.7 seconds on this Linux workstation.
+The live compressed response grew from 45.0 to 48.3 MB. These measurements include
+the download index but exclude browser download and tree construction.
+
+The lowest-level virtual groups start folded: `umd/game`, `umd/video`,
+`umd/other`, `firmware/nand`, `firmware/update`, and the PSN categories. Their
+parent groups remain expanded. Opening a category reveals source files whose
+extractions still start folded; search and deep links reveal the required ancestors.
 
 The browser constructs the tree in yielding batches, retains compact occurrence
 identities and computes paths only when needed. A Web Worker searches and sorts

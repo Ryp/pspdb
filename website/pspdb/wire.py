@@ -27,11 +27,12 @@ def _key(value):
 class _Pool:
     """Intern repeated values, preserving first-seen order."""
 
-    def __init__(self):
+    def __init__(self, key=_key):
         self.values, self.ids = [], {}
+        self.key = key
 
     def add(self, value):
-        key = _key(value)
+        key = self.key(value)
         identifier = self.ids.get(key)
         if identifier is None:
             identifier = len(self.values)
@@ -42,7 +43,8 @@ class _Pool:
 
 def encode_catalog(data):
     """Encode a catalog snapshot for transport; `decode_catalog` reverses it."""
-    hashes, profiles = _Pool(), _Pool()
+    # Hashes are already immutable strings; JSON-serializing each occurrence is redundant.
+    hashes, profiles = _Pool(key=lambda digest: digest), _Pool()
 
     def encode_file(entry):
         extras = {name: value for name, value in entry.items() if name not in _FILE}
