@@ -18,15 +18,18 @@ def main():
         parser.add_argument("--store", help="Optional object store to serve file downloads from (read-only)")
     parser.add_argument("--redump", help="Optional Redump DAT XML or ZIP for exact ISO matches")
     parser.add_argument("--umdatabase", help="Folder of saved UMDatabase ID.html entry pages for exact SHA-1 matches")
+    parser.add_argument("--nopaystation", help="Folder of NoPayStation TSV snapshots (or one .tsv) for PSN coverage totals")
     args = parser.parse_args(sys.argv[2:] if exporting else None)
     try:
         if exporting:
             from .export import export_site
-            output = export_site(args.catalog, args.output, redump=args.redump, umdatabase=args.umdatabase)
+            output = export_site(args.catalog, args.output, redump=args.redump, umdatabase=args.umdatabase,
+                                 nopaystation=args.nopaystation)
             print(f"Exported PSPDB to {output}")
         else:
             from .server import serve
-            serve(args.catalog, args.port, host=args.host, store=args.store, redump=args.redump, umdatabase=args.umdatabase)
+            serve(args.catalog, args.port, host=args.host, store=args.store, redump=args.redump,
+                  umdatabase=args.umdatabase, nopaystation=args.nopaystation)
     except (ValueError, OSError, UnicodeError) as exc:
         print(f"pspdb-web: {exc}", file=sys.stderr)
         return 1

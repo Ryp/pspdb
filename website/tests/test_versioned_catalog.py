@@ -57,7 +57,7 @@ class VersionedCatalogTests(unittest.TestCase):
             (folder/(digest+'-tree.json')).write_text(json.dumps(tree))
             export_site(root, Path(tmp)/'export')
             data = decode_catalog(json.loads(gzip.decompress((Path(tmp)/'export/catalog.json.gz').read_bytes())))
-            self.assertEqual(data['records']['pkg'], [record])
+            self.assertEqual(data['records']['pkg'], [{**record, 'psn_kind': 'unknown'}])
             self.assertEqual(data['trees']['pkg'][digest], {**tree, 'extraction_kind': 'pkg'})
             self.assertFalse(data['downloads_enabled'])
 

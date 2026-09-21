@@ -5,8 +5,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
-def load_matches(source):
-    """Index exact disc bytes; serials and UMD UIDs are not match keys."""
+def _read_datafile(source):
     source = Path(source)
     if zipfile.is_zipfile(source):
         with zipfile.ZipFile(source) as archive:
@@ -23,6 +22,20 @@ def load_matches(source):
         raise ValueError(f"Invalid Redump XML: {exc}") from exc
     if root.tag != 'datafile':
         raise ValueError('Expected a Redump datafile')
+    return root
+
+
+def _iso_key(rom):
+    sha1 = rom.get('sha1', '').lower()
+    size = int(rom.get('size', '-1'))
+    if size < 0 or not re.fullmatch('[0-9a-f]{40}', sha1):
+        raise ValueError('Invalid ISO size or SHA-1')
+    return sha1, size
+
+
+def load_matches(source):
+    """Index exact disc bytes; serials and UMD UIDs are not match keys."""
+    root = _read_datafile(source)
     matches = {}
     seen = set()
     for game in root.findall('game'):
@@ -32,10 +45,7 @@ def load_matches(source):
         for rom in game.findall('rom'):
             if not rom.get('name', '').lower().endswith('.iso'):
                 continue
-            sha1 = rom.get('sha1', '').lower()
-            size = int(rom.get('size', '-1'))
-            if size < 0 or not re.fullmatch('[0-9a-f]{40}', sha1):
-                raise ValueError('Invalid ISO size or SHA-1')
+            sha1, size = _iso_key(rom)
             disc_id = int(identifier)
             key = disc_id, size, sha1
             if key not in seen:
@@ -44,6 +54,22 @@ def load_matches(source):
     for discs in matches.values():
         discs.sort(key=lambda disc: disc['id'])
     return matches
+
+
+def load_population(source):
+    """Every ISO disc in a Redump DAT, keyed for coverage rather than annotation."""
+    root = _read_datafile(source)
+    header = root.find('header')
+    discs = {}
+    for game in root.findall('game'):
+        category = game.findtext('category') or 'Unknown'
+        for rom in game.findall('rom'):
+            if not rom.get('name', '').lower().endswith('.iso'):
+                continue
+            discs[_iso_key(rom)] = category
+    return {'name': header.findtext('name') if header is not None else None,
+            'version': header.findtext('version') if header is not None else None,
+            'discs': discs}
 
 
 def load_psx_matches(source=None):

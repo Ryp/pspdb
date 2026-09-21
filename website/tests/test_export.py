@@ -25,12 +25,14 @@ class ExportTests(unittest.TestCase):
         for kind, record in {
             'iso': dict(kind='iso', schema_version=1, sha256='a' * 64,
                         sha1='b' * 40, size_bytes=42, metadata={'title': '日本語'}),
+            'pkg': dict(kind='pkg', schema_version=1, sha256='e' * 64, size_bytes=99,
+                        metadata={'content_type': 9, 'content_id': 'HP0000-THEME'}),
             'trees': dict(kind='tree', schema_version=1, sha256='a' * 64,
                           size_bytes=42, extractor={'name': 'iso'}, entries=[]),
         }.items():
             folder = self.catalog / kind
             folder.mkdir(parents=True)
-            (folder / ('a' * 64 + '.json')).write_text(json.dumps(record))
+            (folder / (record['sha256'] + '.json')).write_text(json.dumps(record))
 
     def test_export_is_metadata_only_and_preserves_matches(self):
         dat = self.root / 'redump.dat'
@@ -47,6 +49,9 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(iso['metadata']['title'], '日本語')
         self.assertEqual(iso['redump'], [{'id': 58161, 'name': 'Disc'}])
         self.assertEqual(iso['umdatabase'], [{'id': '1FD42ACC', 'name': 'Disc'}])
+        self.assertEqual(data['records']['pkg'][0]['psn_kind'], 'theme')
+        self.assertEqual(data['coverage']['umd']['total'], 1)
+        self.assertIsNone(data['coverage']['psn'])
         self.assertEqual(data['trees'], catalog_data(self.catalog)['trees'])
         self.assertEqual(before, {p: p.read_bytes() for p in self.catalog.rglob('*.json')})
 

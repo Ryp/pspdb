@@ -56,6 +56,10 @@ class DownloadTests(unittest.TestCase):
         target = self.catalog / 'iso'
         target.mkdir(parents=True)
         (target / ('a' * 64 + '.json')).write_text(json.dumps(dict(kind='iso', schema_version=1, sha256='a' * 64, sha1='b' * 40, size_bytes=42, metadata={})))
+        packages = self.catalog / 'pkg'; packages.mkdir()
+        (packages / ('e' * 64 + '.json')).write_text(json.dumps(dict(kind='pkg', schema_version=1,
+            sha256='e' * 64, size_bytes=99, metadata={'content_type': 7, 'category': 'PP',
+            'boot_category': 'PG', 'boot_file': 'USRDIR/CONTENT/PBOOT.PBP'})))
         trees = self.catalog / 'trees'; trees.mkdir()
         (trees / ('a' * 64 + '.json')).write_text(json.dumps(dict(kind='tree', schema_version=1,
             sha256='a' * 64, size_bytes=42, extractor={'name':'iso'}, entries=entries)))
@@ -105,6 +109,8 @@ class DownloadTests(unittest.TestCase):
         _CatalogCache(self.catalog, self.store, first, None).get()
         changed = decode_catalog(json.loads(_CatalogCache(self.catalog, self.store, second, None).get()['body']))
         self.assertEqual(changed['records']['iso'][0]['redump'], second[('b' * 40, 42)])
+        self.assertEqual(changed['records']['pkg'][0]['psn_kind'], 'patch')
+        self.assertIsNone(changed['coverage'])
         readonly = _CatalogCache(self.catalog, None, second, None).get()
         self.assertFalse(decode_catalog(json.loads(readonly['body']))['downloads_enabled'])
         self.assertIsNone(readonly['objects'])
@@ -413,7 +419,8 @@ class DownloadTests(unittest.TestCase):
         with patch('sys.argv', ['pspdb-web', '--store', str(self.store)]), \
              patch('pspdb.server.serve') as serve:
             self.assertEqual(main(), 0)
-            serve.assert_called_once_with('catalog', 8000, host='127.0.0.1', store=str(self.store), redump=None, umdatabase=None)
+            serve.assert_called_once_with('catalog', 8000, host='127.0.0.1', store=str(self.store),
+                                          redump=None, umdatabase=None, nopaystation=None)
 
 
 if __name__ == '__main__':

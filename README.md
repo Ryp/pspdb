@@ -428,13 +428,32 @@ Clearing the search removes `q` while retaining the selected tree path.
 
 Open **http://localhost:8000**, or the host's LAN address. Omit `--store` to hide
 downloads; omit `--host` to bind only to localhost. Add `--redump /path/to/dat.zip`
-(or an XML DAT) to link exact ISO SHA-1 + size matches to Redump. The DAT is
+(or an XML DAT) to link exact ISO SHA-1 + size matches to Redump and to supply the
+UMD population denominator of the coverage chrome. The DAT is
 loaded at startup; ingest records hashes without depending on Redump.
 Store availability checks have a 15-second deadline per batch. A stalled request
 shows **Check failed**, not **Missing**, and does not block later batches. Reload
 the page to retry failed checks after restoring access to the store.
 Add `--umdatabase /path/to/pages` for exact SHA-1 links from saved UMDatabase
 entry pages named `ID.html` (for example, `E39CFE68.html`).
+Add `--nopaystation /path/to/snapshots` (a folder of NoPayStation TSV snapshots, or
+one `.tsv`) for the PSN population denominator. Coverage totals come only from the
+snapshots supplied on the command line; nothing is fetched.
+
+Coverage is stated inline in the tree, not on a separate page or panel: one
+right-aligned chip per reference population, on the single group that population
+maps onto — `umd` for Redump, `psn` for NoPayStation. It names the source and the
+held share, such as `REDUMP 49.3% · 1,749/3,545`, and links to that source's own
+coverage view: [Redump's PSP disc list](http://redump.org/discs/system/psp/) and
+the [NoPayStation home page](https://nopaystation.com/), which draws its own
+per-list coverage bars.
+Clicking it neither selects nor expands the row. Hovering gives the full sentence
+and, for UMD, the supplied Redump snapshot name and version. Subgroups such as
+`umd/game` or `psn/patch` carry nothing: one global count per source. Omitting a
+flag omits that source's chip. The full `coverage` payload (per-category and
+per-list totals, unmatched local counts and local/reference kind conflicts) stays
+in the API and export for analysis; the browser header shows only the total file
+count.
 UMD video labels use the SFO title when available, otherwise the observed disc
 identifier. Missing optional SFO metadata does not prevent browsing its inventory.
 The API and exported `catalog.json.gz` keep inventories in `trees[kind][sha256]`.
@@ -540,7 +559,8 @@ warm requests; it does not remove the initial browser download or indexing cost.
 ```sh
 uv run --locked pspdb-web export --catalog catalog --output dist/site \
   --redump /path/to/redump.dat.zip \
-  --umdatabase /path/to/umdatabase/pages
+  --umdatabase /path/to/umdatabase/pages \
+  --nopaystation /path/to/nopaystation/snapshots
 uv run --locked python -m http.server --directory dist 8001
 ```
 
@@ -548,7 +568,9 @@ Open `http://localhost:8001/site/`. The output directory must be empty. Supply t
 reference inputs on **every publication**: export does not discover or fetch them
 automatically, and omitting a flag omits that source's UMD associations. Redump
 matches require exact SHA-1 and size; UMDatabase matches require exact disc SHA-1.
-Coverage depends on the supplied snapshots. Bundled PSX Redump associations are
+Coverage totals come only from the supplied snapshots: `--redump` provides the UMD
+denominator alongside its exact ISO links, `--nopaystation` the PSN denominator, and
+omitting one omits that source's inline group chips. Bundled PSX Redump associations are
 included separately. Export leaves ingested records unchanged and publishes only
 browser assets and metadata; Store/downloads are disabled. Relative asset URLs
 support repository paths such as `/pspdb/`.

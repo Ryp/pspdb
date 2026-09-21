@@ -16,6 +16,8 @@ import zlib
 from time import monotonic
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from . import coverage
+from .psn import package_kind
 from .wire import decode_catalog, encode_catalog
 
 
@@ -56,7 +58,7 @@ def annotate_stale_extractions(trees):
             annotate(tree, kind)
 
 
-def catalog_data(catalog, redump=None, umdatabase=None):
+def catalog_data(catalog, redump=None, umdatabase=None, redump_population=None, nopaystation=None):
     records, trees, selected = {}, {}, {}
     legacy_trees, legacy_kinds, sizes = {}, {}, {}
     for directory in sorted(catalog.iterdir()):
@@ -116,12 +118,15 @@ def catalog_data(catalog, redump=None, umdatabase=None):
                 matches = umdatabase.get(record.get('sha1'), [])
                 if matches:
                     record['umdatabase'] = matches
+        elif kind == 'pkg':
+            record['psn_kind'] = package_kind(record.get('metadata'))
         records.setdefault(kind, []).append(record)
     derived_trees(trees)
     annotate_stale_extractions(trees)
     from .redump import load_psx_matches, annotate_file_matches
     annotate_file_matches(trees, load_psx_matches())
-    return {'records': records, 'trees': trees}
+    return {'records': records, 'trees': trees,
+            'coverage': coverage.build(records, redump_population, nopaystation)}
 
 
 def derived_trees(trees):
@@ -249,6 +254,14 @@ def catalog_signature(catalog):
     return tuple(entries)
 
 
+def _population_digest(population):
+    """Reference populations are large and may hold tuple keys; identify them by digest."""
+    if population is None:
+        return None
+    encoded = json.dumps(population, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 class _CatalogCache:
     """Single-flight snapshots, checked at most once per five seconds.
 
@@ -264,9 +277,10 @@ class _CatalogCache:
     refresh_seconds = 5
     max_stale_seconds = 30
 
-    def __init__(self, catalog, store, redump, umdatabase):
+    def __init__(self, catalog, store, redump, umdatabase, redump_population=None, nopaystation=None):
         self.catalog, self.store = catalog, store
         self.redump, self.umdatabase = redump, umdatabase
+        self.redump_population, self.nopaystation = redump_population, nopaystation
         self.condition = threading.Condition()
         self.payload = None
         self.checked_at = self.next_check = 0
@@ -278,13 +292,19 @@ class _CatalogCache:
         identity = str(Path(catalog).resolve()) + ":" + str(store is not None)
         filename = hashlib.sha256(identity.encode()).hexdigest() + ".snapshot"
         self.cache_path = Path(cache_root).expanduser() / filename if cache_root else None
-        implementation = hashlib.sha256(
-            Path(__file__).read_bytes() + Path(__file__).with_name("redump.py").read_bytes()
-            + Path(__file__).with_name("wire.py").read_bytes()
-        ).hexdigest()
+        implementation = hashlib.sha256(b"".join(
+            Path(__file__).with_name(name).read_bytes()
+            for name in ("server.py", "redump.py", "umdatabase.py", "wire.py",
+                         "psn.py", "coverage.py", "nopaystation.py")
+        )).hexdigest()
         self.cache_configuration = [
             implementation, store is not None,
             sorted((redump or {}).items()), sorted((umdatabase or {}).items()),
+            _population_digest(redump_population and
+                               (sorted([sha1, size, category]
+                                       for (sha1, size), category in redump_population['discs'].items())
+                                + [redump_population['name'], redump_population['version']])),
+            _population_digest(nopaystation),
         ]
 
     def _disk_key(self, signature):
@@ -345,7 +365,8 @@ class _CatalogCache:
             if payload is None or payload["signature"] != signature:
                 payload = self._load_disk(signature)
                 if payload is None:
-                    data = catalog_data(self.catalog, self.redump, self.umdatabase)
+                    data = catalog_data(self.catalog, self.redump, self.umdatabase,
+                                        self.redump_population, self.nopaystation)
                     data["downloads_enabled"] = self.store is not None
                     body = json.dumps(encode_catalog(data), ensure_ascii=False,
                                       separators=(",", ":")).encode("utf-8")
@@ -398,11 +419,11 @@ class _CatalogCache:
             return self.payload
 
 
-def handler_for(catalog, store=None, redump=None, umdatabase=None):
+def handler_for(catalog, store=None, redump=None, umdatabase=None, redump_population=None, nopaystation=None):
     assets = Path(__file__).with_name("web")
     catalog = Path(catalog)
     store = Path(store).resolve() if store is not None else None
-    cache = _CatalogCache(catalog, store, redump, umdatabase)
+    cache = _CatalogCache(catalog, store, redump, umdatabase, redump_population, nopaystation)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -515,7 +536,7 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None):
     return Handler
 
 
-def serve(catalog, port=8000, host="127.0.0.1", store=None, redump=None, umdatabase=None):
+def serve(catalog, port=8000, host="127.0.0.1", store=None, redump=None, umdatabase=None, nopaystation=None):
     catalog = Path(catalog).resolve()
     if not catalog.is_dir():
         raise ValueError(f"Catalog directory does not exist: {catalog}")
@@ -523,11 +544,15 @@ def serve(catalog, port=8000, host="127.0.0.1", store=None, redump=None, umdatab
         store = Path(store).expanduser().resolve()
         if not store.is_dir():
             raise ValueError(f"Object store directory does not exist: {store}")
-    from .redump import load_matches
+    from .redump import load_matches, load_population
     matches = load_matches(redump) if redump is not None else None
+    population = load_population(redump) if redump is not None else None
     from .umdatabase import load_matches as load_umdatabase
     umd_matches = load_umdatabase(umdatabase) if umdatabase is not None else None
-    with ThreadingHTTPServer((host, port), handler_for(catalog, store, matches, umd_matches)) as server:
+    from .nopaystation import load_population as load_nopaystation
+    nps = load_nopaystation(nopaystation) if nopaystation is not None else None
+    handler = handler_for(catalog, store, matches, umd_matches, population, nps)
+    with ThreadingHTTPServer((host, port), handler) as server:
         print(f"Browse PSPDB at http://{host}:{server.server_port} (Ctrl+C to stop)", flush=True)
         try:
             server.serve_forever()

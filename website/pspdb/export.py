@@ -6,11 +6,12 @@ import shutil
 
 from .server import catalog_data
 from .wire import encode_catalog
-from .redump import load_matches as load_redump
+from .redump import load_matches as load_redump, load_population as load_redump_population
 from .umdatabase import load_matches as load_umdatabase
+from .nopaystation import load_population as load_nopaystation
 
 
-def export_site(catalog, output, redump=None, umdatabase=None):
+def export_site(catalog, output, redump=None, umdatabase=None, nopaystation=None):
     catalog = Path(catalog).expanduser().resolve()
     output = Path(output).expanduser().resolve()
     if output == catalog or output in catalog.parents or catalog in output.parents:
@@ -19,7 +20,9 @@ def export_site(catalog, output, redump=None, umdatabase=None):
         raise ValueError("Export directory must be empty")
     data = catalog_data(catalog,
                         load_redump(redump) if redump is not None else None,
-                        load_umdatabase(umdatabase) if umdatabase is not None else None)
+                        load_umdatabase(umdatabase) if umdatabase is not None else None,
+                        load_redump_population(redump) if redump is not None else None,
+                        load_nopaystation(nopaystation) if nopaystation is not None else None)
     data['downloads_enabled'] = False
     body = json.dumps(encode_catalog(data), ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     assets = Path(__file__).with_name('web')
