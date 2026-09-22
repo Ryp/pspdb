@@ -1,0 +1,94 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "2eef5912b0ec02ffbb9848121b6c7d1533ad26b3dde01f5de7c28eb299adb46b",
+  "size_bytes": 178804784,
+  "extractor": {
+    "name": "pspdb-ingest",
+    "version": "6",
+    "options": []
+  },
+  "entries": [
+    {
+      "path": "ICON0.PNG",
+      "type": "file",
+      "size_bytes": 51855,
+      "sha256": "973857cfc4a1732c641554713c5fa0c96aebe4132230a31559cd9df6d5fa68c8"
+    },
+    {
+      "path": "PARAM.SFO",
+      "type": "file",
+      "size_bytes": 408,
+      "sha256": "25a7a28a26c13ae5e9ea8289fe889aa5dcd9e777356f7ca6f440a1afe44c9414"
+    },
+    {
+      "path": "PIC0.PNG",
+      "type": "file",
+      "size_bytes": 377534,
+      "sha256": "e27651ee592b2c0d0c102c1db2636b60b84439901705f7a8b8c9c18a64075d9b"
+    },
+    {
+      "path": "PIC2.PNG",
+      "type": "file",
+      "size_bytes": 90323,
+      "sha256": "b3da8b42dc1d3a60020f0a12ffc911bcc5df919defa9844f6d71d68db247a976"
+    },
+    {
+      "path": "PS3LOGO.DAT",
+      "type": "file",
+      "size_bytes": 5120,
+      "sha256": "e08430957ac3f4ee719dc2ed04d3443c395dd3b997d8f34f68a1b5c37d92f425"
+    },
+    {
+      "path": "USRDIR",
+      "type": "directory"
+    },
+    {
+      "path": "USRDIR/CONTENT",
+      "type": "directory"
+    },
+    {
+      "path": "USRDIR/CONTENT/DOCINFO.EDAT",
+      "type": "file",
+      "size_bytes": 320,
+      "sha256": "a3c928ba19f2b596059c93e52ea43ba20ab8bb9a5729d96e0c3c2a4af85a0aee"
+    },
+    {
+      "path": "USRDIR/CONTENT/DOCUMENT.DAT",
+      "type": "file",
+      "size_bytes": 559896,
+      "sha256": "4d46fbfae531a12b16e3ff025f8c15b432add171b7119d2d3933d35407b4f3aa",
+      "extraction": {
+        "sha256": "4d46fbfae531a12b16e3ff025f8c15b432add171b7119d2d3933d35407b4f3aa",
+        "size_bytes": 559896,
+        "extractor": {
+          "name": "pspdb-ingest",
+          "version": "3",
+          "options": []
+        },
+        "name_rule": "identity",
+        "entries": [],
+        "error": "InvalidDocinfo",
+        "dependencies": [
+          {
+            "path": "USRDIR/CONTENT/DOCINFO.EDAT",
+            "sha256": "a3c928ba19f2b596059c93e52ea43ba20ab8bb9a5729d96e0c3c2a4af85a0aee",
+            "size_bytes": 320
+          }
+        ]
+      }
+    },
+    {
+      "path": "USRDIR/CONTENT/EBOOT.PBP",
+      "type": "file",
+      "size_bytes": 177716736,
+      "sha256": "c07da02d67a67a3aa21d3ee5f5f7bbcc9aa6c336051524c26f59762df8ae2853"
+    },
+    {
+      "path": "USRDIR/ISO.BIN.EDAT",
+      "type": "file",
+      "size_bytes": 272,
+      "sha256": "bd8af55d9aeebfab4dd2d27a78b073168c97c1cdff33503e02e2343f16985449"
+    }
+  ]
+}

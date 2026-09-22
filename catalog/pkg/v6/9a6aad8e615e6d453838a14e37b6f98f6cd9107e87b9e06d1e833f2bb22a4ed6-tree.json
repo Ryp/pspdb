@@ -1,0 +1,112 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "9a6aad8e615e6d453838a14e37b6f98f6cd9107e87b9e06d1e833f2bb22a4ed6",
+  "size_bytes": 220734496,
+  "extractor": {
+    "name": "pspdb-ingest",
+    "version": "6",
+    "options": []
+  },
+  "entries": [
+    {
+      "path": "ICON0.PNG",
+      "type": "file",
+      "size_bytes": 47399,
+      "sha256": "a7b17c4fb35c26abfafb0193526b879c0abb7d7ad4f78a6cfc56354b730926d3"
+    },
+    {
+      "path": "ICON0_02.PNG",
+      "type": "file",
+      "size_bytes": 47418,
+      "sha256": "6aa78d490740555a0b0b44eb18c6394535b20362630f99abb31ea2bd18cfaba5"
+    },
+    {
+      "path": "PARAM.SFO",
+      "type": "file",
+      "size_bytes": 408,
+      "sha256": "64398089040457e80ee6315dc2aa7edf89898f6d4525b8ee10b342479d27feac"
+    },
+    {
+      "path": "PIC0.PNG",
+      "type": "file",
+      "size_bytes": 233937,
+      "sha256": "730773def284723eceb770d53ae808daadbf2d18704f85acdb4acb08e7821c78"
+    },
+    {
+      "path": "PIC0_02.PNG",
+      "type": "file",
+      "size_bytes": 259450,
+      "sha256": "0fbeb27f2fb5cb83e9ee05e1f645315b6697bd13ab2cf7869de69edd643b4035"
+    },
+    {
+      "path": "PIC2.PNG",
+      "type": "file",
+      "size_bytes": 91149,
+      "sha256": "3c23ef3fd08d18117971d28630f47fd0a7c139eee2530c2960de5aee46ce3baf"
+    },
+    {
+      "path": "PIC2_02.PNG",
+      "type": "file",
+      "size_bytes": 98541,
+      "sha256": "c77c5cff4a033213c1bd12ae9e605aedf94a51b1cb09825bf9df6f8de08a3634"
+    },
+    {
+      "path": "PS3LOGO.DAT",
+      "type": "file",
+      "size_bytes": 5120,
+      "sha256": "e08430957ac3f4ee719dc2ed04d3443c395dd3b997d8f34f68a1b5c37d92f425"
+    },
+    {
+      "path": "USRDIR",
+      "type": "directory"
+    },
+    {
+      "path": "USRDIR/CONTENT",
+      "type": "directory"
+    },
+    {
+      "path": "USRDIR/CONTENT/DOCINFO.EDAT",
+      "type": "file",
+      "size_bytes": 320,
+      "sha256": "cf10edf6390822d3d2ab66f05e7d752f7e07d558f0c0b10194c8225f91cea5b5"
+    },
+    {
+      "path": "USRDIR/CONTENT/DOCUMENT.DAT",
+      "type": "file",
+      "size_bytes": 2717968,
+      "sha256": "0f3428b1202f58bbe927c81a2a80fe44a0171515601107e00b2797ad5b498ebe",
+      "extraction": {
+        "sha256": "0f3428b1202f58bbe927c81a2a80fe44a0171515601107e00b2797ad5b498ebe",
+        "size_bytes": 2717968,
+        "extractor": {
+          "name": "pspdb-ingest",
+          "version": "3",
+          "options": []
+        },
+        "name_rule": "identity",
+        "entries": [],
+        "error": "InvalidDocinfo",
+        "dependencies": [
+          {
+            "path": "USRDIR/CONTENT/DOCINFO.EDAT",
+            "sha256": "cf10edf6390822d3d2ab66f05e7d752f7e07d558f0c0b10194c8225f91cea5b5",
+            "size_bytes": 320
+          }
+        ]
+      }
+    },
+    {
+      "path": "USRDIR/CONTENT/EBOOT.PBP",
+      "type": "file",
+      "size_bytes": 217230032,
+      "sha256": "9032dab346fc5fd72fcb66df6f43780ed7e08dc6e1c00c1449df4e41e58a486c"
+    },
+    {
+      "path": "USRDIR/ISO.BIN.EDAT",
+      "type": "file",
+      "size_bytes": 272,
+      "sha256": "88d5e907f4b2b8175cf90010fc4ffb078561acb220bce38c0fb3944fcda24ce8"
+    }
+  ]
+}

@@ -20,13 +20,54 @@
         "sha256": "9bdfb2966e0cb9e1c572bdf1fd5105dddffe8b06e8e60ef7755483327e05342e",
         "size_bytes": 70978115,
         "extractor": {
-          "name": "pspdb-ingest",
+          "name": "PSXtract-2",
+          "sha256": "ed4bf3de8502c4097eddbba0f6ace5f5bdd6e4ffc0b8a19ecd79302fe55d7b9e",
           "version": "2",
-          "options": []
+          "options": [
+            "<parent.pbp>",
+            "reconstructed-disc",
+            "native-linux"
+          ]
         },
         "name_rule": "identity",
-        "entries": [],
-        "error": "ExtractionFailed"
+        "entries": [
+          {
+            "path": "ISO_HEADER.BIN",
+            "type": "file",
+            "size_bytes": 735360,
+            "sha256": "7059ea8370f6b55573f4e29aeb60064efcbcd7d459a501f8f58f07c3817f6ff8"
+          },
+          {
+            "path": "OVERDUMP.BIN",
+            "type": "file",
+            "size_bytes": 413936,
+            "sha256": "d2be0e640afda65aa2eabecef7b2b7baba2609b1e94d3d3c71a7a80a28dfccda"
+          },
+          {
+            "path": "SPECIAL_DATA.BIN",
+            "type": "file",
+            "size_bytes": 5378,
+            "sha256": "397ea29e256009aecf92250fb2fa8d1d97eb7bd2af4888be9d2da9c39b70521b"
+          },
+          {
+            "path": "STARTDAT.BIN",
+            "type": "file",
+            "size_bytes": 6243,
+            "sha256": "46e24d330bb61da299f1650802dd848ae1690e7a6363a2be553197536aa99c8d"
+          },
+          {
+            "path": "TRASH.BIN",
+            "type": "file",
+            "size_bytes": 16,
+            "sha256": "1a66292b12c4978cff72ef2395a03fbed8fc525ebdfeb19b1fbf609111587bc1"
+          },
+          {
+            "path": "disc.bin",
+            "type": "file",
+            "size_bytes": 440618976,
+            "sha256": "3b2244cccc714867ea966fd251e6bf9f714d9f6d19ff3065b658d0cee00dfaf3"
+          }
+        ]
       }
     },
     {

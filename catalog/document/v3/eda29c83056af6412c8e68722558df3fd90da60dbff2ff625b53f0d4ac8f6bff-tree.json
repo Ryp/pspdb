@@ -4,10 +4,136 @@
   "sha256": "eda29c83056af6412c8e68722558df3fd90da60dbff2ff625b53f0d4ac8f6bff",
   "size_bytes": 1267880,
   "extractor": {
-    "name": "pspdb-ingest",
+    "name": "PSP-DOCUMENT.DAT",
+    "sha256": "a4d20f1b9f921cdc65d3b9b98b03bfa1e45cc61ec1dde8f72f8fa4f639c81df5",
     "version": "3",
-    "options": []
+    "options": [
+      "upstream:8c95b37949c9a9ca183b7fd69c85d2e2dad7216d",
+      "fixed-key-99-slot-pages",
+      "explicit-docinfo-304-byte-authenticated-8-byte-key",
+      "platform-ordinals",
+      "page-files-only:1",
+      "byte-input-page-callbacks:1",
+      "pycryptodome:3.23.0",
+      "Pillow:12.3.0"
+    ]
   },
-  "entries": [],
-  "error": "ExtractionFailed"
+  "entries": [
+    {
+      "path": "ps3",
+      "type": "directory"
+    },
+    {
+      "path": "ps3/001.png",
+      "type": "file",
+      "size_bytes": 20160,
+      "sha256": "f1a85be572a377c163f0fe545c3a97c88e407a2ed22393612915ed821b6b5763"
+    },
+    {
+      "path": "ps3/002.png",
+      "type": "file",
+      "size_bytes": 26983,
+      "sha256": "f35c2fbbd1699439b7496bdcb07ec60781d24d96431687cf27f33188d3c10b45"
+    },
+    {
+      "path": "ps3/003.png",
+      "type": "file",
+      "size_bytes": 27778,
+      "sha256": "75f14e59d97aebd32dadd053015a1ea6dbe7d71bd0f32cc2f01d75322fc161a1"
+    },
+    {
+      "path": "ps3/004.png",
+      "type": "file",
+      "size_bytes": 77446,
+      "sha256": "6644cb3de325eff6a91a81cb1f2e36ab85ac589bede53e28d5b1d68d5cc6ba21"
+    },
+    {
+      "path": "ps3/005.png",
+      "type": "file",
+      "size_bytes": 225632,
+      "sha256": "0218ae28ef365088a1674508007db5a02397fee97331f40dd70815f2fa4743d6"
+    },
+    {
+      "path": "ps3/006.png",
+      "type": "file",
+      "size_bytes": 202018,
+      "sha256": "3fa75b20c39ec9c5a94c45d7a8ac97c9d2249e318c6fe55fb26e3f9ece9af1a5"
+    },
+    {
+      "path": "ps3/007.png",
+      "type": "file",
+      "size_bytes": 197288,
+      "sha256": "68fd0fe1a7b81d048e09d1fd0957db918f0326627d7b244d51dcfe40f39592bc"
+    },
+    {
+      "path": "ps3/008.png",
+      "type": "file",
+      "size_bytes": 239404,
+      "sha256": "18e684df373d5898ee5fa189c474ff67f4e65b6a2d33a83884f6f37d620b088c"
+    },
+    {
+      "path": "ps3/009.png",
+      "type": "file",
+      "size_bytes": 237200,
+      "sha256": "d1b78a0aada56d43f99e21b3008d3bf16412ac25f4a542d62ccc44dfe756dee5"
+    },
+    {
+      "path": "psp",
+      "type": "directory"
+    },
+    {
+      "path": "psp/001.png",
+      "type": "file",
+      "size_bytes": 20160,
+      "sha256": "f1a85be572a377c163f0fe545c3a97c88e407a2ed22393612915ed821b6b5763"
+    },
+    {
+      "path": "psp/002.png",
+      "type": "file",
+      "size_bytes": 26983,
+      "sha256": "f35c2fbbd1699439b7496bdcb07ec60781d24d96431687cf27f33188d3c10b45"
+    },
+    {
+      "path": "psp/003.png",
+      "type": "file",
+      "size_bytes": 27778,
+      "sha256": "75f14e59d97aebd32dadd053015a1ea6dbe7d71bd0f32cc2f01d75322fc161a1"
+    },
+    {
+      "path": "psp/004.png",
+      "type": "file",
+      "size_bytes": 77446,
+      "sha256": "6644cb3de325eff6a91a81cb1f2e36ab85ac589bede53e28d5b1d68d5cc6ba21"
+    },
+    {
+      "path": "psp/005.png",
+      "type": "file",
+      "size_bytes": 225632,
+      "sha256": "0218ae28ef365088a1674508007db5a02397fee97331f40dd70815f2fa4743d6"
+    },
+    {
+      "path": "psp/006.png",
+      "type": "file",
+      "size_bytes": 202018,
+      "sha256": "3fa75b20c39ec9c5a94c45d7a8ac97c9d2249e318c6fe55fb26e3f9ece9af1a5"
+    },
+    {
+      "path": "psp/007.png",
+      "type": "file",
+      "size_bytes": 197288,
+      "sha256": "68fd0fe1a7b81d048e09d1fd0957db918f0326627d7b244d51dcfe40f39592bc"
+    },
+    {
+      "path": "psp/008.png",
+      "type": "file",
+      "size_bytes": 239404,
+      "sha256": "18e684df373d5898ee5fa189c474ff67f4e65b6a2d33a83884f6f37d620b088c"
+    },
+    {
+      "path": "psp/009.png",
+      "type": "file",
+      "size_bytes": 237200,
+      "sha256": "d1b78a0aada56d43f99e21b3008d3bf16412ac25f4a542d62ccc44dfe756dee5"
+    }
+  ]
 }

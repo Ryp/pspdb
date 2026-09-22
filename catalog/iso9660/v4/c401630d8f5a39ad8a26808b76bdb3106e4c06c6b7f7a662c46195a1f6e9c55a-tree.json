@@ -1,0 +1,823 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "c401630d8f5a39ad8a26808b76bdb3106e4c06c6b7f7a662c46195a1f6e9c55a",
+  "size_bytes": 166395904,
+  "extractor": {
+    "name": "pspdb-ingest",
+    "version": "4",
+    "options": []
+  },
+  "entries": [
+    {
+      "path": "PSP_GAME",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/ICON0.PNG",
+      "type": "file",
+      "size_bytes": 28494,
+      "sha256": "beb225e9bb021edba4cafcc04eef12f23e6cb12607448ca432f06128a54942a4"
+    },
+    {
+      "path": "PSP_GAME/PARAM.SFO",
+      "type": "file",
+      "size_bytes": 560,
+      "sha256": "00d8e89fdda90b7a99dd4655eff7cd755f797b08ed21ccf721fe1c6683ee0699"
+    },
+    {
+      "path": "PSP_GAME/PIC1.PNG",
+      "type": "file",
+      "size_bytes": 159550,
+      "sha256": "b8cd05a52d9a9574074a6204019f6d1511686531f25bcf496f3e7356c159a34a"
+    },
+    {
+      "path": "PSP_GAME/SND0.AT3",
+      "type": "file",
+      "size_bytes": 131012,
+      "sha256": "58102870e3c3c6a3ced8b8728fa0f657021ba3f1cb6e29479c26153ce4b56896"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/BOOT.BIN",
+      "type": "file",
+      "size_bytes": 981776,
+      "sha256": "322ed3dbdd6e30f49147b5dbb0b565ab1c7a94555f7421e3a92ace6bd304f4ec"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/EBOOT.BIN",
+      "type": "file",
+      "size_bytes": 982112,
+      "sha256": "40833048bdf8584754fa37928c799f4b2f9777ef71667e1e17314b4f11c353d4"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/OPNSSMP.BIN",
+      "type": "file",
+      "size_bytes": 1048576,
+      "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/DATA.BIN",
+      "type": "file",
+      "size_bytes": 99614720,
+      "sha256": "907246287dc7f85bb214dcfe0c728fb3cd24ca6f9b193c96c6f7668433be91f5"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/EBOOT.BIN",
+      "type": "file",
+      "size_bytes": 8388608,
+      "sha256": "2daeb1f36095b44b318410b3f4e8b5d989dcc7bb023d1426c492dab0a3053e74"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/PARAM.SFO",
+      "type": "file",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "PSP_GAME/USRDIR",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/karate",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/karate/sound",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/karate/sound/bgm08.sgb",
+      "type": "file",
+      "size_bytes": 540864,
+      "sha256": "116c82aea655f8024b534c37a341d944ad4c41990ae487e7d9abb52e9568f06f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/kick",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/kick/sound",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/kick/sound/bgm15.sgb",
+      "type": "file",
+      "size_bytes": 641248,
+      "sha256": "07fd3f51198554efc99ac3b51ac6ef2b7eef5c30cd4e817c02706e737a2c2418"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/kick/sound/bgm15_ex.sgb",
+      "type": "file",
+      "size_bytes": 140800,
+      "sha256": "279ca9c494d86342c66f3bc4624bf1414c6370c022ae32633bdb8fe5dee3f623"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu/sound",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu/sound/bgm_menu_a.sgb",
+      "type": "file",
+      "size_bytes": 398352,
+      "sha256": "fd9215691ef6c83b80f718a859c1024c5c92077504cadcf4a2695452f9e20f2b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu/sound/bgm_menu_b.sgb",
+      "type": "file",
+      "size_bytes": 398352,
+      "sha256": "a73e61e2eec3a8db9fafd5d74b6b9a1b5a58b6993f2d0e3075bffcc4e2b66a6f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu/sound/bgm_result_g.sgb",
+      "type": "file",
+      "size_bytes": 77632,
+      "sha256": "e35038ec27a412899e46c4d8abd0cec1cb0406ad0f054b87e24cadec213b5670"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu/sound/bgm_title.sgb",
+      "type": "file",
+      "size_bytes": 497248,
+      "sha256": "e496263abbc323ec659c08b3ab5e3b429652ef752bd56585dd87490347326afc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu/sound/bgm_title_g.sgb",
+      "type": "file",
+      "size_bytes": 96048,
+      "sha256": "d913edefed8af4bf73f57ff5a1170e9270574fcec23a2146d8a2b8244f21b9b7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu/sound/bgm_title_g2.sgb",
+      "type": "file",
+      "size_bytes": 60704,
+      "sha256": "b7ed8ef2986aff1846ab1aa64d12d38fab57e01b20eb981c63b69da23f725aef"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/menu/sound/bgm_trial_a.sgb",
+      "type": "file",
+      "size_bytes": 68224,
+      "sha256": "a17863c9626bab024db85f1c0299bb38a213aa4d8e3380be1e46549715b157ab"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/mowing",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/mowing/sound",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/data/mowing/sound/bgm13.sgb",
+      "type": "file",
+      "size_bytes": 629600,
+      "sha256": "aa21df6944c7091ac41e1824cbf014924150a8374ef7f5ef7f059d96bfe7d036"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libfont.prx",
+      "type": "file",
+      "size_bytes": 20688,
+      "sha256": "573baa3271cdc03bcef69d15c555d80c52d72593011d86a57d8fda9d4c73673d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libpsmfplayer.prx",
+      "type": "file",
+      "size_bytes": 26192,
+      "sha256": "14d8bdf9ab935318b5e3a4cb64eb2630ea79c13a69d2af7bcf1be1c4f7e046d8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/psmf.prx",
+      "type": "file",
+      "size_bytes": 6832,
+      "sha256": "192024a5875e8f60a69f19028453a8e2cd73458256af43f494b2e544085c1f9b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/movie",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/movie/mv00us.pmf",
+      "type": "file",
+      "size_bytes": 4046848,
+      "sha256": "6668cf8941657fb4e28e64f726c5f88c1034e8599485332ff8f54a467736f1fb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/movie/mv04.pmf",
+      "type": "file",
+      "size_bytes": 1757184,
+      "sha256": "af6332a9f10d722efd29b19da536433e846e514c9e59d038b2616b2dcc4f37c4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/movie/mv09.pmf",
+      "type": "file",
+      "size_bytes": 1773568,
+      "sha256": "932a1d76c543b0df1f79aa99250431d02246c5f008588b7388cb70f82019769c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/movie/mv10.pmf",
+      "type": "file",
+      "size_bytes": 1818624,
+      "sha256": "acb29100cd3dcea3c1c0959d141696395c878e25e8fb5482d4f4732c38afbd96"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/umd.ufl",
+      "type": "file",
+      "size_bytes": 17837,
+      "sha256": "49c4f5b6ec8a1bae3501d9ecc7699cdfa1a50be369793ce68317ff1e05eea6b4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/us_karate.ovl",
+      "type": "file",
+      "size_bytes": 248960,
+      "sha256": "71d0325ae772b5afa4b7caed0989239bfa564b0ee557707b3d3af738555325d0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/us_kick.ovl",
+      "type": "file",
+      "size_bytes": 415232,
+      "sha256": "42f0017052d161d4f10b0367bcadbed60dac690d99bb513921e0a3cb319f5637"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/us_mowing.ovl",
+      "type": "file",
+      "size_bytes": 146944,
+      "sha256": "c607b39600e8c6909f05f5cc2c3697409148c2ff3a0899c633c9220be85ac0c3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/common",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/common/loading.xb",
+      "type": "file",
+      "size_bytes": 15874,
+      "sha256": "c5b59b02c6c635fb99416caba78f81a2144e6291b6ba200320ac043fb0bc6e86"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/010_csv.xb",
+      "type": "file",
+      "size_bytes": 3564,
+      "sha256": "f428e255cbaa4c1cb9a7e0e2bcf08af9d189a3b3cbde728853c0a7598531750c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/020_karate.xb0",
+      "type": "file",
+      "size_bytes": 386950,
+      "sha256": "a7ba4b579b6d7c9785a000d814148e3cc070c6e43db8f808f6be2ae7be57a08d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/030_obj_data.xb0",
+      "type": "file",
+      "size_bytes": 368000,
+      "sha256": "c10742a37a354dff67a7289418e28bc623a7c224a81d206197fdab2aea175c96"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/031_obj_data.xb0",
+      "type": "file",
+      "size_bytes": 398748,
+      "sha256": "9c54c81076b4015e3d61fa947da6084ffbb14bf6730724f35ccd4fd1e7466d22"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/032_obj_data.xb0",
+      "type": "file",
+      "size_bytes": 925274,
+      "sha256": "9a2e021dbcaad29dd70007d341c427a40bbf862dcaa7aa5fef3d64606ecd40d5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/033_obj_data.xb0",
+      "type": "file",
+      "size_bytes": 802874,
+      "sha256": "38d3d5c3c897b2b1b1cdf47e23cba8a98a8a5c003518c7923f44de7fe02dec21"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/035_obj_data.xb0",
+      "type": "file",
+      "size_bytes": 319894,
+      "sha256": "85f6f33b7bbecec3fc3bb40604346b98ad86225dedbe92755736cf2167675303"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/040_sound.xb",
+      "type": "file",
+      "size_bytes": 1604880,
+      "sha256": "aec187de09db34dc94fb35c718786e47f1164d1a1a9d3722d0af2aecb5097de2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/040_sound.xb0",
+      "type": "file",
+      "size_bytes": 1587578,
+      "sha256": "75d2bc77ad7795928182533df4d0350fa5ce2f319f515a16ebd02d22fd0c8c63"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/045_menu.xb0",
+      "type": "file",
+      "size_bytes": 136684,
+      "sha256": "937609942d8df3b572d487505df80d59e37da888869390fc51733adaa60b97dc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/050_stage_00.xb0",
+      "type": "file",
+      "size_bytes": 164342,
+      "sha256": "4b373f5b7a35e4fb86adedf40118020b2d47e86a0a0c574b2cff0499eceb6181"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/050_stage_01.xb",
+      "type": "file",
+      "size_bytes": 275778,
+      "sha256": "717dda6ac2e70bb2e7da7220c74bbfdc453b104a6564829ab4a1684f802ddf4a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/050_stage_02.xb",
+      "type": "file",
+      "size_bytes": 337942,
+      "sha256": "7ecd3b46a70dc8d9ef2a10ef153f93317da252fa793adff12ca85df9161e8b62"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/060_pc_00.xb",
+      "type": "file",
+      "size_bytes": 850178,
+      "sha256": "db093c667bb9f965003f0e2a85ee087b4641bd25089a01f9af7e73d0fc7b2631"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/060_pc_01.xb",
+      "type": "file",
+      "size_bytes": 909714,
+      "sha256": "72045c312938d84357100303230ec68d5874e097e965c238416fb5db3b8f2c9a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/060_pc_02.xb",
+      "type": "file",
+      "size_bytes": 630304,
+      "sha256": "c3f00c2d42d7d3ee8151ff38da1457efd7f71e3b26455168a81663e72eddf13a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/061_pcvoice.xb",
+      "type": "file",
+      "size_bytes": 335554,
+      "sha256": "95661470913b702a3f655fc4cdbf4c05c07a3b30e484cbdd92369eeaa83eca1a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/karate/061_pcvoice.xb0",
+      "type": "file",
+      "size_bytes": 323414,
+      "sha256": "125d6ab6f05228d23c9d394870d06b89bb5d822345696bb905f3616597b481ea"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/000_sound_0.xb",
+      "type": "file",
+      "size_bytes": 463,
+      "sha256": "40ea9aceba625f3a930206c66a3e61b2cddb0aa92c8da288a4df2f37c83edb88"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/000_sound_1.xb0",
+      "type": "file",
+      "size_bytes": 1783986,
+      "sha256": "beec7c398fb83a22df761afc5673c60d509484e59ef1e073e0896091d7df350b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/001_common1.xb0",
+      "type": "file",
+      "size_bytes": 378102,
+      "sha256": "06d073b8b1c623d4053d4f06f1245b0fd7fa06ff99e571cb9a236c230cf89650"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/002_common2.xb0",
+      "type": "file",
+      "size_bytes": 799216,
+      "sha256": "9543b2fae1a6abd4617c61d544dc3b58567c4cf21317aa147e4920f75b8cb9b7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/003_stage00.xb",
+      "type": "file",
+      "size_bytes": 546610,
+      "sha256": "8e51dd3784f6beb4c65e579b569f1b91d2e5fc356416d1f95f5c32cb90126106"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/003_stage01.xb",
+      "type": "file",
+      "size_bytes": 517188,
+      "sha256": "7977af58e723540d5baf5c54593c726d6f84f68c9cec9c5a7ddfcc927050fbaa"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/003_stage02.xb",
+      "type": "file",
+      "size_bytes": 620124,
+      "sha256": "1d364300861c70dbc7cde8856c40857ee02b987aa0ac61d24133703f9f925d7e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/004_effect.xb",
+      "type": "file",
+      "size_bytes": 250814,
+      "sha256": "80b035c60c4c991cc7b02bfb8a6af329b60cb5ca1878848f351509f5959c8c53"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/005_player_0.xb",
+      "type": "file",
+      "size_bytes": 434344,
+      "sha256": "363f6954fab654918cabe27b08fe1e7167cc11db04e8105edbfd160855feea9e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/005_player_1.xb",
+      "type": "file",
+      "size_bytes": 901668,
+      "sha256": "a06bd2f78f577bb678fc43612fed0f2ad5184cd07e2dfed898d5b95f0a3680c9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/006_target.xb",
+      "type": "file",
+      "size_bytes": 852562,
+      "sha256": "fdec531dea8e46ad0521c1f22241b0b37fbac5286742c7cc6c190f4f9a136c2b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/kick/007_target.xb",
+      "type": "file",
+      "size_bytes": 427280,
+      "sha256": "e9773af772fa656f8f1939baf40dadfa8157188776740121e62e397667b7132a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise00.xb0",
+      "type": "file",
+      "size_bytes": 146032,
+      "sha256": "17d358cda1258817c9651bbd792c947394078dff9b829ac8e60f2ce74af6d0e4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise01.xb0",
+      "type": "file",
+      "size_bytes": 148600,
+      "sha256": "ab91d7f652f102a6bc030da129d8ab30ac288753c23134e770676cf65a00d578"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise02.xb0",
+      "type": "file",
+      "size_bytes": 143212,
+      "sha256": "d62eb6e7a013ce678fb04eb49c7facdc09b449c8cf9bacd58f95a8b969277db3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise03.xb0",
+      "type": "file",
+      "size_bytes": 149440,
+      "sha256": "a3185695baf43076c038b2a0115ff8e3f9449325c2ffb05b3c43144913f1325a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise04.xb0",
+      "type": "file",
+      "size_bytes": 144764,
+      "sha256": "649006c584d24951edca9ab52497c9053682f4d8d98594c6b4f95ef5d14b1875"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise05.xb0",
+      "type": "file",
+      "size_bytes": 144608,
+      "sha256": "b7d1f11a8455cda6de09a7c57d4181e72c82367f0c4641abba9fa23c8da7e3d1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise06.xb0",
+      "type": "file",
+      "size_bytes": 146624,
+      "sha256": "ff8e304be66ee2c3868b9c14f450cf224546cdccbf346284d21488a0513c846a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise07.xb0",
+      "type": "file",
+      "size_bytes": 147248,
+      "sha256": "309f498c1eb26b9546e7821e766fbed79a3d5f9168892bf1bea70963556b6f33"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise08.xb0",
+      "type": "file",
+      "size_bytes": 150632,
+      "sha256": "ecdddede30c759c2adafa1dca42144a08b39ba91a0155645f2433a9f81475897"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise09.xb0",
+      "type": "file",
+      "size_bytes": 143964,
+      "sha256": "9c7a06ffede8cb92b40ab0a898bd144f75471d222d8bf2c6c1e6167970fec06a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise10.xb0",
+      "type": "file",
+      "size_bytes": 145156,
+      "sha256": "6fe6a9d76acf81e8b73b402e0f1dbe565e9b871a1bfa8a1e2168216b0609c79a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/advise11.xb0",
+      "type": "file",
+      "size_bytes": 148968,
+      "sha256": "1d63148d0107600afdc773e1dbfd2caad13b75b328141c2567e96dd8a205f937"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog00.xb0",
+      "type": "file",
+      "size_bytes": 492376,
+      "sha256": "7343a09893afe8e914d430b73a43689e62530f76eaef7f68368112c22a3d7beb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog01.xb0",
+      "type": "file",
+      "size_bytes": 488496,
+      "sha256": "6c75676627a8fc7454ea6d3d776d560c05b511fff08c521576f209a7f0e2ac64"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog02.xb0",
+      "type": "file",
+      "size_bytes": 483208,
+      "sha256": "261846778fe2c59da4cc82254a6904ec727b4c484182d17d5a775461cc890e49"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog03.xb0",
+      "type": "file",
+      "size_bytes": 505052,
+      "sha256": "adb031ba5ac46c52a0973b76e0295e03aaeb16706a4d41e5aecf35f20c997d3c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog04.xb0",
+      "type": "file",
+      "size_bytes": 503520,
+      "sha256": "74917e1f0f9a240c7dd0f8019f78cc118ff9c4cbf97bd582f47ba432742f8a70"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog05.xb0",
+      "type": "file",
+      "size_bytes": 492128,
+      "sha256": "4ae3945b13379d443cafc32ddfbd69efea7d3fbf4658b31885eab431c3d1085d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog06.xb0",
+      "type": "file",
+      "size_bytes": 506812,
+      "sha256": "e9f935f666599baad397fc21c37f807989dfcbe38ca5734c31f5a28c635a3383"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog07.xb0",
+      "type": "file",
+      "size_bytes": 510736,
+      "sha256": "f7aa30b0b514429cb7d2e71d546eb80c3af8e531f221e8422aa81897eaf936fd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog08.xb0",
+      "type": "file",
+      "size_bytes": 512104,
+      "sha256": "29e85a5be7f003d16504798a3c79088aadba1071b11d8010a4bcbd406ed5615a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog09.xb0",
+      "type": "file",
+      "size_bytes": 500572,
+      "sha256": "96b1e8d1fd6805caae989d3aa0fbd8d5535ac2c2926053a2eabfce9ee9222208"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog10.xb0",
+      "type": "file",
+      "size_bytes": 478548,
+      "sha256": "01af6cb156777e6e52deb629244a03365a832c0b310902a50d2a6acc7c26647d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/dialog11.xb0",
+      "type": "file",
+      "size_bytes": 491224,
+      "sha256": "35cbc99bfaadecc623ad3bb632638f81508c9bb1414b7f6a43cfaa47fdb219fd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_bg00.xb0",
+      "type": "file",
+      "size_bytes": 92305,
+      "sha256": "8e5dac0714ae9aa4a1a77aaf102412eb197a9bea5ccac6995e9ba58361390e94"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_bg01.xb0",
+      "type": "file",
+      "size_bytes": 316129,
+      "sha256": "6649bb4cd764d2920eadc00e8f40b1991febd2106194fe54dd2b883b614fbb05"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_bg02.xb0",
+      "type": "file",
+      "size_bytes": 123833,
+      "sha256": "5a6fd931b66ea13c9aa2986f49c42749a1a9b2ff35e127e77ee30c284ad22717"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_bg03.xb0",
+      "type": "file",
+      "size_bytes": 85837,
+      "sha256": "32b8d8cf9012c202f6f239e04638edf51c16fbe02651d6cae7aedcbca1f0f224"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_bg04.xb0",
+      "type": "file",
+      "size_bytes": 87966,
+      "sha256": "e3c2c078052d5ff74bde482d73b6b0c1b956ac052044b3e711503c89ddb66a13"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_icon_0.xb",
+      "type": "file",
+      "size_bytes": 856342,
+      "sha256": "3e36272c899623661735b80d8eeb466bad163d4f230ba6c22ed6f001920ae5f4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_icon_1.xb",
+      "type": "file",
+      "size_bytes": 861775,
+      "sha256": "d91a35c5ac135d3b5637032802e81210380655feb2772c3b27cc24fc475e2c1c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_icon_2.xb",
+      "type": "file",
+      "size_bytes": 298618,
+      "sha256": "438e13433a190a6d350599fe3ce98816d03f9ed17a98a35c9d7f0e749fbe3029"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_main_0.xb0",
+      "type": "file",
+      "size_bytes": 878334,
+      "sha256": "236b7d9765699b2c8d17cde6dce4de9b6421a19f66dc549b17337e5f0d2bb368"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_main_0_se_title.xb0",
+      "type": "file",
+      "size_bytes": 828054,
+      "sha256": "fea31c3b0e011152d6fbf04fb16f83e4917bf47923d3de0ba26fb774bfb8ce31"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_main_1.xb0",
+      "type": "file",
+      "size_bytes": 640656,
+      "sha256": "42a81271581c56fd7d70b6de5c2c4f8df24044cd0d2e93c2037c20afc518e288"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/menu/menu_title.xb0",
+      "type": "file",
+      "size_bytes": 710550,
+      "sha256": "bb03d4204c2bd4c37413535737220d6e741996c749c39737087c1cddadd4d775"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/010_game_csv.xb",
+      "type": "file",
+      "size_bytes": 6416,
+      "sha256": "25e6718b6ad849f5e20d435dffb82c00c50241a20340a4545621a1dbae330861"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/020_main.xb0",
+      "type": "file",
+      "size_bytes": 981136,
+      "sha256": "50829161d8cce923f1e482d287e55a6f480d41e78bac83f277c2763876c84ad4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/030_banner.xb0",
+      "type": "file",
+      "size_bytes": 73562,
+      "sha256": "d0dcb4dee3fd81cffc93e591369567ba990a1be06ee06ed9fa26860635b77375"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/050_stage_obj.xb",
+      "type": "file",
+      "size_bytes": 353636,
+      "sha256": "aab00259c3914fdc5127a02c345c132ed0ffcd16a7f2ddebf405952a44670d9e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/051_stage_obj.xb",
+      "type": "file",
+      "size_bytes": 586768,
+      "sha256": "8750a910ce8c5cc818aad8037099d0aad35e7694997844cd03e7ba77b6721ae5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/052_stage_obj.xb",
+      "type": "file",
+      "size_bytes": 203660,
+      "sha256": "5d0564fb8fa0bdc2442ef994280c667a4f8bf0b07301d4b27614cbd2b8afcc25"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/053_stage_obj.xb",
+      "type": "file",
+      "size_bytes": 403048,
+      "sha256": "d01f82722753ec6ccc6692164a149a4338aebe9fc45a93e4da00a315ee22dbd3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/054_stage_obj.xb",
+      "type": "file",
+      "size_bytes": 262538,
+      "sha256": "9028e11242e0816de35a0bd25e411828585ab739a152cbc7e65afb5d8ab10c48"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/055_stage_obj.xb",
+      "type": "file",
+      "size_bytes": 334268,
+      "sha256": "adeefa91a573a9cb93150f6ff13cceb23ae98c91223159bd665df37a2c701907"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/056_stage_obj.xb",
+      "type": "file",
+      "size_bytes": 747384,
+      "sha256": "70a29ec8ce8ae2d08d28032c5a5e0e7c64dc0cd24d596740cd206cb6b1543904"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/060_enemy.xb",
+      "type": "file",
+      "size_bytes": 7154,
+      "sha256": "a80631b7c3cec2cbc58e599828dd2fff356156abed0914768cfcbd498e0b0937"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/070_sound.xb",
+      "type": "file",
+      "size_bytes": 1508470,
+      "sha256": "9ff2169ee886ca477907d9daf0e618a32eeb5ef57f31372698681033fbdc7924"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/075_menu.xb0",
+      "type": "file",
+      "size_bytes": 85092,
+      "sha256": "51a14b158c855376c634c0806d5bb0576aa869ea418030a044c3d13be9ca4acd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/077_game_csv.xb",
+      "type": "file",
+      "size_bytes": 6153,
+      "sha256": "b353a6e9c3e59ba7e105406c593d3d40289f6cac3f7a82d9a18d043de44466c6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/080_stage_04_2.xb",
+      "type": "file",
+      "size_bytes": 410134,
+      "sha256": "0067b2e619988f9e70803e7ee2c77efd46272900767079b18d9dd9130895650a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/080_stage_04_3.xb",
+      "type": "file",
+      "size_bytes": 458350,
+      "sha256": "37915c35d9d309ff2d1a54344ff8cfc4b1a11f62ff1c8d80fac89b4c5dde823f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/090_pic_csv.xb",
+      "type": "file",
+      "size_bytes": 520,
+      "sha256": "1029f7e78c8a22fa0540c7d6adb4d1d3938e1eacb7e17eb6ca8987dad97d484b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/100_pic.xb",
+      "type": "file",
+      "size_bytes": 66434,
+      "sha256": "e87a65b7765ca08417d0962e7c6088e1779d52394c6f62ec9c3e1099a414de6c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/110_grass.xb",
+      "type": "file",
+      "size_bytes": 138291,
+      "sha256": "e110e3dcdf618185f462992e423feb5311a97246d185f0d28eda926ad92cf724"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/120_pc_boy_tractor.xb0",
+      "type": "file",
+      "size_bytes": 894248,
+      "sha256": "bbadef1e9398690b47eb64dad0809b843efcbbbaf71114b7270edad28f5e7bc7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/xbdata/mowing/200_result.xb0",
+      "type": "file",
+      "size_bytes": 166408,
+      "sha256": "a087445c657f4da4b75dacf07171dd7199480f90abaf61aeb56a6480bea47247"
+    },
+    {
+      "path": "UMD_DATA.BIN",
+      "type": "file",
+      "size_bytes": 48,
+      "sha256": "f8fcbee8ae8d4d34fd3b1b6e4f50ece58231f80a261a87dff883d71488ecf4ce"
+    }
+  ]
+}

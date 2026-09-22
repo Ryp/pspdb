@@ -4,10 +4,40 @@
   "sha256": "6cc732ad696265321333441826ae6bcef2755a02dfcedef440a549abb94e26d4",
   "size_bytes": 32824,
   "extractor": {
-    "name": "pspdb-ingest",
+    "name": "PSP-DOCUMENT.DAT",
+    "sha256": "a4d20f1b9f921cdc65d3b9b98b03bfa1e45cc61ec1dde8f72f8fa4f639c81df5",
     "version": "3",
-    "options": []
+    "options": [
+      "upstream:8c95b37949c9a9ca183b7fd69c85d2e2dad7216d",
+      "fixed-key-99-slot-pages",
+      "explicit-docinfo-304-byte-authenticated-8-byte-key",
+      "platform-ordinals",
+      "page-files-only:1",
+      "byte-input-page-callbacks:1",
+      "pycryptodome:3.23.0",
+      "Pillow:12.3.0"
+    ]
   },
-  "entries": [],
-  "error": "ExtractionFailed"
+  "entries": [
+    {
+      "path": "ps3",
+      "type": "directory"
+    },
+    {
+      "path": "ps3/001.png",
+      "type": "file",
+      "size_bytes": 19733,
+      "sha256": "eeb81a2c48cab2ee9f6fb127119f149f96c7b56a817e6b158e48b6f48d7ef8a9"
+    },
+    {
+      "path": "psp",
+      "type": "directory"
+    },
+    {
+      "path": "psp/001.png",
+      "type": "file",
+      "size_bytes": 19733,
+      "sha256": "eeb81a2c48cab2ee9f6fb127119f149f96c7b56a817e6b158e48b6f48d7ef8a9"
+    }
+  ]
 }

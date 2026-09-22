@@ -1,0 +1,2783 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "e5c322d086f853e6b896dd4b060febbc5a40b80b6d3147905f0ff3ada4196884",
+  "size_bytes": 167247872,
+  "extractor": {
+    "name": "pspdb-ingest",
+    "version": "4",
+    "options": []
+  },
+  "entries": [
+    {
+      "path": "PSP_GAME",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/ICON0.PNG",
+      "type": "file",
+      "size_bytes": 15629,
+      "sha256": "f9135583577d54e4bd71e5e4ce48c6baedd2321ebf92cb6945bf624ef2a8a3e1"
+    },
+    {
+      "path": "PSP_GAME/PARAM.SFO",
+      "type": "file",
+      "size_bytes": 592,
+      "sha256": "7b673f9782b87565a4258d6ef17b16052ee640e6077bbdc04d7f5b28dfac6a44"
+    },
+    {
+      "path": "PSP_GAME/PIC0.PNG",
+      "type": "file",
+      "size_bytes": 44901,
+      "sha256": "ca856e9e7d62ef6dc04cc6eb98580920f5974bd29b128494e6d7a1b2835f009a"
+    },
+    {
+      "path": "PSP_GAME/PIC1.PNG",
+      "type": "file",
+      "size_bytes": 210257,
+      "sha256": "dc6c140d4c4a369f6af30f2b1dedd39b90fd2ba214b263a850fae39d6d0b3b51"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/BOOT.BIN",
+      "type": "file",
+      "size_bytes": 606621,
+      "sha256": "48023cfb3c274459d48c3ff5771600b7a7d5a15b33b8e751465cadf996ec0adf"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/EBOOT.BIN",
+      "type": "file",
+      "size_bytes": 606960,
+      "sha256": "69f288009c4e580c16af9534af7b41b4dd5774972ca622707339df7fb8d1b3b0"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/OPNSSMP.BIN",
+      "type": "file",
+      "size_bytes": 1048576,
+      "sha256": "30e14955ebf1352266dc2ff8067e68104607e750abb9d3b36582b8af909fcb58"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/DATA.BIN",
+      "type": "file",
+      "size_bytes": 99614720,
+      "sha256": "907246287dc7f85bb214dcfe0c728fb3cd24ca6f9b193c96c6f7668433be91f5"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/EBOOT.BIN",
+      "type": "file",
+      "size_bytes": 8388608,
+      "sha256": "2daeb1f36095b44b318410b3f4e8b5d989dcc7bb023d1426c492dab0a3053e74"
+    },
+    {
+      "path": "PSP_GAME/SYSDIR/UPDATE/PARAM.SFO",
+      "type": "file",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "PSP_GAME/USRDIR",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/module/libfont.prx",
+      "type": "file",
+      "size_bytes": 20720,
+      "sha256": "cbef87d6822f4a9ac27141063f2b77ad149526fb18caac86e701a48d5dea5543"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/bg.gim",
+      "type": "file",
+      "size_bytes": 263444,
+      "sha256": "5f3865c7579e39f3ee8f4173c2d907ca6ac22c0aa7cb7804c94972b98f1c562c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/button.gim",
+      "type": "file",
+      "size_bytes": 8396,
+      "sha256": "35347b8d9eee18f956f6fa26427c3dbc9e718c7e4c89a6631270563cb5d7e267"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/credit_scea.strb",
+      "type": "file",
+      "size_bytes": 5608,
+      "sha256": "b2e003aa682c2b9f89d8ac3f1082038b35f2e5235ddf02735a043dc18ec9d0d3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/credit_scea.valb",
+      "type": "file",
+      "size_bytes": 2896,
+      "sha256": "3c1b2e7249c6157ea44db0f11609ddadcf1bb9ab919246b3e91e4a4a613684f2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/credit_scej.strb",
+      "type": "file",
+      "size_bytes": 5979,
+      "sha256": "153eb1f0cea60e8eb2608d3a6fd29609dab4fc5fbcf4a26b65655495611d970f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/credit_scej.valb",
+      "type": "file",
+      "size_bytes": 1296,
+      "sha256": "f848f81626b8022036f36e0bee2e048ee64e44547bbdb0d296abff09b9aafc41"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/logo.gim",
+      "type": "file",
+      "size_bytes": 66840,
+      "sha256": "817689efd2585edda89cb34f91f0c3ae6d164cc97f9e11deda885a81b96e90f4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/playstyle.gim",
+      "type": "file",
+      "size_bytes": 263456,
+      "sha256": "cce2914d033456f1ccbadf031cf812aa64a6b15f8e0cbb80975d8ed3e6e018c8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/playstyle_en.gim",
+      "type": "file",
+      "size_bytes": 263456,
+      "sha256": "222c0b477273f6d6b2a583e0546061b46e4ee960f42915501bf20ce4446ae7cb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/system.strb",
+      "type": "file",
+      "size_bytes": 1461,
+      "sha256": "a2afb771145caf80cb255d577f2332183cfbd48d9b5478f8b828571455ddd4f9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/system_en.strb",
+      "type": "file",
+      "size_bytes": 1118,
+      "sha256": "67e3855bbfd1e1befb4760082712952e446d6c4195991d09dfc6ac5319999b02"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/title.strb",
+      "type": "file",
+      "size_bytes": 141,
+      "sha256": "83ece6f3c41e6aa1b66cea6d2576003fd8cd4d730c3bbd70ed77ef40f6e0303e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/title_en.strb",
+      "type": "file",
+      "size_bytes": 98,
+      "sha256": "96fe24560725c6c9d01aeb9e48d1f995d1f583a2f3982341951a861ad5b4adfb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/common/warning_scea.gim",
+      "type": "file",
+      "size_bytes": 263456,
+      "sha256": "27db31960871aef3a3687b67f56cb3b18c0eddafd6898fecfa03b5ca5139cda1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/config.gim",
+      "type": "file",
+      "size_bytes": 1048776,
+      "sha256": "0c0ece51bc3ec1210c3fd63eca68b9b59a992062d6183bcbed75bfe7d7f71767"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/config_en.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "6743b5d5f7fbc57453083261000ff7f06f31b4a95a0ff7e91b4ae2c1825164cc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/eff.gim",
+      "type": "file",
+      "size_bytes": 524484,
+      "sha256": "eb7e8af892756f0bd1c57311164b36c95233499f9dd116c46547c09dcf520409"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/gametext.strb",
+      "type": "file",
+      "size_bytes": 294,
+      "sha256": "fb089a45f1cdd56662e7f52349ef796de09cf28928680cab65b03404d873a28d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/gametext_en.strb",
+      "type": "file",
+      "size_bytes": 186,
+      "sha256": "7bc5f949d49eac381a43fd00cfe39d0fa5e24208f98f975ebe40f31f093f28eb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/icon",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/icon/icon0.png",
+      "type": "file",
+      "size_bytes": 28138,
+      "sha256": "5fcd223d9f0a3910e01c22354eb20583f39dff914a3f337891a918ae1f48adec"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/icon/icon0_en.png",
+      "type": "file",
+      "size_bytes": 15629,
+      "sha256": "f9135583577d54e4bd71e5e4ce48c6baedd2321ebf92cb6945bf624ef2a8a3e1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/icon/pic1.png",
+      "type": "file",
+      "size_bytes": 234701,
+      "sha256": "b7f19bc199fa5f3046032393f0a36fb7adeb9a029ed5f7225b71e140ce2fd97f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/judge.gim",
+      "type": "file",
+      "size_bytes": 524488,
+      "sha256": "06e07e51735db1457e2174ed67aa0a6ef03b34f86ea2e03817837480d3c9892a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/judge_en.gim",
+      "type": "file",
+      "size_bytes": 524492,
+      "sha256": "5cb5d571dbc5cfdb28dd5a6afcffbf28a54b264dc71890f4166f8d495680bea3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual/page01.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "fad5591f931a3cc3faf1177e70ea13c2a855a63f30aada477c76dd84b752c8b8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual/page02.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "0da69fe49b5e81cd495df9167269a9001b312234c3b346b7bb58764816e3ff25"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual/page03.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "3db73e6165010b7e114cfed7f903fc21d8b449928b08f2630939106942e95bf6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual/page04.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "b9c1836c6d51296b2cd5bbf130ff4cc105709e2306d78bf9254930e6716ac027"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual_en",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual_en/page01.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "d0484568e435b95354b5babf9574a616da70b3854e702d52d418e70b93796633"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual_en/page02.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "461d4ed718738890b1965557aa9cccbc93715230b712df8a185ff05775ae5e63"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual_en/page03.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "90e4d6ab530864b34f925b825a162ed01c5a2dcf5ebb47c2ad0dd18e1d5a6f8b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/manual_en/page04.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "6f707e0cc7b884ac7354face8e52db7a92a3565906f9980d14b806e83c755e0f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/menu.gim",
+      "type": "file",
+      "size_bytes": 262344,
+      "sha256": "5d2d6cbfd479a79e3ad113c6d49248c31802a86ebe89d33fa28f955f6a072cd0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/menu_en.gim",
+      "type": "file",
+      "size_bytes": 262344,
+      "sha256": "77b7b0926223b99d5f81f252c914c5b17323aa3396e2f5ff73cfa8afcbe62a80"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/number.gim",
+      "type": "file",
+      "size_bytes": 131272,
+      "sha256": "4216c298393d8edb8c197b4d523538deeafc78821cabfb9ab804eda2db754ed8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/number_en.gim",
+      "type": "file",
+      "size_bytes": 131276,
+      "sha256": "b68eaf98b1baf60b6301a4e285bea084a6add0ee134621edd4493abe79f36c55"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/parts.gim",
+      "type": "file",
+      "size_bytes": 1048776,
+      "sha256": "fbd4bdeec65e70fd7a1e523bb45c352f05c839218834f0dfcc360c87d109fcb5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/parts_en.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "689dfb2a4a6ccf8abcda897a03b67024de43e9116c292f2d552e63d537beef75"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture/A_DUMMY.gim",
+      "type": "file",
+      "size_bytes": 9496,
+      "sha256": "2f01e61c3873b9a51bdd972d2f1b7ff32073d839af9273d1b59a63044bd1b6f3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture/A_SEL_A.gim",
+      "type": "file",
+      "size_bytes": 9496,
+      "sha256": "957ae7a43cc3cd3100d150c52c79c5c175183bce2f0c36c7b4c28da09ab5e372"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture/A_SEL_B.gim",
+      "type": "file",
+      "size_bytes": 9496,
+      "sha256": "33c90f7c886e70d3416d454a293ada8ca40cd1e8018f8f5a6fc1692c341187fe"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture/Q_DUMMY.gim",
+      "type": "file",
+      "size_bytes": 34072,
+      "sha256": "28cbcaf378b8676a0d1ffdd082e1b5862719ce9e060e2fbc4991ba8ab2694e9d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture_en",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture_en/A_DUMMY.gim",
+      "type": "file",
+      "size_bytes": 9496,
+      "sha256": "2f01e61c3873b9a51bdd972d2f1b7ff32073d839af9273d1b59a63044bd1b6f3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture_en/A_SEL_A.gim",
+      "type": "file",
+      "size_bytes": 9500,
+      "sha256": "f3160ac6f0a62dfa230bff6dfe8fdf8eb5a3ec2420186313c6c009dcdd3e71a4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture_en/A_SEL_B.gim",
+      "type": "file",
+      "size_bytes": 9500,
+      "sha256": "7101c09486eff0ce365184141e56af520048331881d48bcfc7f3c119570786b5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/picture_en/Q_DUMMY.gim",
+      "type": "file",
+      "size_bytes": 34072,
+      "sha256": "28cbcaf378b8676a0d1ffdd082e1b5862719ce9e060e2fbc4991ba8ab2694e9d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizTextF.strb",
+      "type": "file",
+      "size_bytes": 516,
+      "sha256": "1fca4679b7343fcc550c7298b522d5709737fad9d8bc25f6ccbb10843c5b897e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizTextF_en.strb",
+      "type": "file",
+      "size_bytes": 516,
+      "sha256": "1fca4679b7343fcc550c7298b522d5709737fad9d8bc25f6ccbb10843c5b897e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizTextP.strb",
+      "type": "file",
+      "size_bytes": 12462,
+      "sha256": "c0766c5c57909f40056a52785c9e73c4cf6d583b9f35a2504d9ee213e87cb664"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizTextP_en.strb",
+      "type": "file",
+      "size_bytes": 2266,
+      "sha256": "dc489ac8e121c7cc4279935d993ee56410895a59d6950b70f52747d02b67fa73"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizTextQ.strb",
+      "type": "file",
+      "size_bytes": 10747,
+      "sha256": "17f872c54369914f45681539d63de1321f2de810a821dae551329a0e15f611fb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizTextQ_en.strb",
+      "type": "file",
+      "size_bytes": 5590,
+      "sha256": "d390c22926893a93bc5a8b214e1839e170a2adafd3dadff0b38e5e444c1f9fd8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueF.valb",
+      "type": "file",
+      "size_bytes": 3216,
+      "sha256": "16b4ccd723f13dde4e5aca6b4addf4f39a2c901fb797c34c536ac817da45f051"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueF_en.valb",
+      "type": "file",
+      "size_bytes": 3216,
+      "sha256": "16b4ccd723f13dde4e5aca6b4addf4f39a2c901fb797c34c536ac817da45f051"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueG.valb",
+      "type": "file",
+      "size_bytes": 144,
+      "sha256": "36a322e6f77133e0bd014beb89b75351ef2cf4b13ab7a3a62f63be900b803ff3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueG_en.valb",
+      "type": "file",
+      "size_bytes": 144,
+      "sha256": "36a322e6f77133e0bd014beb89b75351ef2cf4b13ab7a3a62f63be900b803ff3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueP.valb",
+      "type": "file",
+      "size_bytes": 21616,
+      "sha256": "51c9f9897820105eb8eaaa02b404c29a78e70510d5eeee61d5aefd5ab32d26f1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueP_en.valb",
+      "type": "file",
+      "size_bytes": 21616,
+      "sha256": "8b676b009884686554579c2010d8bb244e1f3fafa7107f472c7c8d1ad33fe702"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueQ.valb",
+      "type": "file",
+      "size_bytes": 6416,
+      "sha256": "2eb19a0683f9ab0fe30ecb326e59d9291130784f13bc46ce538c761352a25ae3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueQ_en.valb",
+      "type": "file",
+      "size_bytes": 6416,
+      "sha256": "698ef83e4b86308bebbd97d353c9da729d03a3ba5539868b29da5cab797d46d4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueS.valb",
+      "type": "file",
+      "size_bytes": 592,
+      "sha256": "3041c328b987d30df44d84db6e7b366262fdd4cc4d7e52f8fcd0605ae169c03b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/quizValueS_en.valb",
+      "type": "file",
+      "size_bytes": 592,
+      "sha256": "3041c328b987d30df44d84db6e7b366262fdd4cc4d7e52f8fcd0605ae169c03b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/record.gim",
+      "type": "file",
+      "size_bytes": 1048776,
+      "sha256": "8c327b519e6fb472c92246b5b004f973eebc12fdb8c3e2cf2c949ecf65b58d13"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/record_en.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "cc6a5a9943b366f000575ed13a83d13ed9d1b80ed7327c1016168ef56fd31c9b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound",
+      "type": "directory"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_1.sgd",
+      "type": "file",
+      "size_bytes": 78640,
+      "sha256": "2b37c6da99f00622907d52ee286a3c06659a9b7dfcc81b816fa5e55f0a693842"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_10.sgd",
+      "type": "file",
+      "size_bytes": 40560,
+      "sha256": "fecb7cc100803cf5c1e0ada582063a0c0cd4f4fb2ad93f8db6bb5c361b698143"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_11.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "381196e4ce9b9bb28c5eca8aa67c7c94911bcdf8aa96e96ee4ccb2093ccbc2e0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_12.sgd",
+      "type": "file",
+      "size_bytes": 55680,
+      "sha256": "f6b71355bec1855eae3bcfd2f12d469c67cd89b982353c8056d871d18c867fc3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_2.sgd",
+      "type": "file",
+      "size_bytes": 77520,
+      "sha256": "bbc8f94fd6741795624e28033173d64683f7abd880b9931bbf11c7abdbce110b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_3.sgd",
+      "type": "file",
+      "size_bytes": 85920,
+      "sha256": "252cf8fade48d16fefbd290a9b2f9838a45e51baa2fc3f1a1d1fd6145257191e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_4.sgd",
+      "type": "file",
+      "size_bytes": 64080,
+      "sha256": "dfb3aac57bc47dcc6bbee7b468cc5a76e108b73775ddae91ddf64c638f178457"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_5.sgd",
+      "type": "file",
+      "size_bytes": 57920,
+      "sha256": "c1260e8d71e333eb777774594e1f9f5d7a6f7bbaa6e2e10143ee8508669733b1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_6.sgd",
+      "type": "file",
+      "size_bytes": 64640,
+      "sha256": "ed076c4da128f2d7d1d7a363418d1b0a733f7f97978b259af9e6c6d93f348955"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_7.sgd",
+      "type": "file",
+      "size_bytes": 68560,
+      "sha256": "dc97f91d08374d147e4892a9cc64bbf911233e7f5d4dd127fd7488bfa57986e9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_8.sgd",
+      "type": "file",
+      "size_bytes": 75280,
+      "sha256": "c1555e4d2a328a4cf2e7da869de5d3d477d00f19765a96f41a70ed3a52a0d063"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/10_9.sgd",
+      "type": "file",
+      "size_bytes": 56800,
+      "sha256": "618fa2c65afa5e3f526154d3924f4ff4fa85dd009aa8e97cd1fe58e04efca51f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_1.sgd",
+      "type": "file",
+      "size_bytes": 101600,
+      "sha256": "3e8cd6ee804a440768df48f756672dc4b7be3feb79fe4f4987626b95cd7f4455"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_10.sgd",
+      "type": "file",
+      "size_bytes": 83120,
+      "sha256": "dd293eb52e5958ae962e89d684c4f88e298b9b629b40d9a76655319b85c12cdc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_11.sgd",
+      "type": "file",
+      "size_bytes": 70800,
+      "sha256": "816e9e17e6202f641c9e9e89b35a27020de1a66e8e42ff1a07f0a985017e6e21"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_12.sgd",
+      "type": "file",
+      "size_bytes": 65200,
+      "sha256": "31b504ffee1342eee4fb324ae47f66854cd0700be713263bdd62149a6fa4caee"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_2.sgd",
+      "type": "file",
+      "size_bytes": 102160,
+      "sha256": "bebac92cf910ff22e6c8d9523c4589bf42871228c046a078d92c24cc101f937c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_3.sgd",
+      "type": "file",
+      "size_bytes": 99920,
+      "sha256": "227501ba2624e9f38d1abbf1ca73cf1d6a1316b31e28d43e1de1d031042a23c3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_4.sgd",
+      "type": "file",
+      "size_bytes": 99360,
+      "sha256": "48b46be503f699640e17aa6f7e1f7ef847cfb60934d1b69dfd28c6806b264211"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_5.sgd",
+      "type": "file",
+      "size_bytes": 104400,
+      "sha256": "787301b1ed72ed5ed33b3d3fe98b6b76dba1fa9cb7d6be119a21f3cf3cd110d9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_6.sgd",
+      "type": "file",
+      "size_bytes": 75280,
+      "sha256": "219b4c7bd5921a79f949e478e14a749ac2d8319aaa1900681784e33d9a8b91e5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_7.sgd",
+      "type": "file",
+      "size_bytes": 70800,
+      "sha256": "29434573057c18dfb06c31fac5b67712f7c04e74b2b432be697bfc8e6495846e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_8.sgd",
+      "type": "file",
+      "size_bytes": 89280,
+      "sha256": "1d9d6e122d6a8b7a9a75d919d521b578bd302e50c4cd6534e518138014385586"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/11_9.sgd",
+      "type": "file",
+      "size_bytes": 85920,
+      "sha256": "995ab4343651f9f9aeed815e2ca3b2b9969fa510f9623e97574ab174112ed903"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_1.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "cef09fa2f4006413b2757dc7093ffc6a4d896594238edbfec5ce5a4c799a4d64"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_10.sgd",
+      "type": "file",
+      "size_bytes": 75840,
+      "sha256": "fc5184a604d8be04b2460c242e42f864114617d6416b2dcc50e4096ea03b6c6a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_11.sgd",
+      "type": "file",
+      "size_bytes": 75280,
+      "sha256": "f5fa204e0c501602a77fffdcb4616040fab7c215190e077bc84c8134d32d5973"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_12.sgd",
+      "type": "file",
+      "size_bytes": 75280,
+      "sha256": "b63ca116be2954de1743238420198bc821ea4e693a0d4bf407859193d830096d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_13.sgd",
+      "type": "file",
+      "size_bytes": 76960,
+      "sha256": "5f97dea4b2a2668beb295a275ab0176991612e6808e372c8b3ef0cdd576e2a1c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_14.sgd",
+      "type": "file",
+      "size_bytes": 78640,
+      "sha256": "723d99152470604dbfe53e0bb03e8e5502eb365fd6f33adf9131ee4a5f902728"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_15.sgd",
+      "type": "file",
+      "size_bytes": 78080,
+      "sha256": "57763cd8885953105264f83613803b117e4fb71d961fb63411bbe8bfe3579823"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_16.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "bd22bb645496576406af8b6e7ced26ce46a0089b5986c93faceee41f20c7c164"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_17.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "229051bcffb49f72072cf341a18aa35f6b810fce930714b2b2ceb4732ffc04a2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_18.sgd",
+      "type": "file",
+      "size_bytes": 77520,
+      "sha256": "d330f253e0e0ee6d6a3ed3c9209e039049b2d02dbd28faa0a99ba379cb4c5963"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_19.sgd",
+      "type": "file",
+      "size_bytes": 76960,
+      "sha256": "6a903004be05855a7bc483a7688a23621dbfb78f827e219f119cead1348b60f2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_2.sgd",
+      "type": "file",
+      "size_bytes": 79200,
+      "sha256": "76c38aef3e2fc01da1049be21838d111ff36d61bc6c715bbbf05ebfeaccb146b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_20.sgd",
+      "type": "file",
+      "size_bytes": 77520,
+      "sha256": "8d112715a34752e115f420efefaa0c32a2256800ee606c98fcc5cb43cb163575"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_21.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "35a5fda1cfc77580941ce62c682ba90a5113fa3384e22c094adb5aa3f86df521"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_22.sgd",
+      "type": "file",
+      "size_bytes": 75840,
+      "sha256": "3228c2e7186b966108c04e5ec763ae9039436ad7bb51f7798d689141c3836d25"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_23.sgd",
+      "type": "file",
+      "size_bytes": 75840,
+      "sha256": "b0efa18577281b8b287c82a01582a753d184f765bbde828ae1bcfdbc7859fc4f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_24.sgd",
+      "type": "file",
+      "size_bytes": 75280,
+      "sha256": "c6788a876dfa0f4db04f9efe6c7c417d5a7e068f65d3c9ff7fd7b83609ee417d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_3.sgd",
+      "type": "file",
+      "size_bytes": 78080,
+      "sha256": "feeef1c683aea03a17f288ff15d3b46af5a59fe17ed6de240bf9c37cf19be7bc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_4.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "92e81c86bc514b01a15128a75c6b16266e0a455793325fa933b59ba8489f8c63"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_5.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "09a6bd310b6c2dad0dd5c42a7c33f41de5e888252c53a828599897982f832883"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_6.sgd",
+      "type": "file",
+      "size_bytes": 76960,
+      "sha256": "6c692be89dfe99ca58efec8d3b25c3f620de159046e298100571a893f67046e3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_7.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "093ce72a22e95a90200ab8c8ea293d548771a9830de2629415e5c1fe00da2239"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_8.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "bfa03b3809c61e12ddb617379c7cd7204a37582e0e4449cc0bfc44824e615c8a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/12_9.sgd",
+      "type": "file",
+      "size_bytes": 75280,
+      "sha256": "0c5fea04862ce48f2d08aa601bbe4c34eaf7719491edb3cca77d047db6d17ba3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/13_1.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "be42e6e9495621e2074621d12e53108011be130f60da55b13ab88e7dc7b0a719"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/13_2.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "1bb31d119f068f4d74c34cc47cf8f67c1309a6a691c9011a8909c47449893da8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/13_3.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "10eaf9197fa1fb864037a26c8c8affec24b3245b42666f5aabcc8401ef1bba4e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/13_4.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "bce1327cda810eed64027e8fcae23c88640c1975fdb61da321ddf385b60604fc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/13_5.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "80d400e32d58f9a2f05f6dbb02f5872a5143ba2ce6bf6fb25d522c6dd0bb824b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/14_1.sgd",
+      "type": "file",
+      "size_bytes": 140240,
+      "sha256": "b4e7f6210b329f9a0558f3ddeed1022e70e53c00d5e699ba7fe583c492938cf8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/14_2.sgd",
+      "type": "file",
+      "size_bytes": 141920,
+      "sha256": "fc458620efe2ff492baadd8a33e27889405a17c052cf6c38336c8234eaab68c0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/14_3.sgd",
+      "type": "file",
+      "size_bytes": 103280,
+      "sha256": "0ffae8890115d3446df21f5539f1c31393d1918bff838157826e5c8289a432fc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/14_4.sgd",
+      "type": "file",
+      "size_bytes": 142480,
+      "sha256": "10f78e239844843e17e811903a5b6d34255b646b7c2c603e32706e29e2a660a7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/14_5.sgd",
+      "type": "file",
+      "size_bytes": 141360,
+      "sha256": "324d34ff7dd009defcf6dabad39a202d94d00e1c6b20a63ec92bf8f8eb155117"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/14_6.sgd",
+      "type": "file",
+      "size_bytes": 106080,
+      "sha256": "c799db53ca4cbdf7f20554fc3ed8d0500d3591da331eee51b9fffbf4f4a631ae"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/15_1.sgd",
+      "type": "file",
+      "size_bytes": 144160,
+      "sha256": "be9ae858de2ff4e3512e550762a0bc1e8b7f1531d95bd8c26a84acb0383dcad0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/15_2.sgd",
+      "type": "file",
+      "size_bytes": 139680,
+      "sha256": "5a258f10d0caab5e5ed417b4d97a833693b22a97d0a05e59441e86eeda9eb6c7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/15_3.sgd",
+      "type": "file",
+      "size_bytes": 95440,
+      "sha256": "e0484a948b9b9a01cb1580a401fdfb575715be082801c2ee789edfac294ca7e4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/15_4.sgd",
+      "type": "file",
+      "size_bytes": 141920,
+      "sha256": "b5b70e978cf72cc77db6f2c2c754fc1af78a51e501ed407aceb2501bdd41c1d7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/15_5.sgd",
+      "type": "file",
+      "size_bytes": 140800,
+      "sha256": "5de5f5f8d0279ce9f0636da9f0079ecf2974b221a32086dc869e8bba8e743b4f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/15_6.sgd",
+      "type": "file",
+      "size_bytes": 92640,
+      "sha256": "37f37a4d8e05afb69c5520594020293aca220360e172e11e970b170d277df8e3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/16_1.sgd",
+      "type": "file",
+      "size_bytes": 143040,
+      "sha256": "27e8b436d739c4214abe9043fef06b84d41f406df8ca3250e90b8ed576e24000"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/16_2.sgd",
+      "type": "file",
+      "size_bytes": 136880,
+      "sha256": "4864efc3fe496d7f6cbf1abfd48193b206645fc0caaa51d1dc2ddd84e8d38a8a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/16_3.sgd",
+      "type": "file",
+      "size_bytes": 135760,
+      "sha256": "5aab30fba8cfcaf1065555fcf3f82f2bc8b8f6583f210470a1758cfd860f75b9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/16_4.sgd",
+      "type": "file",
+      "size_bytes": 146400,
+      "sha256": "f5d42ee35aec7862ebacccb416408475cd94cc13dc7c48538d1c01121852d18a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/16_5.sgd",
+      "type": "file",
+      "size_bytes": 141360,
+      "sha256": "f7abdf29b843047c92211bf0fd1a0736d6e0d639d6a9437d539687d571a13fda"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/16_6.sgd",
+      "type": "file",
+      "size_bytes": 138000,
+      "sha256": "3a4e38e239fe4d2916e55ecfb8fc13848bfbe641bee8be66152fd1d4c5abde34"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/17_1.sgd",
+      "type": "file",
+      "size_bytes": 144160,
+      "sha256": "bb57cf0e89aa0723e98f3744adaeb99715f591fd5e768fffeec86ed09bd26653"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/17_2.sgd",
+      "type": "file",
+      "size_bytes": 140800,
+      "sha256": "050cab5b4d42ced3b645b07023fd3bf81a40e71d6741ae79b8fc634a58cabfe9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/17_3.sgd",
+      "type": "file",
+      "size_bytes": 131280,
+      "sha256": "ad7fcd24995592e25e22aa106d9f71d8dbaa49ccd231b4b15ee7a7e170c1df77"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/17_4.sgd",
+      "type": "file",
+      "size_bytes": 140800,
+      "sha256": "4a3d69be5044a5499a04c59db287e0c66400d3fa64933433f4fa7868298ff98e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/17_5.sgd",
+      "type": "file",
+      "size_bytes": 143040,
+      "sha256": "4a9e05e432507fbff6b4bf648a55e3b6716f1c093f1136486310a8e82043dd07"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/17_6.sgd",
+      "type": "file",
+      "size_bytes": 128480,
+      "sha256": "f6a71b36021734a887f079facdf2e835fe8780968571b87c36ac6f0106182b12"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/18_1.sgd",
+      "type": "file",
+      "size_bytes": 122320,
+      "sha256": "1d330b4f177da60a5115200ec68905df635b1cb4380eec63f929420ecc05fac6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/18_2.sgd",
+      "type": "file",
+      "size_bytes": 87600,
+      "sha256": "d699a97064cf5b68d3858d3ae8a2783cad59698f0db464531fc3032c57bfa2f7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/18_3.sgd",
+      "type": "file",
+      "size_bytes": 102720,
+      "sha256": "6aad5c75ab363360ca0870865a04bd21d629afc2971d8667432595e2dfd52894"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/18_4.sgd",
+      "type": "file",
+      "size_bytes": 121760,
+      "sha256": "4af8e6f93b05bdfe8ef5449e560c37855bfe59049ff9dae9954c7685b0f0e029"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/18_5.sgd",
+      "type": "file",
+      "size_bytes": 82560,
+      "sha256": "258d56cdf3bf963d3ae5fcef43e724a7b6d11246e1c48004d637ce298e730a1f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/18_6.sgd",
+      "type": "file",
+      "size_bytes": 99360,
+      "sha256": "4267219910fda7467e5c7f31f30f3bd2c2dc694d4f9df1725dd5947978c4fdbf"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/19_1.sgd",
+      "type": "file",
+      "size_bytes": 68000,
+      "sha256": "35076babeea30b2cc8226fbed39a4023f668d167ba4b7daea41e84801eda23fb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/19_2.sgd",
+      "type": "file",
+      "size_bytes": 114480,
+      "sha256": "a56e9ffb48679e231e40ee4c59a5f0c845928c73463567daf0d38002c1e61cf6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/19_3.sgd",
+      "type": "file",
+      "size_bytes": 82000,
+      "sha256": "9deed2d5e6dc4af7abfb428cd2f6542ece06e6c70272d6b60ea5233459228ee6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/19_4.sgd",
+      "type": "file",
+      "size_bytes": 70800,
+      "sha256": "ce76d272e617a1b46dcaa2d4fb77a70fe78a1324ba429e1f637d9d581078c2bf"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/19_5.sgd",
+      "type": "file",
+      "size_bytes": 94880,
+      "sha256": "95068f6113a2ba33a1d2f3247499cf2d5bb41b64e2178317a6c869f2e42837b8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/19_6.sgd",
+      "type": "file",
+      "size_bytes": 73600,
+      "sha256": "f0ce5b1358756c1a6a5f9bf58379333bbd4bd46611f2fa6aef3c97151312cc38"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/1_1.sgd",
+      "type": "file",
+      "size_bytes": 50640,
+      "sha256": "b39d13268f1340560b88be17a8b13fe84aa2d1a5020489adb7102a46813ca096"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/1_2.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "1c9192134ce2b16634e5e7a3e640802faffbc4c72b8503f1c7f383fc930adcb6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/1_3.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "50c761ad34d75e0cc08c2b2ff0cc07cd74d596fa04a673ef6a35eec41483d6dd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/1_4.sgd",
+      "type": "file",
+      "size_bytes": 45600,
+      "sha256": "7e6727bd008a090e1e06f3d16d631f6466440a8570820778cc5fbd0aa723c8b1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/1_5.sgd",
+      "type": "file",
+      "size_bytes": 107200,
+      "sha256": "7e62ba14f61b659bf6d2632c598b257945780aec9277ee7215d5887b4cf7f8a4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/1_6.sgd",
+      "type": "file",
+      "size_bytes": 99920,
+      "sha256": "63908113c4c94e83b14e8854d07b255ca27035184aa65f09525d0617dcc6e490"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/1_7.sgd",
+      "type": "file",
+      "size_bytes": 110560,
+      "sha256": "88491a967ecdf42a9d2f5dbfbf87efcdcf0caf0c6c887b08d6c979f418a286c1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/20_1.sgd",
+      "type": "file",
+      "size_bytes": 142480,
+      "sha256": "549ce65ed6e0bc6375b62526bcab17d69b905461709e35081a555a37edc71571"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/20_2.sgd",
+      "type": "file",
+      "size_bytes": 139120,
+      "sha256": "d7ea9350e63c0c0d3d98947447e5c01387f1977167c370b7f4907622601d6381"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/20_3.sgd",
+      "type": "file",
+      "size_bytes": 70800,
+      "sha256": "65872cedb147f1591c3baff042de14e8ee2b13f8ec8477ab43383076dea96c42"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/20_4.sgd",
+      "type": "file",
+      "size_bytes": 140240,
+      "sha256": "1091bba9f611f885eaa07c5355fce5a65a3ba72914acfe6ba4f6793a83e43f05"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/20_5.sgd",
+      "type": "file",
+      "size_bytes": 140800,
+      "sha256": "640669fd05585006933fd6719d56593b12f0d79f984e80f449a3d8baa666698c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/20_6.sgd",
+      "type": "file",
+      "size_bytes": 71360,
+      "sha256": "d7dd63f101ad2f7ec19e77233d8481ca8cd32bad55c29b690b0e73f02047a189"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/21_1.sgd",
+      "type": "file",
+      "size_bytes": 143040,
+      "sha256": "844d8832e0350f5fd6091cf001aa1a5c4d8ae7119cad97fdbadbfd05acd218c8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/21_2.sgd",
+      "type": "file",
+      "size_bytes": 143600,
+      "sha256": "ed4fbc944c2624f6c7eb4fa3946766bfe9ca5dbdd97ea1371bffa72d14678e7a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/21_3.sgd",
+      "type": "file",
+      "size_bytes": 123440,
+      "sha256": "a0db73880830d7025c36e14c700afadc66e970b0fe8992dfd4a516cc2015b4f2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/21_4.sgd",
+      "type": "file",
+      "size_bytes": 142480,
+      "sha256": "6189eae0593ac701972154e2d6820d8c2ba20b7acc9018ef35e69c12e20c4028"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/21_5.sgd",
+      "type": "file",
+      "size_bytes": 139120,
+      "sha256": "24e69ae6ead09402870766e10ccfd0fd6245585e6fd6993d3514bcc142d97b86"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/21_6.sgd",
+      "type": "file",
+      "size_bytes": 124560,
+      "sha256": "61b1cf6ac865502affc528b2ec85fc9818daac5be5ef9f0639db647066dd13d4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/22_1.sgd",
+      "type": "file",
+      "size_bytes": 50640,
+      "sha256": "c1fbbd38467eda2e8756abdf5da25283ba7c8a615737ccd804ca7eccf59cb858"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/22_2.sgd",
+      "type": "file",
+      "size_bytes": 51200,
+      "sha256": "9029ce182659f07a19805a8790354d2120717138fc2def17229d59b9ba82fd2b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/22_3.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "ceb6f48b4859f9a8ae1d499a80619e95152ca4be520ac7ffb2e735195d441bd3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/22_4.sgd",
+      "type": "file",
+      "size_bytes": 50640,
+      "sha256": "dfdf9dd73081deaae85da7bb4e1c874b16ea63541c46f1cadfc80f1de2b5d533"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/22_5.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "5cbafc8dc2015fa0c744a032121afc447b17d1b787d4985ee9e66f67f3e11e17"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/22_6.sgd",
+      "type": "file",
+      "size_bytes": 50080,
+      "sha256": "1f40d20974922b43ba7faae8081d538381692949b12db963ec5bdc68132c46cc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/23_1.sgd",
+      "type": "file",
+      "size_bytes": 55680,
+      "sha256": "295d39ba68090c871edec8ed55ef2a3c8af8b54781036caa78b9d51237970824"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/23_2.sgd",
+      "type": "file",
+      "size_bytes": 66320,
+      "sha256": "ce8c0c8c73a0bff81ef030c16de5954900c72e0eb3828a8a6e873856c5475fc0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/23_3.sgd",
+      "type": "file",
+      "size_bytes": 69680,
+      "sha256": "735a4ede6333c6df9a079c9c87c72d3ace51797d7d9a50fb999fc355e4fe8cde"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/23_4.sgd",
+      "type": "file",
+      "size_bytes": 49520,
+      "sha256": "3aa5fd1f5180ab6b4597883a2e727a04ae453f623a527fb3f3f77b99f56ff844"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/23_5.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "315a603c7f8b82503e11f433a7d7f311d8d5b713a7c089cd3e1a2e024408b5fd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/23_6.sgd",
+      "type": "file",
+      "size_bytes": 51200,
+      "sha256": "8cb9c361167e7bcc4553216b0e7bf2294d6a9545c85abbf80294e2a18019b52b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/24_1.sgd",
+      "type": "file",
+      "size_bytes": 122320,
+      "sha256": "7c3c08d2831dafb3f2ee066512170110c394080025343b9862fc864ac41a8a0a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/24_2.sgd",
+      "type": "file",
+      "size_bytes": 119520,
+      "sha256": "70fae24a45e2b74ac3ecbf65e8376329cd053fac5b92ff7d2fe6970b0bb1e24d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/24_3.sgd",
+      "type": "file",
+      "size_bytes": 158160,
+      "sha256": "6b6607fe1d55ee2f42be9941322040207770bd92b6d76489fb2e276a39a3a107"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/24_4.sgd",
+      "type": "file",
+      "size_bytes": 137440,
+      "sha256": "727b3070810fe213d2face4690d0e313babc8208e51846160c794205b04bb11d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/24_5.sgd",
+      "type": "file",
+      "size_bytes": 105520,
+      "sha256": "5ae0940f6b16497fe2d73604655189d16b232540b4bbe71bb2cb31872240a870"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/24_6.sgd",
+      "type": "file",
+      "size_bytes": 86480,
+      "sha256": "71dc38f7802dd197ec724bb8e1a91f102f95fcfbacbc87530d448e4c927eca2c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/25_1.sgd",
+      "type": "file",
+      "size_bytes": 121200,
+      "sha256": "835da1816c936e020064eecfa50a341295c12e1fa9189358d522fd8f90825a7a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/25_2.sgd",
+      "type": "file",
+      "size_bytes": 120080,
+      "sha256": "1a170505e608ec86a3cca3d367e3fd32515fa1f73450e289afb4fb9c59de10bf"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/25_3.sgd",
+      "type": "file",
+      "size_bytes": 122320,
+      "sha256": "4457ef2f398e37f6bca7f108f87a5d28c0e81d8acebed361c03b115d5984998a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/25_4.sgd",
+      "type": "file",
+      "size_bytes": 103840,
+      "sha256": "96fe11e04723a2310107faa443492af1db3693e9d0c20561e09f0fe21c9b0df1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/25_5.sgd",
+      "type": "file",
+      "size_bytes": 116160,
+      "sha256": "791865cc357c291b7b0aff5c1f815cbf0faa5a9c6d60d38e6d7aac9b2e177e7e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/25_6.sgd",
+      "type": "file",
+      "size_bytes": 84240,
+      "sha256": "057277b144604b7bbcf9fa46bc4737a39147754985f5092de72fc0d766936f39"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/26_1.sgd",
+      "type": "file",
+      "size_bytes": 115040,
+      "sha256": "1459303a36b7e7c7214e31e7a0adeafa6a4d2c1c7591b7e0064ba54e44d3c5e6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/26_2.sgd",
+      "type": "file",
+      "size_bytes": 68000,
+      "sha256": "697d328862dbb532457221e6dd1b494635c00e9ee7dbc3ab8a6a83e520d09987"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/26_3.sgd",
+      "type": "file",
+      "size_bytes": 65760,
+      "sha256": "f6d593523b03efec85a7d06d414212e1fa260b3811f5507d00906515e027393b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/26_4.sgd",
+      "type": "file",
+      "size_bytes": 62960,
+      "sha256": "59b1b1dc068fea6ff8daadee89171166e606cec3461ec204f0fcd5512888c845"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/26_5.sgd",
+      "type": "file",
+      "size_bytes": 66320,
+      "sha256": "d4563a67778fb8e02353a1414dd8f7235039cafbf258bc150920008f076ca22d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/26_6.sgd",
+      "type": "file",
+      "size_bytes": 66320,
+      "sha256": "054887ebfbb8957c2d54f03b680a04c9113d82cc04b9aae78d7b7650df503f48"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/27_1.sgd",
+      "type": "file",
+      "size_bytes": 65200,
+      "sha256": "3a6fede2d1c7a5654566581808666c9931a34fdb80e778bb923d0127bdd2cae2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/27_2.sgd",
+      "type": "file",
+      "size_bytes": 74160,
+      "sha256": "31dd5877a7e2a5602ba227188a12920499539868d6b12fc0390421c79b3bd25c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/27_3.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "a67252daaff4baa44c683cc38bf1b86edb61346689e39714ef4d1bc5202e5576"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/27_4.sgd",
+      "type": "file",
+      "size_bytes": 81440,
+      "sha256": "e9832900a8ab3e9d8562303fe5ba7d42bb5bacaf1c321e5ba2af83d898e05ff5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/27_5.sgd",
+      "type": "file",
+      "size_bytes": 72480,
+      "sha256": "0fb7ac5f51d3084d38455800b89928d5b348662b4201bf35d2871d59fbbb87e4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/27_6.sgd",
+      "type": "file",
+      "size_bytes": 74160,
+      "sha256": "465d05d821370ec54440ced30bdc9091329eb0326eb02a65f6b5413a302799f8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/28_1.sgd",
+      "type": "file",
+      "size_bytes": 6400,
+      "sha256": "a695f68de85137492ba7091ffcadcaa53da4bf208eab98f527c75902f7abee8a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/28_2.sgd",
+      "type": "file",
+      "size_bytes": 6400,
+      "sha256": "d4446306ba5a1ccdf7e7cf790e7bda337b993ed2d2f658bb4a40c31e85d3bcee"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/28_3.sgd",
+      "type": "file",
+      "size_bytes": 5280,
+      "sha256": "68994398546ba4c86b043d3d689f28ae50039e09b2a41b5cf5575f1db8fe1fe6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/28_4.sgd",
+      "type": "file",
+      "size_bytes": 6400,
+      "sha256": "708f0028a15b9e9a870737b6785cb676888f3bf1d1becac9c186205d5f2c1ead"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/28_5.sgd",
+      "type": "file",
+      "size_bytes": 6400,
+      "sha256": "ccd9809bc4ddad28f1240f21a2331ffa364f34f70f6067131d951a711d37a2ca"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/28_6.sgd",
+      "type": "file",
+      "size_bytes": 6960,
+      "sha256": "86244e98b83b51de85a248929b15752ae86696995a709c098d10d7f3d01b6fa8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/29_1.sgd",
+      "type": "file",
+      "size_bytes": 70800,
+      "sha256": "8d1da70145fea8da8fa3b00da82e673a21666920f6bf31bee18e3215c1d726cc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/29_2.sgd",
+      "type": "file",
+      "size_bytes": 43360,
+      "sha256": "6866e6dce5963cdf949d3f58cff2f6c2afc6ef6af518798b6ceb5c4218660c37"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/29_3.sgd",
+      "type": "file",
+      "size_bytes": 29920,
+      "sha256": "09b40cc4e55d3d37b722f3a32f212b31ab82afd0601504638094f8b7f48e14a5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/29_4.sgd",
+      "type": "file",
+      "size_bytes": 67440,
+      "sha256": "5b1d866bb55383a3ed1ca942d756666b14950427b21634bab3317fc01638bebc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/29_5.sgd",
+      "type": "file",
+      "size_bytes": 43360,
+      "sha256": "ae0b3addd0a2fb12c4ab15a08172387a2f75a965b3b2f5981d259add97eccad2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/29_6.sgd",
+      "type": "file",
+      "size_bytes": 52320,
+      "sha256": "561c370748f03b135edcace1de055f3b89f090d41bb2be9214584c0147afb269"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/2_1.sgd",
+      "type": "file",
+      "size_bytes": 71920,
+      "sha256": "af236fb0dbc8c2e53db89537b2578f78b0c71fb5d5244759284c30195f5308c4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/2_2.sgd",
+      "type": "file",
+      "size_bytes": 56800,
+      "sha256": "4713431f2068f4d13507460618ecd504c376ee0e91802d800e92e2bc2851ff0f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/2_3.sgd",
+      "type": "file",
+      "size_bytes": 43920,
+      "sha256": "377f07bfb150adfa2a3ce890beef9b5607eaf3a8f2e10604cd9fc03b104f1070"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/2_4.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "1eb347efe4dadf8749ec05ac994ee299ac4147003d1388dae5286e97cf32e7f4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/2_5.sgd",
+      "type": "file",
+      "size_bytes": 44480,
+      "sha256": "fbfce915d8542d00424637726c8093a2f590b7a17cbd9176536b51a7fb44950a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/30_1.sgd",
+      "type": "file",
+      "size_bytes": 64640,
+      "sha256": "b37939ec44a771552fe4d915b5c3064432b92c013663dc475f490132e88101dd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/30_2.sgd",
+      "type": "file",
+      "size_bytes": 68000,
+      "sha256": "3c0c6f9460b14e5f27768212c0744f3509910aea055570ef8c0806272874c356"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/30_3.sgd",
+      "type": "file",
+      "size_bytes": 69680,
+      "sha256": "78c4286fe2f628c85f8e1697f59cc354b26e971ca612388f8f801a2a2835d491"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/30_4.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "e5fe2f180b426483d35a7b7b4688a8a353d4e12d9033c6edadb07a593d23fb5b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/30_5.sgd",
+      "type": "file",
+      "size_bytes": 63520,
+      "sha256": "bd038666754863704031afd7369ba3ef81d49369b4c6b67dcd4b0f87f62a1460"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/30_6.sgd",
+      "type": "file",
+      "size_bytes": 72480,
+      "sha256": "c98cdc8337222104c759902ca6089c193eca2a8502dd97e6a8e82de4aaef0853"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/31_1.sgd",
+      "type": "file",
+      "size_bytes": 19840,
+      "sha256": "7988ae89309b54452695017a094836de5a754d013fd762eff740b52e176a7554"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/31_2.sgd",
+      "type": "file",
+      "size_bytes": 9760,
+      "sha256": "5ef5ef4b84d66aa7c96cf95e03508d631e4d508954f1256e997cb813c45c48eb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/31_3.sgd",
+      "type": "file",
+      "size_bytes": 17600,
+      "sha256": "f6981ca343568853cf1ba1b7276a90df2c0dfce0af9f692a0412d8918d4db5ae"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/31_4.sgd",
+      "type": "file",
+      "size_bytes": 15360,
+      "sha256": "ec3142d9d0b29bb9e5a11e57a502dbb81f04eb6094398ee2261f42f50a8d8130"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/31_5.sgd",
+      "type": "file",
+      "size_bytes": 13120,
+      "sha256": "3fb811d300a85b071b22c7a4e6e0618c2fba86fd01b2c18522c8e6005a443103"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/31_6.sgd",
+      "type": "file",
+      "size_bytes": 28240,
+      "sha256": "c104b44eaffcfd6f8e2bc297a82d065daf41fd4d60875d1aaa7ee355ff798172"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/32_1.sgd",
+      "type": "file",
+      "size_bytes": 6960,
+      "sha256": "c62302da4de98dfde3d974ca206330c126e64f8648fcc333332267c18f2c5667"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/32_2.sgd",
+      "type": "file",
+      "size_bytes": 5280,
+      "sha256": "d5c2e24ac1adbf0a1d8efffe270c6627b8c2046f82913ec161c698a10e1ce574"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/32_3.sgd",
+      "type": "file",
+      "size_bytes": 23200,
+      "sha256": "8cee95a98af636d0c2c0b4d4ac472646af7552aa781a8ffbad1b5cd1d1653c07"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/32_4.sgd",
+      "type": "file",
+      "size_bytes": 3600,
+      "sha256": "0b7bce82c14f34ca8d10c8024c4779e1583635468db6a4ef09cc19c136b0410d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/32_5.sgd",
+      "type": "file",
+      "size_bytes": 6960,
+      "sha256": "0f135f32735ae8e49e7c8894df50549e0b36a4b4c574d0a0f836b1237d42522e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/32_6.sgd",
+      "type": "file",
+      "size_bytes": 20400,
+      "sha256": "294eb35b2d448b6fe42791f30566906705f8d46490cdc5d0088b7a9d12c67f64"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/33_1.sgd",
+      "type": "file",
+      "size_bytes": 33280,
+      "sha256": "55d54068973abfa22d1ac6f5828b384bd2c32b87a77fca3bc43ff2e5055420c7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/33_2.sgd",
+      "type": "file",
+      "size_bytes": 14240,
+      "sha256": "bb6d4773640ef9e3c51175c02e27cd9369b2d215ccc50294579f00f00a916166"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/33_3.sgd",
+      "type": "file",
+      "size_bytes": 23760,
+      "sha256": "2235e8ac2885df24884cfdb3a551aef7ca0be9ae6943f390a80626288b067d3e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/33_4.sgd",
+      "type": "file",
+      "size_bytes": 14240,
+      "sha256": "13b841b5a7ede5513bc2ca0eb25cfe67379872abea293c6d7210f8cf9abc047f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/33_5.sgd",
+      "type": "file",
+      "size_bytes": 14800,
+      "sha256": "94f2ad683e827c61997663369b6f0b264100a57096238c597910ceb93560cf01"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/33_6.sgd",
+      "type": "file",
+      "size_bytes": 29920,
+      "sha256": "c4afa495ccbc8838634a8bb865f48b410add183647a42fc02674543269141bfa"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/34_1.sgd",
+      "type": "file",
+      "size_bytes": 197360,
+      "sha256": "bd4fdc0c70996bd49bf99f72580f25110b4c5753103b033f58d5a0e1013cadfe"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/34_2.sgd",
+      "type": "file",
+      "size_bytes": 121760,
+      "sha256": "f73ce96cff6e6109d9e3828f3d621c808326df65757a6d041fa0e512fb1dcaf6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/34_3.sgd",
+      "type": "file",
+      "size_bytes": 49520,
+      "sha256": "1645b10bcf64e05f6376a279cfc1eae8c229fdbd4b7ea4d8e6920aa8ba3be620"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/34_4.sgd",
+      "type": "file",
+      "size_bytes": 106640,
+      "sha256": "6045a30ca7ea1fe9f93d350ff3c597c200298abd4111996ca0488de05e8a7419"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/34_5.sgd",
+      "type": "file",
+      "size_bytes": 97680,
+      "sha256": "ba591d76cb4849dc5ee1636ab8f0582e61e95070d8e1617dc8e994ac5f49dc39"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/35_1.sgd",
+      "type": "file",
+      "size_bytes": 197360,
+      "sha256": "7e6a49fb3a275b61441bdb905174a97c331487b4615a7fffba4fc6903f1ba54b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/35_2.sgd",
+      "type": "file",
+      "size_bytes": 122320,
+      "sha256": "1dfcbcdd12678a64697ceb8537282e072fb7744c9063be0ea93da09e7e91b6ea"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/35_3.sgd",
+      "type": "file",
+      "size_bytes": 52880,
+      "sha256": "8936cdeff0d271bd7d3b0aa8f53d96727d56a0a564e62d0c4e1d00764bc2b13c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/35_4.sgd",
+      "type": "file",
+      "size_bytes": 108880,
+      "sha256": "d1cc164923bcfd54971907467018f4c4c9a610e671095f7d51cd4cf5626d9efb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/35_5.sgd",
+      "type": "file",
+      "size_bytes": 94880,
+      "sha256": "c379c30f0703f5c0d8c23f370474b5905075bbf02968c9ea6a407c9641b41a86"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_1.sgd",
+      "type": "file",
+      "size_bytes": 60160,
+      "sha256": "03fa631f3dd854a0f36b4a871431d565218b87348566ebec778ace974f1be1e4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_10.sgd",
+      "type": "file",
+      "size_bytes": 57360,
+      "sha256": "be8c9b8662a6f2125f570afa12058ad69ce55a7cea5deb159c458ff22cf123e1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_11.sgd",
+      "type": "file",
+      "size_bytes": 58480,
+      "sha256": "6a2affaba745fbbc858b47092dbe6c6ba9266e9f521d633cd20b167e50670669"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_12.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "699c889275956654731cb91e4fe5356e74bef45e2c58f0af0448e98d922c8efe"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_13.sgd",
+      "type": "file",
+      "size_bytes": 61840,
+      "sha256": "712eef70b8b97ccfa5ca88ab951baee79c935c9052ad9b47857a45fb0665dbfd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_14.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "bb58bb2ad01cced98bddad5ce471bba79f4d0b3bde576030dee033b1229df58e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_15.sgd",
+      "type": "file",
+      "size_bytes": 62400,
+      "sha256": "98e8a247a3a0d35ab2c04f8e6a6263871b24767e09cc7693baf8b93e9a7bd37e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_16.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "96073c5f92bc9b64f58127585fd11a4d504d2553dff53a6a5dcb8594d49f6d05"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_17.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "44675fe605ac99e1c93acfac9f8f005aacc9806045e65210aac64e83bd89d3b4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_18.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "3823076a618a307fddfbc51fcb04381a2755695903408772639125ccc1174648"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_19.sgd",
+      "type": "file",
+      "size_bytes": 61840,
+      "sha256": "4396e2f8601b821a7870617c7e500976dceed2446564fd80b30684e19c3bc16c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_2.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "82edc0ba056ea995863a3e57acca1228fbc61dc22846ad0f73d81eaa44ad8d75"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_20.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "c2027d53bb4eec9b93507f03e37f694d231d368ca80f2de58c733d6c352da515"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_21.sgd",
+      "type": "file",
+      "size_bytes": 64080,
+      "sha256": "0b4548cb7a923a6b686305cdfce8752bc3b899ca5555eea115f3ef14bb9041ba"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_22.sgd",
+      "type": "file",
+      "size_bytes": 63520,
+      "sha256": "bd173356eb2e8f4a5c9ebe460990e9944fa4cccbce2ac002f2b92ffc36ff2b6f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_23.sgd",
+      "type": "file",
+      "size_bytes": 62960,
+      "sha256": "1e50e2e3256ddcc3493d33819e05a6d3ba640718ae849943afa2c7d39323a11c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_24.sgd",
+      "type": "file",
+      "size_bytes": 61840,
+      "sha256": "fd63c55ad792ddb3332e2c5658a986ff4469b9a442808c751c0a7387bcace6b5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_25.sgd",
+      "type": "file",
+      "size_bytes": 61840,
+      "sha256": "e144197e9514000182873057481edd6e77f4ca7903e1c1bf50b258518f5e863e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_26.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "6a833ede3a50fa7bd292a461bf3b0cd1d39d8cffe421a438e8c96a8eba4634c1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_27.sgd",
+      "type": "file",
+      "size_bytes": 57360,
+      "sha256": "82f7372167f40b4196b8027231abd3f35460ca0f97bc900c67ea0c4d56fd8a0c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_28.sgd",
+      "type": "file",
+      "size_bytes": 59600,
+      "sha256": "4f735749e90f1a8ed65d650f826d9457fc82682be946acdda9ecb0e2d4ac1948"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_29.sgd",
+      "type": "file",
+      "size_bytes": 59040,
+      "sha256": "15c35747d9bcfe63d75f350eabd0d249b3f29896f6bf81dace136f6c0fa41b2f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_3.sgd",
+      "type": "file",
+      "size_bytes": 64080,
+      "sha256": "4a9aadf0b4b62d0e200d7e674b21590b7acd85defaa506c6433bc395585cd4dd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_30.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "302f341ea5bcecbedee6fcc11c8620c96bd762e38363517c08278f7f46181502"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_31.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "464ffde1634b5c5f11105520833f1f70c8c5c68189cfbbfcdf8479faa6387352"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_32.sgd",
+      "type": "file",
+      "size_bytes": 59040,
+      "sha256": "b27141180908cd99f9ee84711e941d290829ee5ae6e8b74af0a4375ff72fa5a8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_33.sgd",
+      "type": "file",
+      "size_bytes": 56800,
+      "sha256": "d5628f28f4645b686ad781bfd2245cc85053d284fe97124694c4209e231a8844"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_34.sgd",
+      "type": "file",
+      "size_bytes": 57360,
+      "sha256": "1a23b85c8bfdcb8a010fd1b3675591c9836f883cc509b527b142782381e540da"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_35.sgd",
+      "type": "file",
+      "size_bytes": 61840,
+      "sha256": "a9b3af9bde3d4bcc42203d5bbaf94f4690a0428e91a90659455496c567306351"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_36.sgd",
+      "type": "file",
+      "size_bytes": 61840,
+      "sha256": "dba2d67d6a2464f2b7b381aed31fc13cf79e99ec955184380023b75d2eaf018b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_37.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "da73cad9dc17fa0290dd7c93d42d72e9412b90055328fa20050f3930a78f40c3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_38.sgd",
+      "type": "file",
+      "size_bytes": 57360,
+      "sha256": "b9ce48ff612feb3baa2ad367c5ca3a6be48aab977397c92d7309da9863170c11"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_39.sgd",
+      "type": "file",
+      "size_bytes": 62400,
+      "sha256": "35f8784c0ea4c5bbc34546fd6a388c055942f1aba9e3d37e2a305088e8a20de1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_4.sgd",
+      "type": "file",
+      "size_bytes": 65760,
+      "sha256": "4a4ffab238b10d45ee8d677608986aaf6da58492314645eea4042aba6f296dae"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_40.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "7984d5683495109a8a5de7f87b6eabbef99ef58e4582abe17697b32e3a77800f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_41.sgd",
+      "type": "file",
+      "size_bytes": 58480,
+      "sha256": "4c72e2891001ce5fc9afe526a27347d42fdb528acdb9ca567461b193a738b774"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_42.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "cbddb0a3c9dc418980bf9fe1217138e4d22a320dd648ddd2808d88adeebb8bd7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_43.sgd",
+      "type": "file",
+      "size_bytes": 59040,
+      "sha256": "f2df6762c0e6e53bb437cf1ad11f82956c525f0953c92fb0b0f72137e88f8351"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_44.sgd",
+      "type": "file",
+      "size_bytes": 57360,
+      "sha256": "d77044285ef4b9ff89aa7cd112ffaa536033656c2b8946d45b31898c7f6b8c0f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_45.sgd",
+      "type": "file",
+      "size_bytes": 63520,
+      "sha256": "976e82958a563386ffac81b60bf16950d72798e14e548ff9f5bf3bb599e5416f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_46.sgd",
+      "type": "file",
+      "size_bytes": 61840,
+      "sha256": "68710bac73402da641152fd21ae9228d3036ca0c16e6042dcea601341334ad4a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_47.sgd",
+      "type": "file",
+      "size_bytes": 58480,
+      "sha256": "49f5b38b0ac9af4dc0352e3a50a3968fc3d781d89a92ede4d89703805e4cf608"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_48.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "8679be4a74bd5214a9b4e6991be202bd32067ab995bbe4d4d8a044b674782396"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_49.sgd",
+      "type": "file",
+      "size_bytes": 58480,
+      "sha256": "b8d541336b35219e29c9c2e7dba894c36cfe96c15c2cf7a86099b60444b7d8a1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_5.sgd",
+      "type": "file",
+      "size_bytes": 64640,
+      "sha256": "8cae0b3f05508dbbc4a04148652e2b2a6d2e11fcf6931066a6751f1a1b2e2660"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_50.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "2332d1f9a8b06fc068c6bc05fb811a8e36fc3dfcf451cbb084aef9c161c298c9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_51.sgd",
+      "type": "file",
+      "size_bytes": 65760,
+      "sha256": "564f4630e420d9d3617f99adf0e443d68f72e6801b03a4ec7195ab068a55fdf7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_52.sgd",
+      "type": "file",
+      "size_bytes": 63520,
+      "sha256": "50394066a26bce4efb990dd418142ddb4a0b329a346fdce6b741d8fd3073ec64"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_53.sgd",
+      "type": "file",
+      "size_bytes": 65200,
+      "sha256": "ca0a3176321c3526e2de8376680b87da1c26cd53df6eeddbdf3e8a9d4c18bfdc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_54.sgd",
+      "type": "file",
+      "size_bytes": 64640,
+      "sha256": "1e6a1158ba5501c4efae5c6bbf97373e6a29e4ff00af22479551914ee5c67ddd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_55.sgd",
+      "type": "file",
+      "size_bytes": 57360,
+      "sha256": "1bf7e500010df51a201a4d1fa96f71f1cc0ccdc802c7bcaa1a43c0ee40fe0372"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_56.sgd",
+      "type": "file",
+      "size_bytes": 63520,
+      "sha256": "40b069de60c2d8648d90041e1e0c676c149c002bdd3ddbf4712b70e9c15f028d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_57.sgd",
+      "type": "file",
+      "size_bytes": 59600,
+      "sha256": "0f4e86ed7300f247b236a759b0d665d2e42afd50b3d0c955a05373c335939812"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_58.sgd",
+      "type": "file",
+      "size_bytes": 61840,
+      "sha256": "4732cc7c159573e4d96f5b2a826aff2eb53d8a4c5f722f78c306c75ad76a9892"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_59.sgd",
+      "type": "file",
+      "size_bytes": 60160,
+      "sha256": "97c5998de84d38bd4f88fba6cedb8f6bfb111037520e5f308efbf523d89ac14f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_6.sgd",
+      "type": "file",
+      "size_bytes": 65760,
+      "sha256": "711820a5d04acefcb93db595e5252eb96a734f7aedf961014cbd8d09e06d3d44"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_60.sgd",
+      "type": "file",
+      "size_bytes": 58480,
+      "sha256": "d1c6e4ba48e4d8eddd3c9390ade4e579f5e72a44a0640126f3a0a0f3ba2db4af"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_61.sgd",
+      "type": "file",
+      "size_bytes": 62400,
+      "sha256": "ad0696e9caa5541b178926231ceadab5cb253a11ea9aed81a0a86fe82a22836f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_62.sgd",
+      "type": "file",
+      "size_bytes": 60160,
+      "sha256": "aa42ebbf59ff1ff4400832feb5850b15b5099c24a0fe1250ebc89d781bca916a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_63.sgd",
+      "type": "file",
+      "size_bytes": 60160,
+      "sha256": "41a7e65d0171b712de26858d736fdd7b9e529b0011537957ac8160c63a78bda6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_64.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "917aa35aa29774f5c5dfd4d89481b8b85d869493cf7a4ed70bed54a6aac7c4d7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_65.sgd",
+      "type": "file",
+      "size_bytes": 62960,
+      "sha256": "fce123c6159d95a877f81f6048c8c0ea46ea81739fabd2e298e81458e52fc275"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_66.sgd",
+      "type": "file",
+      "size_bytes": 57360,
+      "sha256": "d4826a9f6d2630909112270e938b196f8a3ae1ac7491a5a7549af930c07881e5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_67.sgd",
+      "type": "file",
+      "size_bytes": 65200,
+      "sha256": "2688c42950c4660e99b815e8a69c0500b8749806b31c957ab9c7be6b250b50ca"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_68.sgd",
+      "type": "file",
+      "size_bytes": 60720,
+      "sha256": "13559363d5804e411b421912189a1f70ab906e03cf76171f48dec1585b83460d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_69.sgd",
+      "type": "file",
+      "size_bytes": 63520,
+      "sha256": "3dbe53809e964d51afde4afda9e61a646a0ff7d9930bda7406f492ba7b2d3532"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_7.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "5560bd9bdf0225070a7ea82444b93e12689eeed03ed9fd2b14fd8ae891e557ef"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_70.sgd",
+      "type": "file",
+      "size_bytes": 62960,
+      "sha256": "c1273cc2050ec7aaa5296da11b2484738f11c97229d5897291869610399c7eb0"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_71.sgd",
+      "type": "file",
+      "size_bytes": 62400,
+      "sha256": "47b003e1801445d433cf0ebbe1bb3bd7039dc7f0ee74ae53956c3b77da17cbfe"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_72.sgd",
+      "type": "file",
+      "size_bytes": 62400,
+      "sha256": "69b5022bd1cfae2cfee6147fb159a61e5550afef92c4f0dae2fd83ffabc91393"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_8.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "cdd717f483a4d90023f263878b54ce3196d119437c76a44518964acef734fa3d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/36_9.sgd",
+      "type": "file",
+      "size_bytes": 61280,
+      "sha256": "baef5671465fb60405e542d27ee6e3700da5672db51dc036ad468f0fb6f454c3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/3_1.sgd",
+      "type": "file",
+      "size_bytes": 51760,
+      "sha256": "d8f9debab9de055e167b72be1149c7eda3614c2f0d9a7303800e85a0131f7172"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/3_2.sgd",
+      "type": "file",
+      "size_bytes": 111120,
+      "sha256": "d80f38b7c97d879bfc009a27b3bb18d912a194c7e2bb5982b75e65ce8ac0f641"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/3_3.sgd",
+      "type": "file",
+      "size_bytes": 73600,
+      "sha256": "3edf472c247e92ae37f165572433e886958cc1a9a5cab043a65db63c1cb0e063"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/3_4.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "558ddfe15236401ef38e411f9899bbca60104d16e30f408a518d500e9d7ce605"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/3_5.sgd",
+      "type": "file",
+      "size_bytes": 52880,
+      "sha256": "632fe157d379f6717d62200e27845db82bf545c7068fa2f6cebc27914df4c855"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_1.sgd",
+      "type": "file",
+      "size_bytes": 23200,
+      "sha256": "ab0e7d6b6c2b2d5f512388a8aa3e81ada14cf65f661c0f2eaf6899e7b56deaa4"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_2.sgd",
+      "type": "file",
+      "size_bytes": 27120,
+      "sha256": "ef610c34cf3bbdcd94cb859c36e570b53b31011c4061dc484052846dd55673b1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_3.sgd",
+      "type": "file",
+      "size_bytes": 22640,
+      "sha256": "02490943a5634d01454b2af86dd9993c6dbe3804f62d7f35043756f9011ae98a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_4.sgd",
+      "type": "file",
+      "size_bytes": 48960,
+      "sha256": "8f800ba81f85b3a3f12bea7d12d19b968fcc77ad7a3227f10b11c4cdcd5387f3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_5.sgd",
+      "type": "file",
+      "size_bytes": 65200,
+      "sha256": "396fd3c9bf1214cc6681bccc82c019a85c9d26edb162a2731a444d452a7832b1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_6.sgd",
+      "type": "file",
+      "size_bytes": 69680,
+      "sha256": "050aa1b678a7a2e450539d3452f93c42017ccd55889e24a723656f78f9156823"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_7.sgd",
+      "type": "file",
+      "size_bytes": 51200,
+      "sha256": "d8c0c3b0a6d4933f8ce608b3428f2a38d77c540e293a8edca8150b5eef4f2c8b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_8.sgd",
+      "type": "file",
+      "size_bytes": 48400,
+      "sha256": "0c44bd573ce6fbe9bc62277f3c543094cf17f0506cc77a3116ecc9ca01764840"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/4_9.sgd",
+      "type": "file",
+      "size_bytes": 97680,
+      "sha256": "f61a68d7f1f6e97cd7edcfc9d2b6902456978ac1e2c638d345ffd9d90bfc5dd8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_1.sgd",
+      "type": "file",
+      "size_bytes": 45600,
+      "sha256": "89e24e35a721edad9b513cf383269f333c1384c6328a02baa87d19a9e379bee9"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_10.sgd",
+      "type": "file",
+      "size_bytes": 48400,
+      "sha256": "259d5ef0a364ef4784b3661ab1edf80bdb2502c7a167d6c86984a350872f5b3a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_11.sgd",
+      "type": "file",
+      "size_bytes": 70800,
+      "sha256": "31b71c93d4ee555e8b7d29dc0974dfe59fc0e91f0c229cbc5054596121ed93b2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_12.sgd",
+      "type": "file",
+      "size_bytes": 48400,
+      "sha256": "34df88f25f1e9bf69aa8f5ef2f40e347b5a449f6335763e10d150d12bfc40423"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_13.sgd",
+      "type": "file",
+      "size_bytes": 43920,
+      "sha256": "5e0d681eacba973b87e717eeddbd1ae4c7997646ee46c2d08f6bd98aec7c9f6c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_2.sgd",
+      "type": "file",
+      "size_bytes": 90400,
+      "sha256": "294f79416afbf6d5c4ffceac1d09b1238ec8d388b9385fb4970200eae452c865"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_3.sgd",
+      "type": "file",
+      "size_bytes": 48400,
+      "sha256": "046a1367726a3b4d2ed4126285347abe65ef25b7eb508c8b1429008f4cdfa039"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_4.sgd",
+      "type": "file",
+      "size_bytes": 48400,
+      "sha256": "e88c6f6bf8bf100eb09a8b06af5757cbb005580515e74c96f269c723b2f6f9cd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_5.sgd",
+      "type": "file",
+      "size_bytes": 51200,
+      "sha256": "c7ea50156c4cb3d688757ef12645ffb96f3b01e635277590659350f7676ea1d5"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_6.sgd",
+      "type": "file",
+      "size_bytes": 48400,
+      "sha256": "8241e6935cabd57f59e60cef7f4575cde3390b2f06f2c009e76cba40ab22edca"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_7.sgd",
+      "type": "file",
+      "size_bytes": 28800,
+      "sha256": "d9b40fa2c4443c710561538a61b080ad40f24c8c4b7d89dab153d54d9e61d700"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_8.sgd",
+      "type": "file",
+      "size_bytes": 48400,
+      "sha256": "119df1bc5f04f8b34f23c230dd8d9ed4186ac0210a2c4a8bcb26aa05380c0f49"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/5_9.sgd",
+      "type": "file",
+      "size_bytes": 51200,
+      "sha256": "11b3e33abd4c81f7c864661c194d9fbade500131a35d1660615bc88ed34629fb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_1.sgd",
+      "type": "file",
+      "size_bytes": 37760,
+      "sha256": "b0774567ff2255e5a2fd1098955268c145c3743542d2500ba815d54107adce5b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_10.sgd",
+      "type": "file",
+      "size_bytes": 111120,
+      "sha256": "fc09818b08535a4dbb70092263659f228c63a06cc03392983dbc4dc4c54b39df"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_11.sgd",
+      "type": "file",
+      "size_bytes": 75280,
+      "sha256": "7843bf87578303134006b342f77801d3f20cfcb30a9bcb59440727aeeb5ddcfc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_12.sgd",
+      "type": "file",
+      "size_bytes": 17040,
+      "sha256": "4ddf681b2316ed57ec6d9b84712d950aead50bca22ec841380198df9995d22ec"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_2.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "f88c4f34264c3f56983d8def7656958f6a7db71732c770ed80bcc2ffc837d002"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_3.sgd",
+      "type": "file",
+      "size_bytes": 28240,
+      "sha256": "9cf6d0eba1fe107eb91f62ffba6ac2b8c929efaf2db35b5c093a1be16949e638"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_4.sgd",
+      "type": "file",
+      "size_bytes": 36640,
+      "sha256": "adb8081468e3a4cded2a79e18370e1aaead16ff5714ef39070b77beb84800652"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_5.sgd",
+      "type": "file",
+      "size_bytes": 14800,
+      "sha256": "f8b5a0ce84950aea44ad2ad2f0266ca942962aaf191e5cb6a8e5c882570bbd32"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_6.sgd",
+      "type": "file",
+      "size_bytes": 22640,
+      "sha256": "fd82ffc4d19bdbab803cb3881b1b11ed01181f2feb540eb453cb5fff0ac69ff1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_7.sgd",
+      "type": "file",
+      "size_bytes": 58480,
+      "sha256": "3ca9d5c371e78638fc6ecfe5eb984235f5c4460cb3c9d0080f6d328fee92e8f1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_8.sgd",
+      "type": "file",
+      "size_bytes": 65200,
+      "sha256": "be7d655b06da69d493c85985e183f671dedeb9a05dd7fc9c2de2968eeb085c95"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/6_9.sgd",
+      "type": "file",
+      "size_bytes": 69680,
+      "sha256": "ea7e072e64e62f1172f6fde9aa11c2d4ae69746bed47690cbbc3c36d73a7f251"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_1.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "2ca882005202280a3dc6fa872fb40b3d6ef82086d2e565ca4372a47ab5e4b847"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_10.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "00b44cef0ad5c83d68210aea9720d66cf4893483753f9096168dc063dbf8d33f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_11.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "924e85a1a5887d3105f2e815888a9ae4c3d5c5dfd7dcb7f45c8c58bdfa78f674"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_12.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "a9857f7ff66c9247001ddec4c9a10c70098e929d3f3afb3181d45bd8fbf0f540"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_13.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "9a5a678d3fcfa0c5fecdb39810b4b40d378c936cfbd26625d3956ae5671d293d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_14.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "395440c8f05f9e3c94bdcdf954f034aec1f068e9c6d3b46f68901c53ba99faa2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_15.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "984fddd536c4ad2fef323b0ee9704d84a3dc0d433f3bcefed43896f31ca60b6b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_16.sgd",
+      "type": "file",
+      "size_bytes": 52880,
+      "sha256": "e6b0a1c32a9fefe1e4eb4ddeb0556bec531a8dde894043e19358b5add937cd88"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_17.sgd",
+      "type": "file",
+      "size_bytes": 55680,
+      "sha256": "8983c93ee72b5b8d3889cc19a9044b05bd8f0ce0549996e498cf1d78412bdece"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_18.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "92cbd9fb1aac2c2a2d25ce17a075a9eb3c1983166a8aa9c98b27a0193ae1b97d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_19.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "f051f83d104c03243375224575778a34919601995a1ae788f65805a81ec3d121"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_2.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "c594e61ed11696d9357221510086a5a49d5c7ca3e52f9688c426f9a1bdf6c6f8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_20.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "ff2862bbb667b4402ad16602fd26615cf67e366bebcd02770734dcf58e0af3fd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_21.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "36af18d2bf752e52a383f765ce17d51db5f76c99ecd0226cfe6ed823f2b5f786"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_22.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "0d3e0d982c807e68ee8f0d020c5326756a88db28f77f85fd39b8956b99f5530d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_23.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "0c0fd1a2fe52139e452da80c61e3cc572cc4df5e4365e7cb21909695608d4bfa"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_24.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "bc8b1a9787beac7c0be6ac8a73f6942f8ae6b02879d5b622139e1c8d11445cfd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_25.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "d94c8b710dc66578153b053a232eff1a24ff7f6c95f79a78350ac7798a64c00e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_26.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "0bd74b77011b47c4dcb3b25671802bfde23586661ba048c1ee0d9637260013fb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_27.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "b78039b8c6130f4cacb62408be3df2eb31b29ab729caf6bd907594f4ef6365d2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_28.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "10ffe13741ced4e1a49de1b7d3908dfb2a103077b8c23b696cc493a7765ca5d1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_29.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "e1d71b7b8165337ebeff00eebaafc2221ec8a930cb2590500d5b4e046bcd16df"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_3.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "375df8b1203a0dbdc99879de482d1efc957239b7a31b9c0d28d726e07f8b01c3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_30.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "66d8c722459d343cb726ecbb39578f8d2ec2a18c0eb5d8cd20258507526bbabe"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_31.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "89196fbb0064886c3a721d2426c0a192c14a88c92189a66998a44af6d63c1660"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_32.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "1e5e458c74058c248a9646ab5744a45f3fe0170a33ae6d50ca9100bd9baef5cc"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_33.sgd",
+      "type": "file",
+      "size_bytes": 56240,
+      "sha256": "3c4629604fc55b2139cf67c8ee46f8840f8e9cb9acb584ad882dc10a8966f33a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_34.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "8be68d8274390f0473e7011c0248b7442efac43f474f2025c0759f8d75b05f0b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_35.sgd",
+      "type": "file",
+      "size_bytes": 56240,
+      "sha256": "57e3e2a00a93a0c812b1a5354730686142c1a4deafaefb19a5c885b6ff2eb60d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_36.sgd",
+      "type": "file",
+      "size_bytes": 55680,
+      "sha256": "bea1bf3170bdf6775d9171b56b26afd494578b49f09026cfdba228818e7f21fd"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_37.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "fe3ec543241f7ebabec6cad8c0e38035e31521fb94bc74261aa4fbb26476faa6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_38.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "76740a4a6627247e8865545cd8903b5839d5693ef88088478b4c0b7df397fd1d"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_39.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "484606484f5d303ac722695f7ac1c060af8fc73fc77d8cb3758454b9491dcf4a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_4.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "71a43b759ad230f439b6ab176ce1bf3ace431cc36bc903db2e876269039f94e2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_40.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "338e4ce1c04c9f013064d3e0575583f4b57cd713466fd09f5a36085429f05819"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_41.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "291c4aad0f7731ee00b5b1d063df345469cccbf22f5beb6ccd98f739badbc1a2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_42.sgd",
+      "type": "file",
+      "size_bytes": 52880,
+      "sha256": "d0f12d288d0c9f93f3856ffc372a29d6adfdf108739fb19551cc54fe8e009ca2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_43.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "cd209b5bce32a8a69f0bb00f7d0c8ce16b87d03a95d2ac98d2fe64972df3c21c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_44.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "97a87cb965ea0ff4942dc597afba533ae6084cdce66e93518e7515205f7891c1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_45.sgd",
+      "type": "file",
+      "size_bytes": 56240,
+      "sha256": "5a2b84474ca17451d530e965da9d6c04570cf8a7eb397b06db8e9534ac879f52"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_46.sgd",
+      "type": "file",
+      "size_bytes": 55120,
+      "sha256": "72cc5b182620d1a4c07db3a1bbe46233d6c2e5fbf09dfd4c5a21a8956bf5e3f2"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_47.sgd",
+      "type": "file",
+      "size_bytes": 54000,
+      "sha256": "29d4791890973e726ebf7a76d7758bac082c3ff9e349d70126873bd3d2606000"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_48.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "5526950a52f5a5f4ca38300266e533017cd5db78d20cbe62f7d87d9e9bca044b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_5.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "925fc3310302aecf85c5330a85cd7be3e5537ba146b844da0ec6e6529273ebcb"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_6.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "5351b8476e27c8bc06f53f3b1d6305bd838f419c54cad1d37974c5d4b8b4087a"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_7.sgd",
+      "type": "file",
+      "size_bytes": 53440,
+      "sha256": "8a046a873d2e66ae51510bd37892d5ff14c12a1909b471eb7b3009551650329b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_8.sgd",
+      "type": "file",
+      "size_bytes": 52880,
+      "sha256": "bd5a203baaad65d510e398a835082848dd5d44b835dbb5c877a1159cdb07b1b3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/7_9.sgd",
+      "type": "file",
+      "size_bytes": 54560,
+      "sha256": "8f363569e70e9bf4b9f810d18337e8484eb3e2ff802432d1ca1dbdd9d0454f7f"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/8_1.sgd",
+      "type": "file",
+      "size_bytes": 90400,
+      "sha256": "746e794d2f14e83cd264fa48a4acf935485304f774f11979ae98b979b13315f1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/8_2.sgd",
+      "type": "file",
+      "size_bytes": 113360,
+      "sha256": "1bff157fd3e28598a9cc1e8e399b2cfc2021eee69db7e22848436de0ba2ad123"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/8_3.sgd",
+      "type": "file",
+      "size_bytes": 113920,
+      "sha256": "4c59091dbb9f9b89c3323edd8b7e9aa8645d3675d488bae123ab88fdc3522cb7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/8_4.sgd",
+      "type": "file",
+      "size_bytes": 113360,
+      "sha256": "0f9cde9c1ab80390534b636a685f12fc8cfadf7a09cc57603de31f025977fff8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/8_5.sgd",
+      "type": "file",
+      "size_bytes": 50080,
+      "sha256": "9387cedd13e30a747fdb8a38d5d8ca67599a962bfb100058b05d8543f816451c"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/8_6.sgd",
+      "type": "file",
+      "size_bytes": 42240,
+      "sha256": "5c084f575f54959c985c756ab7778afa8725f1b6547fe98f8b6230b08d7a1d36"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_1.sgd",
+      "type": "file",
+      "size_bytes": 89280,
+      "sha256": "c7a74cb42a45b4fcb25f77402cc61875c1260ce9034143f34eb82ecb0a5f1373"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_10.sgd",
+      "type": "file",
+      "size_bytes": 73600,
+      "sha256": "e387236aa2777d046be5f01194de5fc4e5f60ac129aad59c0de34f139f9f53fa"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_11.sgd",
+      "type": "file",
+      "size_bytes": 62960,
+      "sha256": "3c11c0b08273abe42b5361c6f8c42938089c28fd47676cb26090cb94e2170bf8"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_12.sgd",
+      "type": "file",
+      "size_bytes": 62960,
+      "sha256": "87397085a825313a5116c099c141142ef3fa99c3a4a0f8a9977ad4217e704212"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_2.sgd",
+      "type": "file",
+      "size_bytes": 85360,
+      "sha256": "b1821b1ebe41d61ac81f89be677fac553f11586dbdb6e5b1cf8aee618364e103"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_3.sgd",
+      "type": "file",
+      "size_bytes": 94320,
+      "sha256": "05f85724f09d79eaa945ade3dea0d564950565675ec005949537531d9bf920a6"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_4.sgd",
+      "type": "file",
+      "size_bytes": 94320,
+      "sha256": "c2a9f09a24893943f21335b5474ea6741c2fb585367387362be0fd643b2b5276"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_5.sgd",
+      "type": "file",
+      "size_bytes": 98800,
+      "sha256": "0020613a25606626dc8cdfc16face4d563153960799f470386dfc0a2f287bd8b"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_6.sgd",
+      "type": "file",
+      "size_bytes": 90400,
+      "sha256": "e12babab8bde2dedbc2118d689eab56cd4165db061cd80f8ff7b615634f5a139"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_7.sgd",
+      "type": "file",
+      "size_bytes": 73600,
+      "sha256": "863948e2a0f930b83533f9a74743d4bf4fb9f2dc8d2c38ff7322b3d7e918dac7"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_8.sgd",
+      "type": "file",
+      "size_bytes": 76400,
+      "sha256": "3fef0c0099cc12f95392816546d5eccdf37407dd8aa34beb8246122e9a2725c3"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/9_9.sgd",
+      "type": "file",
+      "size_bytes": 79760,
+      "sha256": "0de6d7075e12fc02ea752692b9ae2a2b5d21714b8be66fc719d884fda5aa4c6e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/mini_014.sgd",
+      "type": "file",
+      "size_bytes": 1248080,
+      "sha256": "ffbae428453c7130c809c82139143843da3edb147ec59a9e46f9982bfa120047"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/mini_014_bgm01.sgd",
+      "type": "file",
+      "size_bytes": 414736,
+      "sha256": "cc1b049b8d2794da1ac2dfdc58851b4399fff7b11ff8cd5aac6e009168d560af"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/sound/mini_014_bgm04.sgd",
+      "type": "file",
+      "size_bytes": 208096,
+      "sha256": "003e28037e357dfa6aad189eb9db1e70f22fb1b439293d1c3b454a20ea81cc6e"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/title.gim",
+      "type": "file",
+      "size_bytes": 1048776,
+      "sha256": "d3e6a2dc580a0eb37d5dd41f713f2c2aad459e87ecd12b0eb035e3726d8478a1"
+    },
+    {
+      "path": "PSP_GAME/USRDIR/resource/title_en.gim",
+      "type": "file",
+      "size_bytes": 1048780,
+      "sha256": "6e772d39293ed9e5c186a650637c4eb246ed41a866a21ea09aefb754814bb7f3"
+    },
+    {
+      "path": "UMD_DATA.BIN",
+      "type": "file",
+      "size_bytes": 48,
+      "sha256": "178bc5fa3c6a3d9594b08d56e21784e4aa6655e7b6ffd858198e83d6a51f5956"
+    }
+  ]
+}

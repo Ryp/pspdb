@@ -1,0 +1,43 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "e93954f4a1704fe4424b61f1352c29a09fd4a6a9657573fc8813a4925978d369",
+  "size_bytes": 463144,
+  "extractor": {
+    "name": "PSP-DOCUMENT.DAT",
+    "sha256": "a4d20f1b9f921cdc65d3b9b98b03bfa1e45cc61ec1dde8f72f8fa4f639c81df5",
+    "version": "3",
+    "options": [
+      "upstream:8c95b37949c9a9ca183b7fd69c85d2e2dad7216d",
+      "fixed-key-99-slot-pages",
+      "explicit-docinfo-304-byte-authenticated-8-byte-key",
+      "platform-ordinals",
+      "page-files-only:1",
+      "byte-input-page-callbacks:1",
+      "pycryptodome:3.23.0",
+      "Pillow:12.3.0"
+    ]
+  },
+  "entries": [
+    {
+      "path": "ps3",
+      "type": "directory"
+    },
+    {
+      "path": "ps3/001.png",
+      "type": "file",
+      "size_bytes": 450049,
+      "sha256": "483b8a18f26139b3b5eb578b1c77361b162067e87c8825028ddf3192ef05caa9"
+    },
+    {
+      "path": "psp",
+      "type": "directory"
+    },
+    {
+      "path": "psp/001.png",
+      "type": "file",
+      "size_bytes": 450049,
+      "sha256": "483b8a18f26139b3b5eb578b1c77361b162067e87c8825028ddf3192ef05caa9"
+    }
+  ]
+}

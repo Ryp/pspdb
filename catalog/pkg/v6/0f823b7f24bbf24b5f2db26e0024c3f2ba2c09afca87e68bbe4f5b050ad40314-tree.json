@@ -62,13 +62,391 @@
         "sha256": "196d56e92c053da299a03473cab4518229110585a3dc5645009ab4a6dc0b67b4",
         "size_bytes": 10527616,
         "extractor": {
-          "name": "pspdb-ingest",
+          "name": "PSP-DOCUMENT.DAT",
+          "sha256": "a4d20f1b9f921cdc65d3b9b98b03bfa1e45cc61ec1dde8f72f8fa4f639c81df5",
           "version": "3",
-          "options": []
+          "options": [
+            "upstream:8c95b37949c9a9ca183b7fd69c85d2e2dad7216d",
+            "fixed-key-99-slot-pages",
+            "explicit-docinfo-304-byte-authenticated-8-byte-key",
+            "platform-ordinals",
+            "page-files-only:1",
+            "byte-input-page-callbacks:1",
+            "pycryptodome:3.23.0",
+            "Pillow:12.3.0"
+          ]
         },
         "name_rule": "identity",
-        "entries": [],
-        "error": "ExtractionFailed",
+        "entries": [
+          {
+            "path": "ps3",
+            "type": "directory"
+          },
+          {
+            "path": "ps3/001.png",
+            "type": "file",
+            "size_bytes": 30126,
+            "sha256": "8c295a9dd0fbc34a71a317c6da23a94122fb777cef6f0330c4fe81769a15474e"
+          },
+          {
+            "path": "ps3/002.png",
+            "type": "file",
+            "size_bytes": 13956,
+            "sha256": "fb87afc47cf2245e868fce74dbef9b3a8d59f7a0db2f7dd217442967272b7bbe"
+          },
+          {
+            "path": "ps3/003.png",
+            "type": "file",
+            "size_bytes": 763758,
+            "sha256": "07668b5d61720a5beec9d194c14539ed73f927206b1a037a67a1c64b3ea3fa5f"
+          },
+          {
+            "path": "ps3/004.png",
+            "type": "file",
+            "size_bytes": 637676,
+            "sha256": "91380b440f28678996228a738b61da84a044f5f352f01e30bdc56f2ad2799795"
+          },
+          {
+            "path": "ps3/005.png",
+            "type": "file",
+            "size_bytes": 269138,
+            "sha256": "b8a35b95eb9245e481b040c173681a5d8e764a03162906c0787a37b5d7e10e72"
+          },
+          {
+            "path": "ps3/006.png",
+            "type": "file",
+            "size_bytes": 256090,
+            "sha256": "dc721f1ad758737dda0d0b2287ef7ff5b61f9e7fc24f71426253a41e339ca5c4"
+          },
+          {
+            "path": "ps3/007.png",
+            "type": "file",
+            "size_bytes": 290470,
+            "sha256": "3b02ca0bf3456efa657ee4b74ad0a9ad98b327077328f4f16ddd8f026429e1f4"
+          },
+          {
+            "path": "ps3/008.png",
+            "type": "file",
+            "size_bytes": 467553,
+            "sha256": "682684f50c7f7a8848b5051b396086f094ba81fc32bd4df2683c8d39017b044f"
+          },
+          {
+            "path": "ps3/009.png",
+            "type": "file",
+            "size_bytes": 327505,
+            "sha256": "2d5c6ce575a81fd75c37d61333f60cb98f20a9b6b56dc2ddec6687a9ad26f73b"
+          },
+          {
+            "path": "ps3/010.png",
+            "type": "file",
+            "size_bytes": 395795,
+            "sha256": "41aba0d6c829ded81160d882c40828bf3e260274da2360f20b5b37e935ac818e"
+          },
+          {
+            "path": "ps3/011.png",
+            "type": "file",
+            "size_bytes": 353115,
+            "sha256": "16138cc008c96f67198dccc46841ff1d2d68adc50f6345c355e0eeb042c56fa6"
+          },
+          {
+            "path": "ps3/012.png",
+            "type": "file",
+            "size_bytes": 383287,
+            "sha256": "727c9ce0a1ab4f4137a29d3f788dafbdf843408f3a5c3f12a4f53b4b7ecdfc1f"
+          },
+          {
+            "path": "ps3/013.png",
+            "type": "file",
+            "size_bytes": 287559,
+            "sha256": "cc976814458e2e94358d5bc998575a274fda5e9afe380f43b1653ebabda1cca8"
+          },
+          {
+            "path": "ps3/014.png",
+            "type": "file",
+            "size_bytes": 337683,
+            "sha256": "4f7ff9fefd23faf600579e726d7eb87236189bd268941e5cb93c025f5848342a"
+          },
+          {
+            "path": "ps3/015.png",
+            "type": "file",
+            "size_bytes": 341584,
+            "sha256": "1e63bb128f353502fc0669f4ce211674d64acaaeb2116e984aaba4dcb1cf6b6d"
+          },
+          {
+            "path": "ps3/016.png",
+            "type": "file",
+            "size_bytes": 375825,
+            "sha256": "cda0fadebd331caa502de1ca93a13c12d8ba0c9c64440713b055556e80dd9712"
+          },
+          {
+            "path": "ps3/017.png",
+            "type": "file",
+            "size_bytes": 311652,
+            "sha256": "acca268f6c14bd09cfb909b11f786facedda1b44a36697c86f950241d95c030b"
+          },
+          {
+            "path": "ps3/018.png",
+            "type": "file",
+            "size_bytes": 309751,
+            "sha256": "8a0bbaf1c8921c9d03f902c27bb2e1979b9a4259f4c13e18660066f41d01a82b"
+          },
+          {
+            "path": "ps3/019.png",
+            "type": "file",
+            "size_bytes": 353408,
+            "sha256": "35473700ffa24d33e92f0217293b3d85e190f286a29f9eba9ad1632821fe1514"
+          },
+          {
+            "path": "ps3/020.png",
+            "type": "file",
+            "size_bytes": 283466,
+            "sha256": "6b132ab5932a46d0f8e23842095c52acc0834385c576034998e30c6342fb3703"
+          },
+          {
+            "path": "ps3/021.png",
+            "type": "file",
+            "size_bytes": 384231,
+            "sha256": "e0d20a531b329c9359680cb1118c1780cea1bee8b953c92a7ff47f041895bfa2"
+          },
+          {
+            "path": "ps3/022.png",
+            "type": "file",
+            "size_bytes": 351702,
+            "sha256": "cf1abc4dc6d1a180e9eb306f82e9bd0f88515630ba1b8579444eaf9aba99f807"
+          },
+          {
+            "path": "ps3/023.png",
+            "type": "file",
+            "size_bytes": 275218,
+            "sha256": "6ddee5173b14b54619999b1b45d9d52f59457dceb47a69d49dd3278e90899189"
+          },
+          {
+            "path": "ps3/024.png",
+            "type": "file",
+            "size_bytes": 299064,
+            "sha256": "d0fbff3288dbea796607823a4178045f6296849e34c8d98a457cb3f1a31388a1"
+          },
+          {
+            "path": "ps3/025.png",
+            "type": "file",
+            "size_bytes": 308580,
+            "sha256": "490bbf36a6967c7e132a620b5ed0fb977b782fd381944fba09b77fc2ef293918"
+          },
+          {
+            "path": "ps3/026.png",
+            "type": "file",
+            "size_bytes": 509727,
+            "sha256": "6520f22ea7720b14f17864153eb58ddf5c705f8d5e5f936bc90eaffb4d86be05"
+          },
+          {
+            "path": "ps3/027.png",
+            "type": "file",
+            "size_bytes": 470106,
+            "sha256": "9fb2a59a402d9a775b07c2b874b7fb89ff5f07c1377d2c7af6650cbd3ebb8cf3"
+          },
+          {
+            "path": "ps3/028.png",
+            "type": "file",
+            "size_bytes": 367077,
+            "sha256": "c3b4ddcb59cadbdf90523bff016ca204bd20b746ab3ccd304b02f5d14621871f"
+          },
+          {
+            "path": "ps3/029.png",
+            "type": "file",
+            "size_bytes": 745979,
+            "sha256": "d3413ea6e96f3d99c8617ce8d08e9eb39550733e9f6bd4dd0b60e136560576a8"
+          },
+          {
+            "path": "ps3/030.png",
+            "type": "file",
+            "size_bytes": 10302,
+            "sha256": "7be3a379c1904e298fd7b85f8abefdae0524ebd1bd39572b36606b8e19b2136c"
+          },
+          {
+            "path": "psp",
+            "type": "directory"
+          },
+          {
+            "path": "psp/001.png",
+            "type": "file",
+            "size_bytes": 30126,
+            "sha256": "8c295a9dd0fbc34a71a317c6da23a94122fb777cef6f0330c4fe81769a15474e"
+          },
+          {
+            "path": "psp/002.png",
+            "type": "file",
+            "size_bytes": 13956,
+            "sha256": "fb87afc47cf2245e868fce74dbef9b3a8d59f7a0db2f7dd217442967272b7bbe"
+          },
+          {
+            "path": "psp/003.png",
+            "type": "file",
+            "size_bytes": 763758,
+            "sha256": "07668b5d61720a5beec9d194c14539ed73f927206b1a037a67a1c64b3ea3fa5f"
+          },
+          {
+            "path": "psp/004.png",
+            "type": "file",
+            "size_bytes": 637676,
+            "sha256": "91380b440f28678996228a738b61da84a044f5f352f01e30bdc56f2ad2799795"
+          },
+          {
+            "path": "psp/005.png",
+            "type": "file",
+            "size_bytes": 269138,
+            "sha256": "b8a35b95eb9245e481b040c173681a5d8e764a03162906c0787a37b5d7e10e72"
+          },
+          {
+            "path": "psp/006.png",
+            "type": "file",
+            "size_bytes": 256090,
+            "sha256": "dc721f1ad758737dda0d0b2287ef7ff5b61f9e7fc24f71426253a41e339ca5c4"
+          },
+          {
+            "path": "psp/007.png",
+            "type": "file",
+            "size_bytes": 290470,
+            "sha256": "3b02ca0bf3456efa657ee4b74ad0a9ad98b327077328f4f16ddd8f026429e1f4"
+          },
+          {
+            "path": "psp/008.png",
+            "type": "file",
+            "size_bytes": 467553,
+            "sha256": "682684f50c7f7a8848b5051b396086f094ba81fc32bd4df2683c8d39017b044f"
+          },
+          {
+            "path": "psp/009.png",
+            "type": "file",
+            "size_bytes": 327505,
+            "sha256": "2d5c6ce575a81fd75c37d61333f60cb98f20a9b6b56dc2ddec6687a9ad26f73b"
+          },
+          {
+            "path": "psp/010.png",
+            "type": "file",
+            "size_bytes": 395795,
+            "sha256": "41aba0d6c829ded81160d882c40828bf3e260274da2360f20b5b37e935ac818e"
+          },
+          {
+            "path": "psp/011.png",
+            "type": "file",
+            "size_bytes": 353115,
+            "sha256": "16138cc008c96f67198dccc46841ff1d2d68adc50f6345c355e0eeb042c56fa6"
+          },
+          {
+            "path": "psp/012.png",
+            "type": "file",
+            "size_bytes": 383287,
+            "sha256": "727c9ce0a1ab4f4137a29d3f788dafbdf843408f3a5c3f12a4f53b4b7ecdfc1f"
+          },
+          {
+            "path": "psp/013.png",
+            "type": "file",
+            "size_bytes": 287559,
+            "sha256": "cc976814458e2e94358d5bc998575a274fda5e9afe380f43b1653ebabda1cca8"
+          },
+          {
+            "path": "psp/014.png",
+            "type": "file",
+            "size_bytes": 337683,
+            "sha256": "4f7ff9fefd23faf600579e726d7eb87236189bd268941e5cb93c025f5848342a"
+          },
+          {
+            "path": "psp/015.png",
+            "type": "file",
+            "size_bytes": 341584,
+            "sha256": "1e63bb128f353502fc0669f4ce211674d64acaaeb2116e984aaba4dcb1cf6b6d"
+          },
+          {
+            "path": "psp/016.png",
+            "type": "file",
+            "size_bytes": 375825,
+            "sha256": "cda0fadebd331caa502de1ca93a13c12d8ba0c9c64440713b055556e80dd9712"
+          },
+          {
+            "path": "psp/017.png",
+            "type": "file",
+            "size_bytes": 311652,
+            "sha256": "acca268f6c14bd09cfb909b11f786facedda1b44a36697c86f950241d95c030b"
+          },
+          {
+            "path": "psp/018.png",
+            "type": "file",
+            "size_bytes": 309751,
+            "sha256": "8a0bbaf1c8921c9d03f902c27bb2e1979b9a4259f4c13e18660066f41d01a82b"
+          },
+          {
+            "path": "psp/019.png",
+            "type": "file",
+            "size_bytes": 353408,
+            "sha256": "35473700ffa24d33e92f0217293b3d85e190f286a29f9eba9ad1632821fe1514"
+          },
+          {
+            "path": "psp/020.png",
+            "type": "file",
+            "size_bytes": 283466,
+            "sha256": "6b132ab5932a46d0f8e23842095c52acc0834385c576034998e30c6342fb3703"
+          },
+          {
+            "path": "psp/021.png",
+            "type": "file",
+            "size_bytes": 384231,
+            "sha256": "e0d20a531b329c9359680cb1118c1780cea1bee8b953c92a7ff47f041895bfa2"
+          },
+          {
+            "path": "psp/022.png",
+            "type": "file",
+            "size_bytes": 351702,
+            "sha256": "cf1abc4dc6d1a180e9eb306f82e9bd0f88515630ba1b8579444eaf9aba99f807"
+          },
+          {
+            "path": "psp/023.png",
+            "type": "file",
+            "size_bytes": 275218,
+            "sha256": "6ddee5173b14b54619999b1b45d9d52f59457dceb47a69d49dd3278e90899189"
+          },
+          {
+            "path": "psp/024.png",
+            "type": "file",
+            "size_bytes": 299064,
+            "sha256": "d0fbff3288dbea796607823a4178045f6296849e34c8d98a457cb3f1a31388a1"
+          },
+          {
+            "path": "psp/025.png",
+            "type": "file",
+            "size_bytes": 308580,
+            "sha256": "490bbf36a6967c7e132a620b5ed0fb977b782fd381944fba09b77fc2ef293918"
+          },
+          {
+            "path": "psp/026.png",
+            "type": "file",
+            "size_bytes": 509727,
+            "sha256": "6520f22ea7720b14f17864153eb58ddf5c705f8d5e5f936bc90eaffb4d86be05"
+          },
+          {
+            "path": "psp/027.png",
+            "type": "file",
+            "size_bytes": 470106,
+            "sha256": "9fb2a59a402d9a775b07c2b874b7fb89ff5f07c1377d2c7af6650cbd3ebb8cf3"
+          },
+          {
+            "path": "psp/028.png",
+            "type": "file",
+            "size_bytes": 367077,
+            "sha256": "c3b4ddcb59cadbdf90523bff016ca204bd20b746ab3ccd304b02f5d14621871f"
+          },
+          {
+            "path": "psp/029.png",
+            "type": "file",
+            "size_bytes": 745979,
+            "sha256": "d3413ea6e96f3d99c8617ce8d08e9eb39550733e9f6bd4dd0b60e136560576a8"
+          },
+          {
+            "path": "psp/030.png",
+            "type": "file",
+            "size_bytes": 10302,
+            "sha256": "7be3a379c1904e298fd7b85f8abefdae0524ebd1bd39572b36606b8e19b2136c"
+          }
+        ],
         "dependencies": [
           {
             "path": "USRDIR/CONTENT/DOCINFO.EDAT",

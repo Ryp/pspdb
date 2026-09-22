@@ -4,10 +4,136 @@
   "sha256": "b6d55d1dbcaa24065776e3bf434056c20369445c000dc4c428a13c7098806683",
   "size_bytes": 2006048,
   "extractor": {
-    "name": "pspdb-ingest",
+    "name": "PSP-DOCUMENT.DAT",
+    "sha256": "a4d20f1b9f921cdc65d3b9b98b03bfa1e45cc61ec1dde8f72f8fa4f639c81df5",
     "version": "3",
-    "options": []
+    "options": [
+      "upstream:8c95b37949c9a9ca183b7fd69c85d2e2dad7216d",
+      "fixed-key-99-slot-pages",
+      "explicit-docinfo-304-byte-authenticated-8-byte-key",
+      "platform-ordinals",
+      "page-files-only:1",
+      "byte-input-page-callbacks:1",
+      "pycryptodome:3.23.0",
+      "Pillow:12.3.0"
+    ]
   },
-  "entries": [],
-  "error": "ExtractionFailed"
+  "entries": [
+    {
+      "path": "ps3",
+      "type": "directory"
+    },
+    {
+      "path": "ps3/001.png",
+      "type": "file",
+      "size_bytes": 133001,
+      "sha256": "99b6584a9ac90c40b301bb7642dcde05036b67c2c428c824f2c753ea89871647"
+    },
+    {
+      "path": "ps3/002.png",
+      "type": "file",
+      "size_bytes": 153939,
+      "sha256": "ede54c1ce3ab56bcba95ed848070a1a0e0567e3e1d9ac6cca7ae6a1b325e89e1"
+    },
+    {
+      "path": "ps3/003.png",
+      "type": "file",
+      "size_bytes": 241139,
+      "sha256": "1e98b32572b90c2ea1bcfdf2cbe5eac460c174d6ec91b719193fae7d182529e0"
+    },
+    {
+      "path": "ps3/004.png",
+      "type": "file",
+      "size_bytes": 237066,
+      "sha256": "35eb48720e7c26df1833fa0659426e2ea22c7d4ab94b26717626abf73daab797"
+    },
+    {
+      "path": "ps3/005.png",
+      "type": "file",
+      "size_bytes": 264327,
+      "sha256": "3786cb850e33cb003db632d63d46974bd090c05d7db3cc274e0d04a0a8101770"
+    },
+    {
+      "path": "ps3/006.png",
+      "type": "file",
+      "size_bytes": 271334,
+      "sha256": "cd8b24f386d2c53c04ef1e8125e840750bfead5b0f7b41a519d2211912e256c3"
+    },
+    {
+      "path": "ps3/007.png",
+      "type": "file",
+      "size_bytes": 228708,
+      "sha256": "7d645229f15338e4ab5ed78c048f953bb66a6197607bd4983b0407f5debf9ed8"
+    },
+    {
+      "path": "ps3/008.png",
+      "type": "file",
+      "size_bytes": 238980,
+      "sha256": "6e9aa27c0811f763aa545b11fdd3b595aeba8fbdd33ec54765fefb4682bd77c4"
+    },
+    {
+      "path": "ps3/009.png",
+      "type": "file",
+      "size_bytes": 223769,
+      "sha256": "86d38dde099ea23885a84264ab200acf366dfd1076745de084b55de4332c3a55"
+    },
+    {
+      "path": "psp",
+      "type": "directory"
+    },
+    {
+      "path": "psp/001.png",
+      "type": "file",
+      "size_bytes": 133001,
+      "sha256": "99b6584a9ac90c40b301bb7642dcde05036b67c2c428c824f2c753ea89871647"
+    },
+    {
+      "path": "psp/002.png",
+      "type": "file",
+      "size_bytes": 153939,
+      "sha256": "ede54c1ce3ab56bcba95ed848070a1a0e0567e3e1d9ac6cca7ae6a1b325e89e1"
+    },
+    {
+      "path": "psp/003.png",
+      "type": "file",
+      "size_bytes": 241139,
+      "sha256": "1e98b32572b90c2ea1bcfdf2cbe5eac460c174d6ec91b719193fae7d182529e0"
+    },
+    {
+      "path": "psp/004.png",
+      "type": "file",
+      "size_bytes": 237066,
+      "sha256": "35eb48720e7c26df1833fa0659426e2ea22c7d4ab94b26717626abf73daab797"
+    },
+    {
+      "path": "psp/005.png",
+      "type": "file",
+      "size_bytes": 264327,
+      "sha256": "3786cb850e33cb003db632d63d46974bd090c05d7db3cc274e0d04a0a8101770"
+    },
+    {
+      "path": "psp/006.png",
+      "type": "file",
+      "size_bytes": 271334,
+      "sha256": "cd8b24f386d2c53c04ef1e8125e840750bfead5b0f7b41a519d2211912e256c3"
+    },
+    {
+      "path": "psp/007.png",
+      "type": "file",
+      "size_bytes": 228708,
+      "sha256": "7d645229f15338e4ab5ed78c048f953bb66a6197607bd4983b0407f5debf9ed8"
+    },
+    {
+      "path": "psp/008.png",
+      "type": "file",
+      "size_bytes": 238980,
+      "sha256": "6e9aa27c0811f763aa545b11fdd3b595aeba8fbdd33ec54765fefb4682bd77c4"
+    },
+    {
+      "path": "psp/009.png",
+      "type": "file",
+      "size_bytes": 223769,
+      "sha256": "86d38dde099ea23885a84264ab200acf366dfd1076745de084b55de4332c3a55"
+    }
+  ]
 }

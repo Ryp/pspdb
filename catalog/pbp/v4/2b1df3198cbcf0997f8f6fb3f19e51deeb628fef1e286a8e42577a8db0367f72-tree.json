@@ -1,0 +1,124 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "2b1df3198cbcf0997f8f6fb3f19e51deeb628fef1e286a8e42577a8db0367f72",
+  "size_bytes": 143381589,
+  "extractor": {
+    "name": "Zig-PSP zPBPTool",
+    "version": "4",
+    "options": [
+      "in-memory"
+    ]
+  },
+  "entries": [
+    {
+      "path": "DATA.BIN",
+      "type": "file",
+      "size_bytes": 143283285,
+      "sha256": "98db89ab34d783535efedb284302531e29854525537c9cf12cb5b5ddbb176169",
+      "extraction": {
+        "sha256": "98db89ab34d783535efedb284302531e29854525537c9cf12cb5b5ddbb176169",
+        "size_bytes": 143283285,
+        "extractor": {
+          "name": "PSXtract-2",
+          "sha256": "ed4bf3de8502c4097eddbba0f6ace5f5bdd6e4ffc0b8a19ecd79302fe55d7b9e",
+          "version": "2",
+          "options": [
+            "<parent.pbp>",
+            "reconstructed-disc",
+            "native-linux"
+          ]
+        },
+        "name_rule": "identity",
+        "entries": [
+          {
+            "path": "ISO_HEADER.BIN",
+            "type": "file",
+            "size_bytes": 735360,
+            "sha256": "7a0edfeac3f2ea02a9951cb675a47c48deca0beb95ec8a7881060fd9d2ce7a42"
+          },
+          {
+            "path": "OVERDUMP.BIN",
+            "type": "file",
+            "size_bytes": 376304,
+            "sha256": "0b95584ba6738fa8c31a5d36dd4930efe9ae7110b39ceeb48fd6c08b422c07ac"
+          },
+          {
+            "path": "SPECIAL_DATA.BIN",
+            "type": "file",
+            "size_bytes": 4249,
+            "sha256": "f1d322e51df07b0d56d47e90b46d588f21340fd08739aa84dd3ab9217cb72fcf"
+          },
+          {
+            "path": "STARTDAT.BIN",
+            "type": "file",
+            "size_bytes": 12277,
+            "sha256": "9dbe026b80c7a72f3cc3048fb8d98113a7709cc1cb726a75b046f2bf4624f7ee"
+          },
+          {
+            "path": "TRASH.BIN",
+            "type": "file",
+            "size_bytes": 16,
+            "sha256": "92651d3409ba65ee1af7f7e9d2d2f34b275c5034c6f10f278d0144dfd372c62e"
+          },
+          {
+            "path": "disc.bin",
+            "type": "file",
+            "size_bytes": 717534048,
+            "sha256": "d8446783f11dea6ef0f1fe04576ff78beedad4b491aba67e1aae8ae7b5d9e532"
+          }
+        ]
+      }
+    },
+    {
+      "path": "DATA.PSP",
+      "type": "file",
+      "size_bytes": 37415,
+      "sha256": "a2c1314a826d342db78e89acf16257cfaa73b76bc1a6cc5c718f596135255e1b",
+      "extraction": {
+        "sha256": "a2c1314a826d342db78e89acf16257cfaa73b76bc1a6cc5c718f596135255e1b",
+        "size_bytes": 37415,
+        "extractor": {
+          "name": "pspdb-pops",
+          "version": "2",
+          "options": [
+            "in-memory"
+          ]
+        },
+        "name_rule": "source_stem",
+        "entries": [
+          {
+            "path": "payload.gz",
+            "type": "file",
+            "size_bytes": 7131,
+            "sha256": "106ab12021d6718f21be7726a9516314b58e0d1b190925758c3defed859bd6e0"
+          }
+        ]
+      }
+    },
+    {
+      "path": "ICON0.PNG",
+      "type": "file",
+      "size_bytes": 12671,
+      "sha256": "87b3c70abaf7b7b487e4181077da1f9b8b4839e538f1058646c7bbc96671988a"
+    },
+    {
+      "path": "PARAM.SFO",
+      "type": "file",
+      "size_bytes": 944,
+      "sha256": "584115d7f9656da816dc1005ea8dc4c36d488d70578988952914f41e0a05cf47"
+    },
+    {
+      "path": "PIC0.PNG",
+      "type": "file",
+      "size_bytes": 44583,
+      "sha256": "47b786bc4a521da0ea82bcc929501c6e7f96675a3e2a2c93148cb022298d636c"
+    },
+    {
+      "path": "PIC1.PNG",
+      "type": "file",
+      "size_bytes": 2651,
+      "sha256": "3350f606604ed7153a9b60b45c3483738cb45c3ef1a30a730116c0923d6d68f1"
+    }
+  ]
+}

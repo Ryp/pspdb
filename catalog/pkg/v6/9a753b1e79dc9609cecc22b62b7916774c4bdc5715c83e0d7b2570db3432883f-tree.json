@@ -1,0 +1,148 @@
+{
+  "kind": "tree",
+  "schema_version": 1,
+  "sha256": "9a753b1e79dc9609cecc22b62b7916774c4bdc5715c83e0d7b2570db3432883f",
+  "size_bytes": 147869408,
+  "extractor": {
+    "name": "pspdb-ingest",
+    "version": "6",
+    "options": []
+  },
+  "entries": [
+    {
+      "path": "ICON0.PNG",
+      "type": "file",
+      "size_bytes": 37437,
+      "sha256": "e1a9159b3f583f5dfcffc2a5ba8d42af32afb0efd6e1c94ef2218a089c99f36a"
+    },
+    {
+      "path": "ICON0_01.PNG",
+      "type": "file",
+      "size_bytes": 37437,
+      "sha256": "e1a9159b3f583f5dfcffc2a5ba8d42af32afb0efd6e1c94ef2218a089c99f36a"
+    },
+    {
+      "path": "ICON0_02.PNG",
+      "type": "file",
+      "size_bytes": 37437,
+      "sha256": "e1a9159b3f583f5dfcffc2a5ba8d42af32afb0efd6e1c94ef2218a089c99f36a"
+    },
+    {
+      "path": "ICON0_03.PNG",
+      "type": "file",
+      "size_bytes": 37437,
+      "sha256": "e1a9159b3f583f5dfcffc2a5ba8d42af32afb0efd6e1c94ef2218a089c99f36a"
+    },
+    {
+      "path": "ICON0_04.PNG",
+      "type": "file",
+      "size_bytes": 37437,
+      "sha256": "e1a9159b3f583f5dfcffc2a5ba8d42af32afb0efd6e1c94ef2218a089c99f36a"
+    },
+    {
+      "path": "ICON0_05.PNG",
+      "type": "file",
+      "size_bytes": 37437,
+      "sha256": "e1a9159b3f583f5dfcffc2a5ba8d42af32afb0efd6e1c94ef2218a089c99f36a"
+    },
+    {
+      "path": "PARAM.SFO",
+      "type": "file",
+      "size_bytes": 408,
+      "sha256": "ad7b27c6fc515964fb1bd0e0c12f1ba67557cec7a2711fda267f47619233f61b"
+    },
+    {
+      "path": "PIC0.PNG",
+      "type": "file",
+      "size_bytes": 191501,
+      "sha256": "0bebee713ea84e9b03e9dcfe6208262711e29e7907f27ad33fc81e14af3fde13"
+    },
+    {
+      "path": "PIC0_01.PNG",
+      "type": "file",
+      "size_bytes": 191501,
+      "sha256": "0bebee713ea84e9b03e9dcfe6208262711e29e7907f27ad33fc81e14af3fde13"
+    },
+    {
+      "path": "PIC0_03.PNG",
+      "type": "file",
+      "size_bytes": 199970,
+      "sha256": "40e686ec0d9d48d17a30df4bb4aff8c1bd13b483aa8c18364d2e0e225005018e"
+    },
+    {
+      "path": "PIC2.PNG",
+      "type": "file",
+      "size_bytes": 79177,
+      "sha256": "ab315c4d9924aeb724f7ac4dc3281b6086c22047f85a057dfec4f4c7e1cc165a"
+    },
+    {
+      "path": "PIC2_01.PNG",
+      "type": "file",
+      "size_bytes": 79177,
+      "sha256": "ab315c4d9924aeb724f7ac4dc3281b6086c22047f85a057dfec4f4c7e1cc165a"
+    },
+    {
+      "path": "PIC2_03.PNG",
+      "type": "file",
+      "size_bytes": 83317,
+      "sha256": "805d345668096244fd544e319716e36a33ff53b0e5d811d75babcbe36001a286"
+    },
+    {
+      "path": "PS3LOGO.DAT",
+      "type": "file",
+      "size_bytes": 5120,
+      "sha256": "e08430957ac3f4ee719dc2ed04d3443c395dd3b997d8f34f68a1b5c37d92f425"
+    },
+    {
+      "path": "USRDIR",
+      "type": "directory"
+    },
+    {
+      "path": "USRDIR/CONTENT",
+      "type": "directory"
+    },
+    {
+      "path": "USRDIR/CONTENT/DOCINFO.EDAT",
+      "type": "file",
+      "size_bytes": 320,
+      "sha256": "fbc03ceedb5f27c6bf52c6e071e6040757930619eb980e90234377f6d3d6d88d"
+    },
+    {
+      "path": "USRDIR/CONTENT/DOCUMENT.DAT",
+      "type": "file",
+      "size_bytes": 10456352,
+      "sha256": "49665c9cac47a2573a276579c8c1f0886b0d0e1479e97d651594afe52364c202",
+      "extraction": {
+        "sha256": "49665c9cac47a2573a276579c8c1f0886b0d0e1479e97d651594afe52364c202",
+        "size_bytes": 10456352,
+        "extractor": {
+          "name": "pspdb-ingest",
+          "version": "3",
+          "options": []
+        },
+        "name_rule": "identity",
+        "entries": [],
+        "error": "InvalidDocinfo",
+        "dependencies": [
+          {
+            "path": "USRDIR/CONTENT/DOCINFO.EDAT",
+            "sha256": "fbc03ceedb5f27c6bf52c6e071e6040757930619eb980e90234377f6d3d6d88d",
+            "size_bytes": 320
+          }
+        ]
+      }
+    },
+    {
+      "path": "USRDIR/CONTENT/EBOOT.PBP",
+      "type": "file",
+      "size_bytes": 136354848,
+      "sha256": "b553c0cf6cd5b8c126f54ee314501e859245608ac6d00af9f1acb869bafb0080"
+    },
+    {
+      "path": "USRDIR/ISO.BIN.EDAT",
+      "type": "file",
+      "size_bytes": 272,
+      "sha256": "87e6be6300f6dce409363e8146b71de418364ac667fb08526c438bc662385b18"
+    }
+  ]
+}

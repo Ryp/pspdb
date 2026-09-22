@@ -20,13 +20,42 @@
         "sha256": "5ef8d2341565b60de4cb3734d248487d85f1809548f14912da303aa2c3a97f15",
         "size_bytes": 103872786,
         "extractor": {
-          "name": "pspdb-ingest",
+          "name": "PSXtract-2",
+          "sha256": "ed4bf3de8502c4097eddbba0f6ace5f5bdd6e4ffc0b8a19ecd79302fe55d7b9e",
           "version": "2",
-          "options": []
+          "options": [
+            "<parent.pbp>",
+            "reconstructed-disc",
+            "native-linux"
+          ]
         },
         "name_rule": "identity",
-        "entries": [],
-        "error": "ExtractionFailed"
+        "entries": [
+          {
+            "path": "ISO_HEADER.BIN",
+            "type": "file",
+            "size_bytes": 735360,
+            "sha256": "721cc802f43f01326656c3562f3a97211816dcfd30c689ff0e6ecce59170cad6"
+          },
+          {
+            "path": "SPECIAL_DATA.BIN",
+            "type": "file",
+            "size_bytes": 23101,
+            "sha256": "53b6e319e72ea0f7ff4e3cb557bcb6ef0cb5b1ca1d325f89fc9312a83d5b5410"
+          },
+          {
+            "path": "STARTDAT.BIN",
+            "type": "file",
+            "size_bytes": 7394,
+            "sha256": "20c304897dd707c14f1277d9bfaee4719beccd61c9f5c01eff26ff8acbe6ef73"
+          },
+          {
+            "path": "disc.bin",
+            "type": "file",
+            "size_bytes": 204188880,
+            "sha256": "cf34fa03da136ba272fd44cd02f04bb0e254817751cd07cc5dec4787abbe7211"
+          }
+        ]
       }
     },
     {
