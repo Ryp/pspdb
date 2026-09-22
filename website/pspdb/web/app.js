@@ -736,7 +736,6 @@ function* buildCatalog(data) {
     const serialstationDiscs = (iso.serialstation_discs || []).filter(match => referenceUUID(match.id));
     const node = add(category, `${iso.sha256}.iso`, {
       type: "file",
-      redump: (iso.redump || []).filter(match => !serialstationDiscs.some(disc => disc.redump_id === match.id)),
       serialstation_discs: serialstationDiscs, umdatabase: iso.umdatabase || [], hash: iso.sha256, size: iso.size_bytes,
       displayName,
       gamePrefix: metadata.media_code === "G" ? identity : null,

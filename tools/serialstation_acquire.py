@@ -31,6 +31,7 @@ PKG_PATH = re.compile(r'/pkgs/(' + UUID + r')/\Z')
 USER_AGENT = 'pspdb-serialstation-acquire/2 (+https://github.com/ryp/pspdb)'
 RESPONSE_LIMIT = 2 * 1024 * 1024
 CANDIDATE_LIMIT = 256
+CHECKPOINT_INTERVAL = 100
 
 
 class AcquisitionError(Exception):
@@ -71,9 +72,12 @@ def catalog_packages(catalog):
         if record.get('kind') != 'pkg':
             continue
         metadata = record.get('metadata')
+        content_id = metadata.get('content_id') if isinstance(metadata, dict) else None
+        if content_id is None:
+            # Packages without a content ID have no SerialStation lookup key.
+            continue
         entry = {'sha1': normalize_sha1(record.get('sha1')),
-                 'size_bytes': record.get('size_bytes'),
-                 'content_id': metadata.get('content_id') if isinstance(metadata, dict) else None}
+                 'size_bytes': record.get('size_bytes'), 'content_id': content_id}
         digest = record.get('sha256')
         if not isinstance(digest, str) or not SHA256.fullmatch(digest) or not valid_identity(entry):
             raise AcquisitionError(f'Invalid PKG identity: {path}')
@@ -116,23 +120,25 @@ def load_snapshot(path):
 
 def validate_disc_fields(data):
     """Validate the optional disc index shared by both snapshot acquirers."""
-    fields = {key: data[key] for key in ('discs', 'disc_index_complete', 'discs_retrieved') if key in data}
-    discs = fields.get('discs', {})
-    if not isinstance(discs, dict):
-        raise AcquisitionError('Invalid SerialStation disc index')
-    for redump_id, matches in discs.items():
-        if not isinstance(redump_id, str) or not re.fullmatch(r'[1-9][0-9]*', redump_id):
-            raise AcquisitionError('Invalid Redump ID in SerialStation disc index')
-        if not isinstance(matches, list) or not matches:
-            raise AcquisitionError(f'Invalid SerialStation disc matches for {redump_id}')
-        seen = set()
-        for match in matches:
-            if (not isinstance(match, dict) or not isinstance(match.get('id'), str)
-                    or not re.fullmatch(UUID, match['id'])
-                    or not isinstance(match.get('name'), str) or not match['name'].strip()
-                    or match['id'] in seen):
-                raise AcquisitionError(f'Invalid SerialStation disc entry for {redump_id}')
-            seen.add(match['id'])
+    fields = {key: data[key] for key in ('discs', 'disc_serials', 'disc_index_complete', 'discs_retrieved')
+              if key in data}
+    for field, key_pattern in (('discs', r'[1-9][0-9]*'), ('disc_serials', r'[A-Z]{4}-[0-9]{5}/[0-9]+\.[0-9]{2}')):
+        mapping = fields.get(field, {})
+        if not isinstance(mapping, dict):
+            raise AcquisitionError(f'Invalid SerialStation {field} index')
+        for key, matches in mapping.items():
+            if not isinstance(key, str) or not re.fullmatch(key_pattern, key):
+                raise AcquisitionError(f'Invalid key in SerialStation {field} index')
+            if not isinstance(matches, list) or not matches:
+                raise AcquisitionError(f'Invalid SerialStation disc matches for {key}')
+            seen = set()
+            for match in matches:
+                if (not isinstance(match, dict) or not isinstance(match.get('id'), str)
+                        or not re.fullmatch(UUID, match['id'])
+                        or not isinstance(match.get('name'), str) or not match['name'].strip()
+                        or match['id'] in seen):
+                    raise AcquisitionError(f'Invalid SerialStation disc entry for {key}')
+                seen.add(match['id'])
     if 'disc_index_complete' in fields and type(fields['disc_index_complete']) is not bool:
         raise AcquisitionError('Invalid SerialStation disc completeness flag')
     if 'discs_retrieved' in fields and (
@@ -402,24 +408,36 @@ def main():
                 pending.setdefault(package['content_id'], {})[digest] = package
         print(f'{len(packages)} catalog PKGs, {sum(map(len, pending.values()))} to resolve '
               f'across {len(pending)} content IDs', file=sys.stderr)
+        def checkpoint():
+            matches, ids = {}, {}
+            for entry in entries.values():
+                key = identity(entry)
+                if key in matches and matches[key] != entry['id']:
+                    raise AcquisitionError('New observation conflicts with retained package; use --refresh')
+                if entry['id'] in ids and ids[entry['id']] != key:
+                    raise AcquisitionError('New observation conflicts with retained identity; use --refresh')
+                matches[key], ids[entry['id']] = entry['id'], key
+            write_snapshot(args.output, entries, missing)
+
+        # Each content ID's result is complete on its own. Incremental runs retain every prior
+        # result, so periodic checkpoints are supersets of the old snapshot and keep finished
+        # lookups when a later request fails (for example expired clearance). --refresh
+        # starts empty and therefore writes only after a complete pass.
         with ThreadPoolExecutor(args.workers) as pool:
             try:
-                for found, absent in pool.map(
-                        lambda cid: fetch(cid, pending[cid], args.timeout, args.retries), pending):
+                for done, (found, absent) in enumerate(pool.map(
+                        lambda cid: fetch(cid, pending[cid], args.timeout, args.retries), pending), 1):
                     entries.update(found)
                     missing.extend(absent)
+                    if not args.refresh and done % CHECKPOINT_INTERVAL == 0:
+                        checkpoint()
+                        print(f'{done}/{len(pending)} content IDs resolved', file=sys.stderr)
             except BaseException:
                 pool.shutdown(wait=True, cancel_futures=True)
+                if not args.refresh:
+                    checkpoint()
                 raise
-        matches, ids = {}, {}
-        for entry in entries.values():
-            key = identity(entry)
-            if key in matches and matches[key] != entry['id']:
-                raise AcquisitionError('New observation conflicts with retained package; use --refresh')
-            if entry['id'] in ids and ids[entry['id']] != key:
-                raise AcquisitionError('New observation conflicts with retained identity; use --refresh')
-            matches[key], ids[entry['id']] = entry['id'], key
-        write_snapshot(args.output, entries, missing)
+        checkpoint()
         print(f'{len(entries)} present, {len(missing)} absent -> {args.output}', file=sys.stderr)
     except (AcquisitionError, OSError) as error:
         print(f'serialstation-acquire: {error}', file=sys.stderr)

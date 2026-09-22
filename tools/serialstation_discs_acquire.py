@@ -1,7 +1,9 @@
-"""Acquire explicitly published PSP UMD-to-Redump links from SerialStation.
+"""Acquire SerialStation PSP UMD disc pages by serial/version and by published Redump link.
 
 Run with python -m tools.serialstation_discs_acquire --output SNAPSHOT.json.
-Validated public HTML is cached for resumable scans; --refresh ignores that cache.
+Listing rows map Internal ID + Data Version to disc UUIDs; detail pages add
+explicit Redump links unless --listing-only. Validated public HTML is cached for
+resumable scans; --refresh ignores that cache.
 """
 import argparse
 import json
@@ -25,6 +27,13 @@ AcquisitionError = packages.AcquisitionError
 PSP_SYSTEM = 'ab637dee-0616-4bc1-87aa-9853f38d5e73'
 DISC_PATH = re.compile(r'/discs/(' + packages.UUID + r')\Z')
 REDUMP_LINK = re.compile(r'https?://(?:www\.)?redump\.(?:org|info)/disc/([1-9][0-9]*)/?\Z')
+
+
+def serial_key(serial, version):
+    """Canonical `AAAA-NNNNN/M.mm` key shared with the viewer; None when unusable."""
+    serial = re.fullmatch(r'([A-Z]{4})-?([0-9]{5})', serial.strip().upper()) if isinstance(serial, str) else None
+    version = re.fullmatch(r'0*([0-9]+)\.([0-9]{2})', version.strip()) if isinstance(version, str) else None
+    return f'{serial[1]}-{serial[2]}/{int(version[1])}.{version[2]}' if serial and version else None
 
 
 class ListingParser(HTMLParser):
@@ -102,17 +111,23 @@ def parse_listing(html, page):
     start, end, total = parser.ranges[0]
     if not 1 <= start <= end <= total or page not in parser.pages:
         raise AcquisitionError('Invalid disc listing range or pagination')
-    ids = []
+    rows = []
     for row in parser.rows:
         if len(row) != 6 or ' '.join(''.join(row[2]['text']).split()) != 'PSP':
             raise AcquisitionError('Malformed or non-PSP disc listing row')
         links = row[0]['links']
         if len(links) != 1 or not (match := DISC_PATH.fullmatch(links[0])):
             raise AcquisitionError('Invalid disc listing UUID link')
-        ids.append(match[1])
+        name, edition, internal, version = (' '.join(''.join(row[i]['text']).split()) for i in (0, 1, 4, 5))
+        if not name:
+            raise AcquisitionError('Disc listing row has no name')
+        # Serial/version may be absent for unreleased or undocumented discs; they only lose that key.
+        rows.append({'id': match[1], 'name': f'{name} ({edition})' if edition else name,
+                     'key': serial_key(internal, version)})
+    ids = [row['id'] for row in rows]
     if len(ids) != end - start + 1 or len(set(ids)) != len(ids):
         raise AcquisitionError('Incomplete or duplicate disc listing rows')
-    return ids, start, end, total, parser.pages
+    return rows, start, end, total, parser.pages
 
 
 class DiscParser(packages.PageParser):
@@ -166,23 +181,7 @@ def load_snapshot(path):
         payload = json.loads(Path(path).read_text(encoding='utf-8'))
     except FileNotFoundError:
         return {'schema_version': 2, 'entries': {}, 'missing': []}
-    discs = payload.get('discs', {})
-    if not isinstance(discs, dict):
-        raise AcquisitionError('Malformed snapshot discs')
-    for redump, editions in discs.items():
-        if (not re.fullmatch(r'[1-9][0-9]*', redump)
-                or not isinstance(editions, list) or not editions):
-            raise AcquisitionError('Invalid snapshot Redump mapping')
-        seen = set()
-        for edition in editions:
-            if (not isinstance(edition, dict) or not isinstance(edition.get('id'), str)
-                    or not re.fullmatch(packages.UUID, edition['id'])
-                    or not isinstance(edition.get('name'), str) or not edition['name'].strip()
-                    or edition['id'] in seen):
-                raise AcquisitionError('Invalid snapshot disc edition')
-            seen.add(edition['id'])
-    if 'disc_index_complete' in payload and type(payload['disc_index_complete']) is not bool:
-        raise AcquisitionError('Invalid snapshot disc completion state')
+    packages.validate_disc_fields(payload)
     if 'discs_retrieved' in payload:
         try:
             if not isinstance(payload['discs_retrieved'], str):
@@ -226,6 +225,7 @@ def cached_page(path, cache, parse, args):
 
 
 def scan(args, found):
+    """Fill found['disc_serials'] from listings, and found['discs'] from details unless listing-only."""
     work = Path(args.work)
     seen = set()
     page, total, page_size = 1, None, None
@@ -237,8 +237,9 @@ def scan(args, found):
     with ThreadPoolExecutor(args.workers) as pool:
         while True:
             path = f'/ajax/table/discs?systems={PSP_SYSTEM}&page={page}'
-            ids, start, end, observed_total, pages = cached_page(
+            rows, start, end, observed_total, pages = cached_page(
                 path, work / f'listing-{page}.html', lambda html: parse_listing(html, page), args)
+            ids = [row['id'] for row in rows]
             if total is None:
                 total, page_size = observed_total, end
             last_page = (total + page_size - 1) // page_size
@@ -247,7 +248,10 @@ def scan(args, found):
                     or seen.intersection(ids)):
                 raise AcquisitionError('Disc listing changed or pagination is incomplete; use --refresh')
             seen.update(ids)
-            remaining = iter(ids)
+            for row in rows:
+                if row['key']:
+                    found['disc_serials'].setdefault(row['key'], {})[row['id']] = row['name']
+            remaining = iter(() if args.listing_only else ids)
             while batch := list(islice(remaining, args.workers)):
                 futures = [pool.submit(detail, disc_id) for disc_id in batch]
                 failure = None
@@ -257,7 +261,7 @@ def scan(args, found):
                     try:
                         disc_id, name, redump = future.result()
                         for redump_id in redump:
-                            found.setdefault(str(redump_id), {})[disc_id] = name
+                            found['discs'].setdefault(str(redump_id), {})[disc_id] = name
                     except (AcquisitionError, OSError) as error:
                         failure = failure or error
                         for pending in futures:
@@ -269,16 +273,24 @@ def scan(args, found):
             page += 1
 
 
-def publish(path, payload, found, complete):
-    discs = {} if complete else {
-        redump: {edition['id']: edition['name'] for edition in editions}
-        for redump, editions in payload.get('discs', {}).items()}
-    for redump, editions in found.items():
-        discs.setdefault(redump, {}).update(editions)
-    payload = dict(payload, discs={
-        redump: [{'id': disc_id, 'name': name} for disc_id, name in sorted(discs[redump].items())]
-        for redump in sorted(discs, key=int)}, disc_index_complete=complete,
-        discs_retrieved=datetime.now(timezone.utc).isoformat(timespec='seconds'))
+def publish(path, payload, found, listing_complete, details_complete):
+    """Merge new mappings; a completed pass replaces its own field, never the other one.
+
+    details_complete is None when detail pages were not read: the prior Redump
+    index and its completeness flag are then kept as they were."""
+    fields = {}
+    for field, complete, order in (('disc_serials', listing_complete, str), ('discs', details_complete, int)):
+        merged = {} if complete else {
+            key: {edition['id']: edition['name'] for edition in editions}
+            for key, editions in payload.get(field, {}).items()}
+        for key, editions in found[field].items():
+            merged.setdefault(key, {}).update(editions)
+        fields[field] = {key: [{'id': disc_id, 'name': name} for disc_id, name in sorted(merged[key].items())]
+                         for key in sorted(merged, key=order)}
+    if details_complete is None:
+        details_complete = payload.get('disc_index_complete', False)
+    payload = dict(payload, **fields, disc_index_complete=details_complete,
+                   discs_retrieved=datetime.now(timezone.utc).isoformat(timespec='seconds'))
     atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
 
 
@@ -288,6 +300,8 @@ def main():
     parser.add_argument('--work', default='.work/serialstation/discs', help='Validated public HTML cache')
     parser.add_argument('--refresh', action='store_true', help='Ignore saved HTML and fetch every page again')
     parser.add_argument('--workers', type=int, default=2, help='Concurrent detail requests, 1–32 (default: 2)')
+    parser.add_argument('--listing-only', action='store_true',
+                        help='Read only the listing pages (serial/version index); keep prior Redump mappings')
     parser.add_argument('--timeout', type=float, default=30.0, help='Per-request timeout in seconds')
     parser.add_argument('--retries', type=int, default=3, help='Retries for network errors, 429 and 5xx responses')
     args = parser.parse_args()
@@ -297,19 +311,22 @@ def main():
         parser.error('--timeout must be finite and positive and --retries must be nonnegative')
     try:
         payload = load_snapshot(args.output)
-        found = {}
+        found = {'discs': {}, 'disc_serials': {}}
         try:
             scan(args, found)
         except (AcquisitionError, OSError) as error:
-            if found:
-                publish(args.output, payload, found, complete=False)
+            if found['discs'] or found['disc_serials']:
+                publish(args.output, payload, found, listing_complete=False,
+                        details_complete=None if args.listing_only else False)
                 print(f'serialstation-discs-acquire: PARTIAL scan: {error}; verified mappings merged, '
                       'prior mappings retained; disc index is incomplete', file=sys.stderr)
             else:
                 print(f'serialstation-discs-acquire: {error}; no new mappings; snapshot unchanged', file=sys.stderr)
             return 1
-        publish(args.output, payload, found, complete=True)
-        print(f'{len(found)} Redump IDs with verified UMD mappings -> {args.output}', file=sys.stderr)
+        publish(args.output, payload, found, listing_complete=True,
+                details_complete=None if args.listing_only else True)
+        print(f"{len(found['disc_serials'])} serial/version keys, {len(found['discs'])} Redump IDs "
+              f'with UMD mappings -> {args.output}', file=sys.stderr)
     except (AcquisitionError, OSError) as error:
         print(f'serialstation-discs-acquire: {error}', file=sys.stderr)
         return 1

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from pspdb.serialstation import load_matches
+from pspdb.serialstation import load_matches, serial_key
 from pspdb.server import _CatalogCache, catalog_data
 from pspdb.wire import decode_catalog
 
@@ -61,6 +61,7 @@ class SerialStationTests(unittest.TestCase):
         self.assertEqual(matches, {
             'packages': {(SHA1, 4, PRESENT): {'id': PKG_ID, 'name': NAME}},
             'discs': {},
+            'serials': {},
         })
         records = catalog_data(self.catalog, serialstation=matches)['records']['pkg']
         annotated = {record['sha256']: record.get('serialstation') for record in records}
@@ -90,7 +91,7 @@ class SerialStationTests(unittest.TestCase):
         ]
         source = snapshot(self.root / 'discs.json', {}, discs={'33401': editions})
         matches = load_matches(source)
-        self.assertEqual(matches, {'packages': {}, 'discs': {33401: editions}})
+        self.assertEqual(matches, {'packages': {}, 'discs': {33401: editions}, 'serials': {}})
         provenance = [
             {'id': 33401, 'name': 'Redump verified name'},
             {'id': 99999, 'name': 'Unmapped Redump edition'},
@@ -109,6 +110,37 @@ class SerialStationTests(unittest.TestCase):
             self.assertNotIn('redump', records[char * 64])
         without_redump = catalog_data(self.catalog, serialstation=matches)['records']['iso']
         self.assertTrue(all('serialstation_discs' not in record for record in without_redump))
+
+    def test_serial_editions_link_unmapped_discs_but_never_override_redump(self):
+        folder = self.catalog / 'iso'
+        folder.mkdir()
+        for char, sha1, disc_id, version in (('1', SHA1, 'ULJS-00003', '1.01'),   # byte-exact Redump edition
+                                             ('2', 'e' * 40, 'ULJS00003', '1.01'),  # unhyphenated serial
+                                             ('3', 'd' * 40, 'ULJS-00003', '1.02'),  # other data version
+                                             ('4', 'c' * 40, None, '1.01')):
+            metadata = {'disc_version': version, **({'disc_id': disc_id} if disc_id else {})}
+            record = dict(kind='iso', schema_version=1, sha256=char * 64, sha1=sha1, size_bytes=4, metadata=metadata)
+            (folder / (char * 64 + '.json')).write_text(json.dumps(record))
+        serial_editions = [{'id': OTHER_DISC_ID, 'name': 'Listing edition'}]
+        source = snapshot(self.root / 'serials.json', {}, discs={'33401': [{'id': DISC_ID, 'name': DISC_NAME}]},
+                          disc_serials={'ULJS-00003/1.01': serial_editions})
+        matches = load_matches(source)
+        redump = {(SHA1, 4): [{'id': 33401, 'name': DISC_NAME}]}
+        records = {record['sha256']: record for record in
+                   catalog_data(self.catalog, redump=redump, serialstation=matches)['records']['iso']}
+        self.assertEqual([disc['id'] for disc in records['1' * 64]['serialstation_discs']], [DISC_ID])
+        self.assertEqual(records['2' * 64]['serialstation_discs'], serial_editions)
+        for char in ('3', '4'):
+            self.assertNotIn('serialstation_discs', records[char * 64])
+
+    def test_serial_keys_normalize_listing_and_umd_versions(self):
+        self.assertEqual(serial_key('uljs00003', '01.01'), 'ULJS-00003/1.01')
+        self.assertEqual(serial_key('ULJS-00003', '1.01'), 'ULJS-00003/1.01')
+        for serial, version in ((None, '1.00'), ('ULJS-00003', ''), ('UMD VIDEO', '1.00'), ('ULJS-00003', '1.0')):
+            self.assertIsNone(serial_key(serial, version))
+        with self.assertRaisesRegex(ValueError, 'serial key'):
+            load_matches(snapshot(self.root / 'bad-key.json', {}, disc_serials={'ULJS-00003': [
+                {'id': DISC_ID, 'name': DISC_NAME}]}))
 
     def test_disk_cache_tracks_package_and_disc_changes(self):
         self.add_iso()
@@ -208,6 +240,7 @@ class SerialStationTests(unittest.TestCase):
         self.assertEqual(load_matches(source), {
             'packages': {(SHA1, 4, PRESENT): {'id': PKG_ID, 'name': NAME}},
             'discs': {},
+            'serials': {},
         })
 
     def test_rejects_unusable_snapshots(self):

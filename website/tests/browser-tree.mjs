@@ -104,6 +104,12 @@ const result=await evaluate(`(async()=>{
   link.click();
   check(selected===before,'SerialStation click preserves selection');
  }
+ check((nodeAtPath('umd/game')?.children||[]).every(n=>!(n.redump||[]).length),'UMD rows never link Redump directly');
+ for(const node of (nodeAtPath('umd/game')?.children||[]).filter(n=>n.serialstation_discs.length).slice(0,3)){
+  jump(node);
+  const links=[...rowElements.get(node.index).querySelectorAll('.serialstation-link')];
+  check(links.length===node.serialstation_discs.length&&links.every((link,i)=>link.href==='https://serialstation.com/discs/'+node.serialstation_discs[i].id),'SerialStation disc UUID URL');
+ }
  for(const node of [...nodes.values()].filter(n=>(n.umdatabase||[]).length)){
   jump(node);
   const links=[...rowElements.get(node.index).querySelectorAll('.umdatabase-link')];

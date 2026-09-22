@@ -511,9 +511,10 @@ Clearing the search removes `q` while retaining the selected tree path.
 
 Open **http://localhost:8000**, or the host's LAN address. Omit `--store` to hide
 downloads; omit `--host` to bind only to localhost. Add `--redump /path/to/dat.zip`
-(or an XML DAT) to link exact ISO SHA-1 + size matches to Redump and to supply the
-UMD population denominator of the coverage chrome. The DAT is
-loaded at startup; ingest records hashes without depending on Redump.
+(or an XML DAT) to match exact ISO SHA-1 + size against Redump, which supplies the
+UMD population denominator of the coverage chrome and SerialStation's disc
+mapping below. The DAT is loaded at startup; ingest records hashes without
+depending on Redump.
 Store availability checks have a 15-second deadline per batch. A stalled request
 shows **Check failed**, not **Missing**, and does not block later batches. Reload
 the page to retry failed checks after restoring access to the store.
@@ -542,8 +543,7 @@ identities only; `--refresh` rechecks the current catalog, including misses.
 Version 1 content-ID-only snapshots must be rebuilt with `--refresh`; the viewer
 accepts only version 2 package snapshots.
 
-For UMDs, acquire SerialStation's explicitly published Redump cross-references
-into the same snapshot:
+For UMDs, acquire SerialStation's PSP disc index into the same snapshot:
 
 ```sh
 uv run python tools/serialstation_discs_acquire.py \
@@ -552,28 +552,37 @@ uv run pspdb-web --catalog catalog --redump /path/to/dat.zip \
   --serialstation .work/serialstation/catalog.json
 ```
 
-The viewer first matches ISO SHA-1 and byte size against the Redump DAT, then
-uses SerialStation's published Redump ID to attach `/discs/UUID` links.
-Verified SerialStation links replace the corresponding Redump links in the
-tree; unmapped Redump links remain. Multiple verified editions are retained.
-Titles and serial numbers are not match keys. Redump remains the UMD coverage
-denominator and must still be supplied for disc matching.
+The listing pages map each disc UUID to its `Internal ID` and data `Version`
+(`disc_serials`, keyed `AAAA-NNNNN/M.mm`); detail pages add SerialStation's
+explicitly published Redump cross-references (`discs`). `--listing-only` reads
+just the listing pages and keeps the prior Redump index. The viewer links each
+UMD to `/discs/UUID`: first through an exact ISO SHA-1 + size Redump match and
+SerialStation's published Redump ID, otherwise through the UMD's own `disc_id`
+and `disc_version` (from `UMD_DATA.BIN`/`PARAM.SFO`). A serial/version key
+identifies a disc build, not bytes, so it may list several label editions
+(for example Original and Best); all are retained. SerialStation disc pages
+carry the Redump cross-reference, so UMD rows do not link Redump directly.
+Reconstructed PS1 discs inside PSN packages keep their exact Redump links.
+Redump remains the UMD coverage denominator.
 
 Disc acquisition caches validated listing and detail HTML under
 `.work/serialstation/discs`; rerun to resume, or use `--refresh` to fetch again.
 A failed scan merges any verified mappings, retains prior mappings, marks
 `disc_index_complete` false, and exits nonzero. With no new mappings, the
-snapshot is unchanged. A complete scan replaces the disc index; package entries
-are preserved. Partial indexes are usable but do not establish absence of a
-SerialStation page for an unmapped disc.
+snapshot is unchanged. A complete listing pass replaces `disc_serials`; a
+complete detail pass replaces `discs`; package entries are preserved. Partial
+indexes are usable but do not establish absence of a SerialStation page for an
+unmapped disc.
 
 Unlike the content-ID API, the package pages may require Cloudflare clearance.
 Acquisition accepts `SERIALSTATION_COOKIE` and `SERIALSTATION_USER_AGENT` in its
 environment for an authorized session; credentials are never written into the
 snapshot. Do not put cookie values in shell history or committed files.
 HTTP 403/challenges, malformed pages, and ambiguous package matches fail
-acquisition rather than becoming misses. Failed package acquisition leaves the
-previous snapshot intact; disc acquisition follows the partial-index rules above.
+acquisition rather than becoming misses. Incremental package acquisition
+checkpoints every 100 resolved content IDs and keeps completed lookups when a
+later request fails, so rerunning resumes; a failed `--refresh` leaves the
+previous snapshot intact. Disc acquisition follows the partial-index rules above.
 Matching records evidence at acquisition time, not a guarantee that an external
 page remains available.
 

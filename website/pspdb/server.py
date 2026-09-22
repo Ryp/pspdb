@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import coverage
 from .psn import package_kind
+from .serialstation import serial_key
 from .wire import decode_catalog, encode_catalog
 
 
@@ -121,6 +122,12 @@ def catalog_data(catalog, redump=None, umdatabase=None, redump_population=None, 
                     for match in record.get('redump', [])
                     for disc in serialstation['discs'].get(match['id'], [])
                 ]
+                if not discs:
+                    # Byte-exact Redump editions win; otherwise the UMD's own serial and
+                    # data version select SerialStation's editions of that disc build.
+                    metadata = record.get('metadata') or {}
+                    key = serial_key(metadata.get('disc_id'), metadata.get('disc_version'))
+                    discs = [dict(disc) for disc in serialstation['serials'].get(key, [])] if key else []
                 if discs:
                     record['serialstation_discs'] = discs
             if umdatabase is not None:
@@ -336,6 +343,7 @@ class _CatalogCache:
             _population_digest({
                 'packages': sorted(serialstation['packages'].items()),
                 'discs': serialstation['discs'],
+                'serials': serialstation['serials'],
             } if serialstation is not None else None),
         ]
 

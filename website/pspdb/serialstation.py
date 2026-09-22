@@ -7,10 +7,43 @@ from uuid import UUID
 CONTENT_ID = re.compile(r'[A-Z]{2}[0-9]{4}-[A-Z0-9]{9}_[0-9]{2}-[A-Za-z0-9_-]{16}\Z')
 SHA256 = re.compile(r'[0-9a-f]{64}\Z')
 SHA1 = re.compile(r'[0-9a-f]{40}\Z')
+SERIAL_KEY = re.compile(r'[A-Z]{4}-[0-9]{5}/[0-9]+\.[0-9]{2}\Z')
+
+
+def serial_key(serial, version):
+    """Canonical `AAAA-NNNNN/M.mm` disc key; None when the UMD lacks a usable serial or version."""
+    serial = re.fullmatch(r'([A-Z]{4})-?([0-9]{5})', serial.strip().upper()) if isinstance(serial, str) else None
+    version = re.fullmatch(r'0*([0-9]+)\.([0-9]{2})', version.strip()) if isinstance(version, str) else None
+    return f'{serial[1]}-{serial[2]}/{int(version[1])}.{version[2]}' if serial and version else None
+
+
+def _editions(key, editions):
+    if not isinstance(editions, list) or not editions:
+        raise ValueError(f'Invalid SerialStation disc editions: {key}')
+    seen = set()
+    verified = []
+    for edition in editions:
+        if not isinstance(edition, dict):
+            raise ValueError(f'Invalid SerialStation disc edition: {key}')
+        disc_id = edition.get('id')
+        try:
+            canonical_id = str(UUID(disc_id)) if isinstance(disc_id, str) else None
+        except ValueError:
+            canonical_id = None
+        if canonical_id is None or canonical_id != disc_id:
+            raise ValueError(f'Invalid SerialStation disc UUID: {key}')
+        name = edition.get('name')
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f'Missing SerialStation disc name: {key}')
+        if disc_id in seen:
+            raise ValueError(f'Duplicate SerialStation disc UUID: {key}')
+        seen.add(disc_id)
+        verified.append({'id': disc_id, 'name': name.strip()})
+    return verified
 
 
 def load_matches(source):
-    """Index verified PKGs by byte identity and discs by exact Redump ID."""
+    """Index verified PKGs by byte identity, discs by exact Redump ID and by serial/version."""
     source = Path(source)
     try:
         data = json.loads(source.read_text(encoding='utf-8'))
@@ -59,26 +92,13 @@ def load_matches(source):
     for redump_id, editions in discs.items():
         if not re.fullmatch(r'[1-9][0-9]*', redump_id):
             raise ValueError(f'Invalid SerialStation Redump ID: {redump_id}')
-        if not isinstance(editions, list) or not editions:
-            raise ValueError(f'Invalid SerialStation disc editions: {redump_id}')
-        seen = set()
-        verified = []
-        for edition in editions:
-            if not isinstance(edition, dict):
-                raise ValueError(f'Invalid SerialStation disc edition: {redump_id}')
-            disc_id = edition.get('id')
-            try:
-                canonical_id = str(UUID(disc_id)) if isinstance(disc_id, str) else None
-            except ValueError:
-                canonical_id = None
-            if canonical_id is None or canonical_id != disc_id:
-                raise ValueError(f'Invalid SerialStation disc UUID: {redump_id}')
-            name = edition.get('name')
-            if not isinstance(name, str) or not name.strip():
-                raise ValueError(f'Missing SerialStation disc name: {redump_id}')
-            if disc_id in seen:
-                raise ValueError(f'Duplicate SerialStation disc UUID: {redump_id}')
-            seen.add(disc_id)
-            verified.append({'id': disc_id, 'name': name.strip()})
-        disc_matches[int(redump_id)] = verified
-    return {'packages': matches, 'discs': disc_matches}
+        disc_matches[int(redump_id)] = _editions(redump_id, editions)
+    serials = data.get('disc_serials', {})
+    if not isinstance(serials, dict):
+        raise ValueError('Invalid SerialStation disc serial mapping')
+    serial_matches = {}
+    for key, editions in serials.items():
+        if not isinstance(key, str) or not SERIAL_KEY.fullmatch(key):
+            raise ValueError(f'Invalid SerialStation disc serial key: {key}')
+        serial_matches[key] = _editions(key, editions)
+    return {'packages': matches, 'discs': disc_matches, 'serials': serial_matches}

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools import serialstation_acquire as acquire
+from tools import serialstation_discs_acquire as discs
 
 CONTENT_ID = 'UP0555-NPUF30007_00-BOMBERMAN940EH01'
 FIRST = '7029b24c-1c28-480f-94ff-3e6351c77101'
@@ -121,6 +122,40 @@ class AcquisitionTests(unittest.TestCase):
                     patch.object(acquire, 'fetch_html', return_value=None):
                 self.assertEqual(acquire.main(), 0)
             self.assertEqual(json.loads(output.read_bytes())['missing'], [digest])
+
+
+def listing_page(rows):
+    body = ''.join(
+        f'<tr><td><a href="/discs/{disc_id}">{name}</a></td><td>{edition}</td><td>PSP</td>'
+        f'<td>{label}</td><td>{internal}</td><td>{version}</td></tr>'
+        for disc_id, name, edition, label, internal, version in rows)
+    return (f'<small>1-{len(rows)} of {len(rows)}</small><a data-page="1">1</a>'
+            f'<table><thead><tr><th>Name</th></tr></thead><tbody>{body}</tbody></table>')
+
+
+class DiscListingTests(unittest.TestCase):
+    def test_listing_only_scan_indexes_internal_serial_and_keeps_redump_index(self):
+        rows = [(FIRST, 'Armored Core', 'Original', 'UCAS-40004', 'ULJS-00003', '01.01'),
+                (SECOND, 'Armored Core', 'Best', 'UCAS-40004', 'ULJS-00003', '1.01'),
+                ('0' * 8 + '-0000-0000-0000-' + '0' * 12, 'Undocumented', '', 'UCAS-40005', '', '')]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output = root / 'snapshot.json'
+            prior = {'33401': [{'id': FIRST, 'name': 'Redump-verified'}]}
+            output.write_text(json.dumps({'schema_version': 2, 'entries': {}, 'missing': [],
+                                          'discs': prior, 'disc_index_complete': True}))
+            argv = ['discs', '--output', str(output), '--work', str(root / 'work'), '--listing-only']
+            with patch('sys.argv', argv), patch('sys.stderr', new=io.StringIO()), \
+                    patch.object(acquire, 'fetch_html', return_value=listing_page(rows)) as fetch:
+                self.assertEqual(discs.main(), 0)
+            self.assertEqual([call.args[0] for call in fetch.call_args_list],
+                             [f'/ajax/table/discs?systems={discs.PSP_SYSTEM}&page=1'])
+            data = json.loads(output.read_text())
+        # The internal (data) serial is the key, not the label serial; '01.01' and '1.01' are one build.
+        self.assertEqual(data['disc_serials'], {'ULJS-00003/1.01': [
+            {'id': FIRST, 'name': 'Armored Core (Original)'}, {'id': SECOND, 'name': 'Armored Core (Best)'}]})
+        self.assertEqual(data['discs'], prior)
+        self.assertIs(data['disc_index_complete'], True)
 
 
 if __name__ == '__main__':
