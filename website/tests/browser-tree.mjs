@@ -326,7 +326,7 @@ const availabilityTimeout=await evaluate(`(async()=>{
 console.log(availabilityTimeout);
 const extractionErrors=await evaluate(`(async()=>{
  const check=(value,message)=>{if(!value)throw new Error(message)};
- const packageHash='a'.repeat(64), edatHash='b'.repeat(64), inlineHash='c'.repeat(64), childHash='d'.repeat(64);
+ const packageHash='a'.repeat(64), edatHash='b'.repeat(64), inlineHash='c'.repeat(64), childHash='d'.repeat(64), nestedHash='e'.repeat(64), deepHash='f'.repeat(64);
  const hostile='<img src=x onerror=alert(1)> '+ 'long-error-detail-'.repeat(150);
  const file=(path,hash,extra={})=>({path,type:'file',sha256:hash,size_bytes:10,...extra});
  const tree=(hash,entries,error)=>({sha256:hash,size_bytes:10,extractor:{name:'extractor',version:'1'},entries,...(error?{error}:{})});
@@ -334,10 +334,11 @@ const extractionErrors=await evaluate(`(async()=>{
   pkg:{[packageHash]:tree(packageHash,[
    file('ISO.BIN.EDAT',edatHash),
    file('DATA.PSP',inlineHash,{extraction:tree(inlineHash,[file('decoded.bin',childHash)],hostile)}),
+   file('NESTED.PSP',nestedHash,{extraction:tree(nestedHash,[file('inner/ISO.BIN.EDAT',deepHash)])}),
    file('UNCHANGED.PSP',inlineHash),
    ...Array.from({length:200},(_,i)=>file('sibling-'+String(i).padStart(3,'0')+'.bin',childHash)),
   ],'Partial package extraction')},
-  edat:{[edatHash]:tree(edatHash,[],'UnsupportedEdat')},
+  edat:{[edatHash]:tree(edatHash,[],'UnsupportedEdat'),[deepHash]:tree(deepHash,[],'MissingEdatRap')},
  }};
  clearSearch();rowElements.clear();disclosures.clear();collapsed.clear();visible=[];selected=null;
  await build(fixture);await searchReady;
@@ -389,7 +390,17 @@ const extractionErrors=await evaluate(`(async()=>{
  check(filterNodes===null&&input.value===''&&!document.getElementById('tree').classList.contains('search-results'),'Cleared search remains in tree mode after pending results settle');
  clearSearch();jump(sibling);
  check(document.getElementById('selected-error').hidden,'Successful selection clears error details');
- return 'PASS: source-scoped errors, empty failures, partial children, inert long text, accessibility, search and virtual remount';
+ const nested=source.children.find(n=>n.name==='NESTED.PSP');
+ jump(nested);
+ const contained=rowElements.get(nested.index).querySelector('.extraction-error.contained');
+ check(contained&&contained.getBoundingClientRect().width>0,'Collapsed container shows that it contains a failure');
+ check(!nested.error&&contained.querySelector('.error-message')===null,'Contained badge is icon-only, with no borrowed message');
+ check(contained.title.includes('1')&&contained.getAttribute('aria-label')===contained.title,'Contained badge announces how many failures it hides');
+ check(document.getElementById('selected-error').hidden,'A container that only contains failures has no error of its own');
+ toggle(nested);
+ const innerDirectory=nested.children.find(n=>n.name==='inner');
+ check(!rowElements.get(innerDirectory.index)?.querySelector('.extraction-error'),'Plain directories do not repeat the contained badge');
+ return 'PASS: source-scoped errors, contained-failure badges, empty failures, partial children, inert long text, accessibility, search and virtual remount';
 })()`);
 console.log(extractionErrors);
 // Earlier blocks rebuilt the tree from fixtures; coverage needs the served catalog.

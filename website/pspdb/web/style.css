@@ -87,6 +87,8 @@ kbd { display: inline-block; font: inherit; color: #b5c5d7; border: 1px solid #3
 .error-icon { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; flex-shrink: 0; border: 1px solid currentColor; border-radius: 50%; font-size: 10px; line-height: 1; font-weight: 700; }
 .error-message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .extraction-failed.selected .extraction-error, .extraction-failed:hover .extraction-error { color: #ffc0bb; }
+.extraction-error.contained { flex: 0 0 auto; min-width: 13px; margin-left: 0.7em; color: #b8756f; }
+.node.selected .extraction-error.contained, .node:hover .extraction-error.contained { color: #ffaaa5; }
 #selected-error { display: flex; align-items: flex-start; gap: 7px; flex-shrink: 0; max-height: 25dvh; overflow: auto; padding: 8px 16px; border-top: 1px solid #70413f; background: #2d1d20; color: #ffc0bb; white-space: pre-wrap; overflow-wrap: anywhere; }
 #selected-error .error-icon { margin-top: 3px; }
 #selected-error-message { min-width: 0; }

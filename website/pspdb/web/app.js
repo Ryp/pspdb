@@ -640,6 +640,10 @@ function* attachExtraction(node, extractions, ancestors = new Set(), contextual 
   node.extractionVersion = extraction.extractor.version;
   if (extraction.error) {
     node.error = extraction.error;
+    // Surface failures through collapsed ancestors: a container that hides a
+    // failed subtree must still be recognizable as containing one.
+    for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent)
+      ancestor.errorCount = (ancestor.errorCount || 0) + 1;
   }
   if (extraction.stale_extraction) node.stale_extraction = extraction.stale_extraction;
   yield* addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
@@ -934,6 +938,15 @@ function createRow(node) {
       row.setAttribute("aria-describedby", node.errorElement.id);
       error.append(icon, node.errorElement);
       content.append(error);
+    } else if (node.errorCount && container) {
+      const contained = element("span", "extraction-error contained");
+      const icon = element("span", "error-icon", "!");
+      icon.setAttribute("aria-hidden", "true");
+      contained.append(icon);
+      contained.title = `Contains ${node.errorCount} extraction error${node.errorCount === 1 ? "" : "s"}`;
+      contained.setAttribute("aria-label", contained.title);
+      contained.setAttribute("role", "img");
+      content.append(contained);
     }
     if (container && node.extractionKind) {
       const tags = element("span", "extraction-tags");
