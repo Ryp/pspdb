@@ -17,6 +17,7 @@ class PackageKindTests(unittest.TestCase):
             ('psone_classic', dict(content_type=6, category='1P', boot_category='ME', boot_file=EBOOT)),
             ('minis', dict(content_type=15, category='MN', boot_category='EG', boot_file=EBOOT)),
             ('neogeo', dict(content_type=16, category='HG', boot_category='EG', boot_file=EBOOT)),
+            ('pcengine', dict(content_type=7, category='HG', boot_category='EG', boot_file=EBOOT)),
             ('unknown', dict(content_type=7, category='PP', boot_category='MG', boot_file=EBOOT)),
             ('game', dict(content_type=7, category='PP', boot_category='EG', boot_file=EBOOT)),
             ('game', dict(content_type=14, category='PP', boot_category='EG', boot_file=EBOOT)),

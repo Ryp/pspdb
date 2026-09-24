@@ -14,7 +14,7 @@ Run the following commands from the repository root.
 Requires **Zig 0.16.0**, GNU **patch**, **pkg-config**, and development headers/libraries
 for **libarchive**, **OpenSSL 3**, **zlib** and **Expat**. PSAR filename-table
 decryption also requires OpenSSL's **legacy provider** for DES-CBC.
-Zig-PSP temporarily uses the local checkout at `../sudoku-zig/Zig-PSP`
+Zig-PSP temporarily uses the local checkout at `../Zig-PSP`
 (relative to this repository), including uncommitted changes. This is a working-tree
 dependency, not an immutable revision pin. The first build fetches pinned
 pspdecrypt, make-npdata, pkg2zip and RCOMage configuration sources.
@@ -138,7 +138,8 @@ controls in the observed corpus; it is an empirical heuristic, not a formal
 format guarantee. Legacy type-7 records without flags remain directly under
 **psn** until re-ingested. Other content types do not use the update heuristic.
 Other types select **minis** (15), **psone_classic** (6), **neogeo** (16), or
-**theme** (9, within supported PSP packages). Missing or unrecognized types fall under **unknown**; empty groups
+**theme** (9, within supported PSP packages). Content type 7 with outer `PARAM.SFO`
+`CATEGORY` `HG` selects **pcengine**. Missing or unrecognized types fall under **unknown**; empty groups
 are omitted. Grouping preserves package labels and extracted paths and
 requires no ingestion options.
 Embedded PBP files use the nested extraction pipeline whenever a catalog is set;

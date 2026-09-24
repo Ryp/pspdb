@@ -1,6 +1,7 @@
 """Classify PSN packages from observed PKG facts and NoPayStation list membership."""
 
-KINDS = ('game', 'demo', 'dlc', 'patch', 'theme', 'psone_classic', 'minis', 'neogeo', 'unknown')
+KINDS = ('game', 'demo', 'dlc', 'patch', 'theme', 'psone_classic', 'minis', 'neogeo', 'pcengine',
+         'unknown')
 
 LIST_KINDS = {'PSP_GAMES': 'game', 'PSP_DEMOS': 'demo', 'PSP_DLCS': 'dlc',
               'PSP_THEMES': 'theme', 'PSP_UPDATES': 'patch', 'PSX_GAMES': 'psone_classic'}
@@ -28,6 +29,9 @@ def package_kind(metadata):
         return 'minis'
     if content_type == 16:
         return 'neogeo'
+    if content_type == 7 and metadata.get('category') == 'HG':
+        # PC Engine shares content type 7 with plain PSP games; outer CATEGORY HG is its only marker.
+        return 'pcengine'
     if content_type in (7, 14) and boot_category == 'EG':
         return 'game'
     return 'unknown'
