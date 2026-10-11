@@ -122,7 +122,7 @@ Commands are in **Verification**; the regeneration is the change.
 
 ### 3. Correct the knowledge base
 
-`~/obsidian/llm/devices/psp/Firmware-Aware Bindings and NID Exports.md`
+`~/sync/obsidian/llm/devices/psp/Firmware-Aware Bindings and NID Exports.md`
 currently contains, under `### The title-visible module surface (2026-09-20)`,
 a numbered class 2 reading:
 
@@ -172,7 +172,7 @@ with the codec entries, so the two mechanisms read as one policy rather than
 two, and bump the counts there (`Eleven reviewed modules now move 366 provider
 occurrences over 328 identities`) to the values from the regenerated manifest.
 
-`~/obsidian/llm/devices/psp/README.md` line 29 already indexes this note; its
+`~/sync/obsidian/llm/devices/psp/README.md` line 29 already indexes this note; its
 summary does not enumerate sections, so it needs no edit. Do not create a new
 note — this material belongs with the catalog/bindings record it corrects.
 
@@ -186,7 +186,7 @@ note — this material belongs with the catalog/bindings record it corrects.
   that forbids putting two chips in one namespace.
 - `src/c/library/sceCodec.zig` — current state, 71 `several provider modules`
   occurrences; the file to diff after regeneration.
-- `~/obsidian/llm/devices/psp/Firmware-Aware Bindings and NID Exports.md` —
+- `~/sync/obsidian/llm/devices/psp/Firmware-Aware Bindings and NID Exports.md` —
   section `### The title-visible module surface (2026-09-20)` (≈351) holds the
   three-class taxonomy and the residual-rejection count this change invalidates.
 
@@ -257,9 +257,9 @@ clone URL cannot resolve it.
    Write whatever this prints into the note; do not carry the expectation over
    if it differs.
 6. Knowledge-base edit lands and stays consistent:
-   `grep -n 'Needs a model axis' "$HOME/obsidian/llm/devices/psp/Firmware-Aware Bindings and NID Exports.md"`
+   `grep -n 'Needs a model axis' "$HOME/sync/obsidian/llm/devices/psp/Firmware-Aware Bindings and NID Exports.md"`
    returns nothing, and
-   `grep -n 'sceWM1801_Driver\|identical .*export set\|no per-program model' "$HOME/obsidian/llm/devices/psp/Firmware-Aware Bindings and NID Exports.md"`
+   `grep -n 'sceWM1801_Driver\|identical .*export set\|no per-program model' "$HOME/sync/obsidian/llm/devices/psp/Firmware-Aware Bindings and NID Exports.md"`
    returns the new per-model equivalence text plus the codec table.
 
 ## Assumptions & contingencies
