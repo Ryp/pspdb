@@ -1,5 +1,6 @@
 const std = @import("std");
 const ingest = @import("ingest.zig");
+const Store = @import("store.zig").Store;
 const catalog_state = @import("catalog_state.zig");
 const licenses = @import("licenses.zig");
 const nand_fuses = @import("nand_fuses.zig");
@@ -8,6 +9,7 @@ const Options = struct {
     folders: []const []const u8 = &.{},
     threads: usize = 1,
     store: ?[]const u8 = null,
+    store_max_size: ?u64 = null,
     catalog: ?[]const u8 = null,
     skip_existing: bool = false,
     progress: bool = true,
@@ -35,6 +37,10 @@ fn parse_args(allocator: std.mem.Allocator, args: []const []const u8, default_th
             i += 1;
             if (i == args.len) return error.MissingStorePath;
             options.store = args[i];
+        } else if (std.mem.eql(u8, arg, "--store-max-size")) {
+            i += 1;
+            if (i == args.len) return error.MissingStoreMaxSize;
+            options.store_max_size = parse_size(args[i]) orelse return error.InvalidStoreMaxSize;
         } else if (std.mem.eql(u8, arg, "--threads")) {
             i += 1;
             if (i == args.len) return error.MissingThreadCount;
@@ -49,19 +55,34 @@ fn parse_args(allocator: std.mem.Allocator, args: []const []const u8, default_th
     if (!options.help) {
         if (folders.items.len == 0) return error.MissingFolder;
         if (options.skip_existing and options.catalog == null) return error.SkipExistingRequiresCatalog;
+        if (options.store_max_size != null and options.store == null) return error.StoreMaxSizeRequiresStore;
     }
     options.folders = try folders.toOwnedSlice(allocator);
     return options;
 }
 
+/// Bytes, or a binary K/M/G suffix: `32M` is 32 MiB.
+fn parse_size(text: []const u8) ?u64 {
+    if (text.len == 0) return null;
+    const shift: u6 = switch (text[text.len - 1]) {
+        'K' => 10,
+        'M' => 20,
+        'G' => 30,
+        else => 0,
+    };
+    const digits = if (shift == 0) text else text[0 .. text.len - 1];
+    const value = std.fmt.parseInt(u64, digits, 10) catch return null;
+    return std.math.shlExact(u64, value, shift) catch null;
+}
+
 pub fn main(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const options = parse_args(init.arena.allocator(), args[1..], std.Thread.getCpuCount() catch 1) catch |err| {
-        std.debug.print("pspdb-ingest: {s}\nUsage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\n", .{@errorName(err)});
+        std.debug.print("pspdb-ingest: {s}\nUsage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH [--store-max-size SIZE]] [--threads N] [--no-progress]\n", .{@errorName(err)});
         return 2;
     };
     if (options.help) {
-        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH] [--threads N] [--no-progress]\nHash ISO/PKG/NAND/update inputs across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. Accept .iso/.pkg/.nand, recognized raw NAND .bin files, and updater .pbp files with PARAM.SFO UPDATER_VER and a final PSAR section. ZIP ISO/PKG members are decompressed in memory; ZIP NAND/PBP members are not ingested. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes extracted file objects to the existing SHA-256 store layout, never original NAND dumps or updater PBPs.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG/NAND/update results and checks nested extractor provenance (requires --catalog; off by default).\nSupported nested formats are processed automatically when --catalog is set; --store is optional. External adapters run through uv.\nPSPDB_NAND_FUSE_DIR overrides the private hash-keyed NAND fuse directory (default: $XDG_DATA_HOME/pspdb/nand-fuses or $HOME/.local/share/pspdb/nand-fuses).\n--threads caps all application threads (default: available logical CPUs).\n", .{});
+        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH [--store-max-size SIZE]] [--threads N] [--no-progress]\nHash ISO/PKG/NAND/update inputs across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. Accept .iso/.pkg/.nand, recognized raw NAND .bin files, and updater .pbp files with PARAM.SFO UPDATER_VER and a final PSAR section. ZIP ISO/PKG members are decompressed in memory; ZIP NAND/PBP members are not ingested. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes extracted file objects to the existing SHA-256 store layout, never original NAND dumps or updater PBPs. --store-max-size SIZE (bytes, or K/M/G binary suffix) keeps larger objects out of the store; they are still hashed, cataloged and extracted.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG/NAND/update results and checks nested extractor provenance (requires --catalog; off by default).\nSupported nested formats are processed automatically when --catalog is set; --store is optional. External adapters run through uv.\nPSPDB_NAND_FUSE_DIR overrides the private hash-keyed NAND fuse directory (default: $XDG_DATA_HOME/pspdb/nand-fuses or $HOME/.local/share/pspdb/nand-fuses).\n--threads caps all application threads (default: available logical CPUs).\n", .{});
         return 0;
     }
 
@@ -73,10 +94,13 @@ pub fn main(init: std.process.Init) !u8 {
     });
     defer threaded.deinit();
     const io = threaded.io();
-    const store = if (options.store) |path| blk: {
+    var store_value: ?Store = if (options.store) |path| blk: {
         try std.Io.Dir.cwd().createDirPath(io, path);
-        break :blk try std.Io.Dir.cwd().realPathFileAlloc(io, path, init.arena.allocator());
+        const root = try std.Io.Dir.cwd().realPathFileAlloc(io, path, init.arena.allocator());
+        break :blk try Store.init(init.gpa, io, root, options.store_max_size orelse std.math.maxInt(u64));
     } else null;
+    defer if (store_value) |*value| value.deinit(io);
+    const store = if (store_value) |*value| value else null;
     const catalog = if (options.catalog) |path| blk: {
         try std.Io.Dir.cwd().createDirPath(io, path);
         break :blk try std.Io.Dir.cwd().realPathFileAlloc(io, path, init.arena.allocator());
@@ -125,6 +149,13 @@ test "CLI requires a folder and a positive thread cap" {
     try std.testing.expectError(error.MissingStorePath, parse_args(allocator, &.{ "folder", "--store" }, 4));
     const stored = try parse_args(allocator, &.{ "folder", "--store", "objects" }, 4);
     try std.testing.expectEqualStrings("objects", stored.store.?);
+    try std.testing.expectEqual(null, stored.store_max_size);
+    const capped = try parse_args(allocator, &.{ "folder", "--store", "objects", "--store-max-size", "32M" }, 4);
+    try std.testing.expectEqual(@as(u64, 32 << 20), capped.store_max_size.?);
+    try std.testing.expectEqual(@as(u64, 4096), (try parse_args(allocator, &.{ "folder", "--store", "o", "--store-max-size", "4096" }, 4)).store_max_size.?);
+    try std.testing.expectError(error.StoreMaxSizeRequiresStore, parse_args(allocator, &.{ "folder", "--store-max-size", "32M" }, 4));
+    for ([_][]const u8{ "", "M", "32MB", "-1", "17179869184G" }) |bad|
+        try std.testing.expectError(error.InvalidStoreMaxSize, parse_args(allocator, &.{ "folder", "--store", "o", "--store-max-size", bad }, 4));
     try std.testing.expectError(error.InvalidThreadCount, parse_args(allocator, &.{ "folder", "--threads", "0" }, 4));
     const options = try parse_args(allocator, &.{ "folder", "--threads", "1", "--no-progress" }, 4);
     try std.testing.expectEqual(@as(usize, 1), options.threads);

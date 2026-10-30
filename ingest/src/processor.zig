@@ -25,7 +25,7 @@ const extractor = @import("extractor.zig");
 const external_extractor = @import("external_extractor.zig");
 const CatalogState = @import("catalog_state.zig").State;
 const store_objects = @import("store.zig");
-const StoreWriter = store_objects.Writer;
+const Store = store_objects.Store;
 const umd = @import("umd_data.zig");
 const sfo = @import("sfo.zig");
 const model = @import("inventory.zig");
@@ -52,7 +52,7 @@ pub const Task = struct {
 pub const Dispatch = struct {
     context: *anyopaque,
     enqueue: *const fn (*anyopaque, Task) anyerror!void,
-    store: ?[]const u8,
+    store: ?*Store,
     catalog: []const u8,
     state: ?*const CatalogState = null,
     rap_directory: ?[]const u8 = null,
@@ -163,7 +163,7 @@ fn read_metadata(allocator: std.mem.Allocator, bytes: []const u8, mastering: *?i
 /// Read and validate metadata first, then inventory, hash and store file contents.
 /// Only libarchive's private descriptor view is patched; whole-ISO hashing uses
 /// the unchanged input. The reader retains one file for the synchronous callback.
-pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, input: memory.View, store: ?[]const u8, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
+pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, input: memory.View, store: ?*Store, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
     const bytes = input.bytes;
     const hashes = hash_source(bytes);
     if (catalog) |root| {
@@ -192,7 +192,7 @@ pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, input: memo
 
 /// PKGs are roots just like ISOs; decrypted entries retain their own backing
 /// buffers so the existing extraction queue can outlive the package walk.
-pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
+pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?*Store, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
     const hashes = hash_source(bytes);
     if (cache) |value| {
         if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, .pkg)) return null;
@@ -291,7 +291,7 @@ fn read_update_metadata(allocator: std.mem.Allocator, pbp: @import("zig_psp_pbp"
 
 /// The original PBP is an observation, never a new CAS object. SDK section
 /// slices share the retained source mapping through ordinary recursive tasks.
-pub fn process_update_checked(allocator: std.mem.Allocator, io: std.Io, input: memory.View, store: ?[]const u8, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
+pub fn process_update_checked(allocator: std.mem.Allocator, io: std.Io, input: memory.View, store: ?*Store, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
     const bytes = input.bytes;
     const hashes = hash_source(bytes);
     if (cache) |value| {
@@ -316,7 +316,7 @@ pub fn process_update_checked(allocator: std.mem.Allocator, io: std.Io, input: m
 
 /// A NAND is an immutable root observation. Native reconstructions are separate
 /// attempts; only real extracted files, never the raw source, enter the CAS.
-pub fn process_nand_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?[]const u8, cache: ?catalog_io.Cache, dispatch: ?*Dispatch, nand_fuse_directory: ?[]const u8) !?Result {
+pub fn process_nand_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?*Store, cache: ?catalog_io.Cache, dispatch: ?*Dispatch, nand_fuse_directory: ?[]const u8) !?Result {
     const hashes = hash_source(bytes);
     if (cache) |value| {
         if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, .nand)) return null;
@@ -547,7 +547,7 @@ const NandFat = struct {
 const Inventory = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
-    store: ?[]const u8,
+    store: ?*Store,
     dispatch: ?*Dispatch,
     counts: Counts = .{},
     owner: ?*memory.Owner = null,
@@ -595,13 +595,10 @@ const Inventory = struct {
             std.crypto.hash.sha2.Sha256.hash(payload, &hash, .{});
             entry.sha256 = std.fmt.bytesToHex(hash, .lower);
             entry.size_bytes = payload.len;
-            if (self.store) |root| {
-                if (try StoreWriter.init(self.allocator, self.io, root, entry.sha256.?, payload.len)) |new_writer| {
-                    var writer = new_writer;
-                    defer writer.deinit();
-                    try writer.write(payload);
-                    if (try writer.finish(self.allocator, entry.sha256.?, payload.len)) self.counts.stored += 1 else self.counts.reused += 1;
-                } else self.counts.reused += 1;
+            if (self.store) |store| {
+                if (store.accepts(payload.len)) {
+                    if (try store.put(self.io, entry.sha256.?, payload)) self.counts.stored += 1 else self.counts.reused += 1;
+                }
             }
         }
         const paired_document = self.pair_documents and self.dispatch != null and
@@ -1001,7 +998,7 @@ const SavedEntry = struct { path: []const u8, type: []const u8, sha256: ?[]const
 const SavedTree = struct { sha256: []const u8, size_bytes: u64, entries: []SavedEntry, dependencies: []Dependency = &.{}, @"error": ?[]const u8 = null };
 
 fn reuse_entries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry, dispatch: *Dispatch, pair_documents: bool) anyerror!?Counts {
-    const store = dispatch.store orelse return null;
+    const store = (dispatch.store orelse return null).root_path;
     var counts: Counts = .{};
     for (entries) |entry| {
         try validate_path(entry.path);
@@ -1113,7 +1110,7 @@ fn validate_path(name: []const u8) !void {
 
 /// Open and map one image read-only; optional outputs go only to the store.
 /// V1 targets POSIX: direct mmap avoids an implicit whole-file heap fallback.
-pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, kind: model.RootKind, store: ?[]const u8, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch, nand_fuse_directory: ?[]const u8) !?Result {
+pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, kind: model.RootKind, store: ?*Store, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch, nand_fuse_directory: ?[]const u8) !?Result {
     // Recheck the opened descriptor without following symlinks or blocking on
     // a FIFO substituted after discovery.
     const descriptor = try std.posix.openat(std.Io.Dir.cwd().handle, path, .{
@@ -1177,7 +1174,7 @@ test "failed queue publication permits retry with input retained past its parent
     var dispatch = Dispatch{
         .context = &queue,
         .enqueue = Queue.enqueue,
-        .store = "unused",
+        .store = null,
         .catalog = "unused",
         .visited = .init(allocator),
     };
@@ -1210,10 +1207,12 @@ test "native descendants outlive their parent and never reread their source from
     };
     var queue = Queue{};
     defer if (queue.task) |task| task.deinit(allocator);
+    var store = try Store.init(allocator, io, root, std.math.maxInt(u64));
+    defer store.deinit(io);
     var dispatch = Dispatch{
         .context = &queue,
         .enqueue = Queue.enqueue,
-        .store = root,
+        .store = &store,
         .catalog = root,
         .visited = .init(allocator),
     };
@@ -1228,6 +1227,7 @@ test "native descendants outlive their parent and never reread their source from
         defer input.release();
         const counts = try process_task(allocator, io, .{ .name = "outer.sce", .input = input, .hash = hash, .kind = .sce }, &dispatch);
         try std.testing.expectEqual(@as(usize, 1), counts.stored);
+        try store.flush(io);
     }
     // Remove the child's stored source; it must still decode from retained RAM.
     const child = queue.task.?;
@@ -1239,6 +1239,37 @@ test "native descendants outlive their parent and never reread their source from
     const counts = try process_task(allocator, io, child, &dispatch);
     try std.testing.expectEqual(@as(usize, 1), counts.stored);
     try std.testing.expectEqual(null, queue.task);
+}
+
+test "store size cap keeps oversized objects cataloged but out of the store" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realPathFileAlloc(io, ".", allocator);
+    defer allocator.free(root);
+    var store = try Store.init(allocator, io, root, 4);
+    defer store.deinit(io);
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = &store, .dispatch = null, .paths = .init(allocator) };
+    defer inventory.deinit();
+    for ([_][]const u8{ "fits", "large" }) |payload| {
+        const view = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, payload));
+        defer view.release();
+        try inventory.emit_view(payload, view);
+    }
+    try std.testing.expectEqual(@as(usize, 1), inventory.counts.stored);
+    try std.testing.expectEqual(@as(usize, 0), inventory.counts.reused);
+    try store.flush(io);
+    for (inventory.entries.items) |entry| {
+        const hash = entry.sha256.?;
+        const path = try std.fmt.allocPrint(allocator, "sha256/{s}/{s}/{s}", .{ hash[0..2], hash[2..4], hash });
+        defer allocator.free(path);
+        const present = if (tmp.dir.access(io, path, .{})) true else |err| switch (err) {
+            error.FileNotFound => false,
+            else => return err,
+        };
+        try std.testing.expectEqual(entry.size_bytes.? <= 4, present);
+    }
 }
 
 fn nand_test_pbp(title: []const u8) [640]u8 {
@@ -1315,13 +1346,15 @@ test "NAND FAT queued PBP children decode after their partition and walker are g
         for (queue.tasks.items) |task| task.deinit(allocator);
         queue.tasks.deinit(allocator);
     }
-    var dispatch = Dispatch{ .context = &queue, .enqueue = Queue.enqueue, .store = root, .catalog = root, .visited = .init(allocator) };
+    var store = try Store.init(allocator, io, root, std.math.maxInt(u64));
+    defer store.deinit(io);
+    var dispatch = Dispatch{ .context = &queue, .enqueue = Queue.enqueue, .store = &store, .catalog = root, .visited = .init(allocator) };
     defer dispatch.deinit();
     {
         const fixture = nand_test_partition();
         const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
         defer input.release();
-        var inventory = Inventory{ .allocator = allocator, .io = io, .store = root, .dispatch = &dispatch, .paths = .init(allocator) };
+        var inventory = Inventory{ .allocator = allocator, .io = io, .store = &store, .dispatch = &dispatch, .paths = .init(allocator) };
         defer inventory.deinit();
         var writer: std.Io.Writer.Discarding = .init(&.{});
         try ingest_nand_partition(&inventory, "flash0.img", input, &writer.writer);
@@ -1330,6 +1363,7 @@ test "NAND FAT queued PBP children decode after their partition and walker are g
     for (queue.tasks.items, [_][]const u8{ "Contiguous", "Fragmented" }) |task, title| {
         const counts = try process_task(allocator, io, task, &dispatch);
         try std.testing.expectEqual(@as(usize, 0), counts.extraction_errors);
+        try store.flush(io);
         const path = try std.fmt.allocPrint(allocator, "pbp/v{s}/{s}-tree.json", .{ revisions.pbp, task.hash });
         defer allocator.free(path);
         const tree_bytes = try tmp.dir.readFileAlloc(io, path, allocator, .unlimited);
@@ -1413,7 +1447,9 @@ test "NAND FAT corrupt CAS child aborts instead of attaching a format error" {
     const fixture = nand_test_partition();
     const input = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &fixture));
     defer input.release();
-    var inventory = Inventory{ .allocator = allocator, .io = io, .store = root, .dispatch = null, .paths = .init(allocator) };
+    var store = try Store.init(allocator, io, root, std.math.maxInt(u64));
+    defer store.deinit(io);
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = &store, .dispatch = null, .paths = .init(allocator) };
     defer inventory.deinit();
     var writer: std.Io.Writer.Discarding = .init(&.{});
     try std.testing.expectError(error.CorruptObject, ingest_nand_partition(&inventory, "flash0.img", input, &writer.writer));

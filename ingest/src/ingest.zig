@@ -6,6 +6,7 @@ const inventory = @import("inventory.zig");
 const memory = @import("bytes.zig");
 const CatalogState = @import("catalog_state.zig").State;
 const catalog_io = @import("catalog.zig");
+const Store = @import("store.zig").Store;
 const nand = @import("zig_psp_nand");
 
 pub const Stats = struct {
@@ -103,7 +104,7 @@ const Group = struct {
 const Pool = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
-    store: ?[]const u8,
+    store: ?*Store,
     catalog: ?[]const u8,
     skip_existing: bool,
     state: ?*const CatalogState = null,
@@ -335,6 +336,12 @@ const Pool = struct {
             result.stored += group.counts.stored;
             result.reused += group.counts.reused;
             result.extraction_errors += group.counts.extraction_errors;
+            // A root record is published only once every object of its
+            // group, nested extractions included, is durable and visible.
+            if (self.store) |store| store.flush(self.io) catch |err| {
+                self.fail(group.path, err);
+                return;
+            };
             if (self.catalog) |root| @import("catalog.zig").publish(self.allocator, self.io, root, result.*) catch |err| {
                 self.fail(group.path, err);
                 return;
@@ -537,7 +544,7 @@ pub fn log(io: std.Io, comptime format: []const u8, args: anytype) void {
     stderr.file_writer.interface.flush() catch {};
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?[]const u8, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, nand_fuse_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?*Store, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, nand_fuse_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
     std.debug.assert(worker_count >= 1);
     var pool: Pool = .{
         .allocator = allocator,
@@ -581,6 +588,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8
     }
     pool.worker();
     for (threads.items) |thread| thread.join();
+    if (store) |value| value.flush(io) catch |err| pool.fail("store flush", err);
     return pool.stats;
 }
 

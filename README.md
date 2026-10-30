@@ -43,7 +43,10 @@ extraction requires `UMD_DATA.BIN` at the logical image root; recognized masteri
 containers use their bounded `USER_L0.IMG` as described below. Missing or invalid
 metadata is recorded as an extraction error once source identity is established. Retail PSP/PS1 PKGs
 are decrypted by the native PKG extractor, preserving file and directory paths.
-`--store` is optional. `--threads N` caps threads (default: logical CPU
+`--store` is optional. `--store-max-size SIZE` (bytes, or a binary `K`/`M`/`G`
+suffix such as `64M`) keeps larger objects out of the store; they are still hashed,
+cataloged and extracted, but are not downloadable, and `--skip-existing` cannot reuse
+a nested tree containing them. `--threads N` caps threads (default: logical CPU
 count); `--no-progress` disables terminal progress. `--skip-existing` skips current
 ISO/PKG/NAND/updater results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
 
@@ -466,17 +469,20 @@ extractor to run again. Source ISOs/ZIPs must still be available; this command d
 not regenerate arbitrary sources directly from the object store. Without
 `--skip-existing`, all encountered sources are processed as before.
 
-Reuse does not re-hash the object store. An object is published by writing it to
-`<store>/.incoming`, fsyncing those bytes, then hard-linking it to
-`sha256/aa/bb/<digest>`, which never replaces an existing object, so a name can
-only appear once its contents are durable and the digest in the path is its
-identity. Readers therefore check presence and exact size only: rehashing every
+Reuse does not re-hash the object store. New objects are written unsynced to
+`<store>/.incoming` and published in batches (up to 4096 objects or 1 GiB, and
+always before a root's catalog record): one `syncfs` makes the whole batch durable,
+then each object is renamed to `sha256/aa/bb/<digest>` without replacing an
+existing object. A name therefore only appears once its contents are durable, and
+the digest in the path is its identity. One filesystem sync per batch replaces one
+fsync per object, roughly halving write operations on an HDD-backed btrfs store.
+Readers check presence and exact size only: rehashing every
 reused child would read the whole store on each run, which is the dominant cost
 on spinning disks. A stored size that disagrees with the record is damage rather
 than a stale name, and fails the run with `CorruptObject` instead of publishing a
 record over it. Same-size byte rot after publication is not detected here; a
-crash between the fsync and the link merely loses the name, and the object is
-extracted again on the next run.
+crash before publication merely leaves unnamed temporaries in `.incoming`, and the
+objects are extracted again on the next run.
 Intermediate freshness is scoped by extractor kind and source hash:
 `fresh_trees[kind][sha256]` in status JSON. A fresh original ISO observation does
 not authorize reuse of a stale ISO9660 extraction of the same bytes.
