@@ -47,11 +47,12 @@ pub const Output = struct {
 };
 
 /// Python only extracts and reports tool provenance. No Python catalog/store work.
-pub fn extract(allocator: std.mem.Allocator, io: std.Io, hash: [64]u8, input: []const u8, kind: extractor.Kind, docinfo: ?[]const u8) !Output {
+/// Work directories are created under `scratch` (absolute; `TMPDIR` or /tmp).
+pub fn extract(allocator: std.mem.Allocator, io: std.Io, scratch: []const u8, hash: [64]u8, input: []const u8, kind: extractor.Kind, docinfo: ?[]const u8) !Output {
     if (docinfo != null and kind != .document) return error.InvalidExtractionContext;
     var random: [16]u8 = undefined;
     try io.randomSecure(&random);
-    const work_path = try std.fmt.allocPrint(allocator, "/tmp/pspdb-extract-{s}", .{std.fmt.bytesToHex(random, .lower)});
+    const work_path = try std.fmt.allocPrint(allocator, "{s}/pspdb-extract-{s}", .{ scratch, std.fmt.bytesToHex(random, .lower) });
     errdefer allocator.free(work_path);
     try std.Io.Dir.cwd().createDir(io, work_path, .fromMode(0o700));
     errdefer std.Io.Dir.cwd().deleteTree(io, work_path) catch {};

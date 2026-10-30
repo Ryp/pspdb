@@ -56,6 +56,8 @@ pub const Dispatch = struct {
     catalog: []const u8,
     state: ?*const CatalogState = null,
     rap_directory: ?[]const u8 = null,
+    /// Absolute parent of external-helper work directories.
+    scratch_directory: []const u8 = "/tmp",
     // Initialized before the root queues descendants; immutable until the last
     // group job completes. Never copied into tasks or serialized as provenance.
     prx_key: ?kirk.Cmd8Key = null,
@@ -650,7 +652,7 @@ const Inventory = struct {
     }
 
     fn extract_external(self: *Inventory, hash: [64]u8, input: []const u8, kind: extractor.Kind, companion: ?[]const u8) !external_extractor.Output {
-        return external_extractor.extract(self.allocator, self.io, hash, input, kind, companion) catch |err| {
+        return external_extractor.extract(self.allocator, self.io, if (self.dispatch) |dispatch| dispatch.scratch_directory else "/tmp", hash, input, kind, companion) catch |err| {
             switch (err) {
                 error.ExtractionFailed, error.ExtractorUnavailable, error.InvalidExtractorProvenance => {},
                 else => self.fatal = true,

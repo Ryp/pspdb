@@ -109,6 +109,7 @@ const Pool = struct {
     skip_existing: bool,
     state: ?*const CatalogState = null,
     rap_directory: ?[]const u8,
+    scratch_directory: []const u8 = "/tmp",
     nand_fuse_directory: ?[]const u8,
     mutex: std.Io.Mutex = .init,
     changed: std.Io.Condition = .init,
@@ -291,6 +292,7 @@ const Pool = struct {
                 .catalog = catalog,
                 .state = self.state,
                 .rap_directory = self.rap_directory,
+                .scratch_directory = self.scratch_directory,
                 .visited = .init(self.allocator),
             } else null,
             .progress = self.extraction_progress.start(std.Io.Dir.path.basename(path), 0),
@@ -544,7 +546,7 @@ pub fn log(io: std.Io, comptime format: []const u8, args: anytype) void {
     stderr.file_writer.interface.flush() catch {};
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?*Store, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, nand_fuse_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?*Store, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, scratch_directory: []const u8, nand_fuse_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
     std.debug.assert(worker_count >= 1);
     var pool: Pool = .{
         .allocator = allocator,
@@ -554,6 +556,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8
         .skip_existing = skip_existing,
         .state = state,
         .rap_directory = rap_directory,
+        .scratch_directory = scratch_directory,
         .nand_fuse_directory = nand_fuse_directory,
         .intake_limit = @max(1, max_threads / 4),
         .scan_progress = root.start("Scanning directories", 0),

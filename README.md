@@ -807,7 +807,11 @@ temporary files. PSPDB imports the SDK source directly. Remaining external tools
 receive input bytes in private temporary directories, not by reopening CAS objects.
 Zig hashes their outputs and queues
 nested extraction using retained buffers; `--store` additionally persists those bytes.
-Temporary input/output directories are removed after the immediate walk.
+Temporary input/output directories are removed after the immediate walk. They
+are created under an absolute `TMPDIR` when set, otherwise `/tmp`; the helpers
+inherit it. PS1 reconstruction needs roughly three times each PBP in scratch per
+concurrent job, so a small `/tmp` tmpfs can fill up under many threads. A larger
+RAM-backed root such as `TMPDIR=/dev/shm/pspdb` avoids that.
 Retail PKG keys and offset AES-CTR, plus NPUMDIMG metadata hashing/signature
 verification, live in Zig-PSP's `tools/prxencrypt/pkg_crypto.zig` and
 `npumdimg_crypto.zig`. PSPDB retains container parsing and catalog policy.
