@@ -81,30 +81,50 @@ fn parseImpl(allocator: std.mem.Allocator, bytes: []const u8, title_owner: ?*[]u
         const end = std.mem.indexOfScalar(u8, data, 0) orelse return error.InvalidSfo;
         const text = data[0..end];
         if (!std.unicode.utf8ValidateSlice(text)) {
-            // Some PSP and PS1 SFOs use CP1252 trademark in otherwise ASCII TITLE.
-            // No other legacy high byte is accepted.
+            // Some PSP and PS1 SFOs use CP1252 trademark, copyright and
+            // registered signs, the right single quotation mark, or one
+            // Shift-JIS middle dot in otherwise ASCII TITLE. No other legacy
+            // byte sequence is accepted.
             if (!std.mem.eql(u8, key, "TITLE") or title_owner == null) return error.InvalidSfo;
             var length: usize = 0;
-            for (text) |c| {
-                if (c >= 128 and c != 0x99) return error.InvalidSfo;
-                length += if (c == 0x99) @as(usize, 3) else 1;
+            var i: usize = 0;
+            while (i < text.len) {
+                const sign = legacy_title_sign(text[i..]) orelse return error.InvalidSfo;
+                length += sign.text.len;
+                i += sign.consumed;
             }
             const normalized = try allocator.alloc(u8, length);
             var pos: usize = 0;
-            for (text) |c| {
-                if (c == 0x99) {
-                    @memcpy(normalized[pos..][0..3], "™");
-                    pos += 3;
-                } else {
-                    normalized[pos] = c;
-                    pos += 1;
-                }
+            i = 0;
+            while (i < text.len) {
+                const sign = legacy_title_sign(text[i..]).?;
+                @memcpy(normalized[pos..][0..sign.text.len], sign.text);
+                pos += sign.text.len;
+                i += sign.consumed;
             }
             title_owner.?.* = normalized;
             target.* = normalized;
         } else target.* = text;
     }
     return result;
+}
+
+/// Decode the legacy sequence starting `rest`: ASCII passes through.
+fn legacy_title_sign(rest: []const u8) ?struct { text: []const u8, consumed: usize } {
+    if (rest[0] < 128) return .{ .text = rest[0..1], .consumed = 1 };
+    // Shift-JIS 0x81 0x45 is the katakana middle dot (U+30FB): the English
+    // C&C Red Alert (EP0006-NPEF00028) title ends "Red Alert\x81E", where the
+    // French edition has "Red Alert™". 0x45 is the pair's trail byte, not "E".
+    if (rest[0] == 0x81 and rest.len > 1 and rest[1] == 0x45) return .{ .text = "・", .consumed = 2 };
+    return .{ .text = switch (rest[0]) {
+        0x99 => "™",
+        0xa9 => "©",
+        0xae => "®",
+        // Right single quotation mark (U+2019), used as an apostrophe in
+        // some European PSN titles, e.g. "Everybody’s Golf 2" (NPEE00025).
+        0x92 => "’",
+        else => return null,
+    }, .consumed = 1 };
 }
 
 test "missing and malformed SFO" {
@@ -196,15 +216,28 @@ test "Zig-PSP SFO rejects malformed tables, keys, values and duplicate metadata"
     }
 }
 
-test "selected title normalizes legacy trademark without changing source" {
+test "selected title normalizes legacy trademark, copyright, registered, apostrophe and middle-dot signs without changing source" {
     var bytes = fixture();
     bytes[68] = 0x99;
     try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, &bytes, null));
-    var owner: []u8 = &.{};
-    defer std.testing.allocator.free(owner);
-    const result = try parse(std.testing.allocator, &bytes, &owner);
-    try std.testing.expectEqualStrings("Dem™", result.title.?);
-    try std.testing.expectEqual(@as(u8, 0x99), bytes[68]);
+    for ([_]struct { u8, u8, []const u8 }{ .{ 0x99, 0xa9, "De™©" }, .{ 0xae, 'o', "De®o" }, .{ 0x92, 's', "De’s" }, .{ 0x81, 0x45, "De・" } }) |case| {
+        bytes[67] = case[0];
+        bytes[68] = case[1];
+        var owner: []u8 = &.{};
+        defer std.testing.allocator.free(owner);
+        const result = try parse(std.testing.allocator, &bytes, &owner);
+        try std.testing.expectEqualStrings(case[2], result.title.?);
+        try std.testing.expectEqual(case[0], bytes[67]);
+    }
+    // Other legacy bytes stay invalid: the left single quote, any other
+    // Shift-JIS pair, and a lead byte cut off by the terminator.
+    for ([_][2]u8{ .{ 'e', 0x91 }, .{ 0x81, 0x46 }, .{ 'e', 0x81 } }) |case| {
+        bytes[67] = case[0];
+        bytes[68] = case[1];
+        var owner: []u8 = &.{};
+        defer std.testing.allocator.free(owner);
+        try std.testing.expectError(error.InvalidSfo, parse(std.testing.allocator, &bytes, &owner));
+    }
 }
 
 fn category_fixture(comptime count: usize) [20 + 16 * count + 9 + 3 * count]u8 {

@@ -101,9 +101,14 @@ Its native reader validates bounds and borrows the key/data pools; PSPDB only
 selects and validates its catalog fields. No SDK source patch is applied.
 
 ISO titles share PKG's narrow legacy normalization: an otherwise ASCII `TITLE`
-may contain CP1252 byte `0x99`, which becomes UTF-8 `™` in metadata only. Original
-SFO bytes remain unchanged; other invalid high bytes are rejected. Generic PBP
-and standalone updater validation retain their existing strict UTF-8 behavior.
+may contain CP1252 bytes `0x99`, `0xA9`, `0xAE` and `0x92`, which become UTF-8
+`™`, `©`, `®` and `’`, and the Shift-JIS pair `0x81 0x45`, which becomes `・`,
+in metadata only (ISO 7, PKG 7 and PBP 5 added `©` and `®`; `’` and `・` were
+added within those revisions because they only turn former `InvalidSfo`
+errors into results, which `--skip-existing` retries anyway). Original
+SFO bytes remain unchanged; other invalid high bytes are rejected. Nested PBP
+`PARAM.SFO` validation applies the same title rule since PBP revision 5;
+standalone updater validation retains strict UTF-8.
 
 ISO revision 6 and nested ISO9660 revision 4 preserve valid UTF-8 filenames
 verbatim. Invalid-UTF-8 Rock Ridge names are converted strictly from CP932;

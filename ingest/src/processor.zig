@@ -957,7 +957,10 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
         },
         .pbp => blk: {
             const pbp = try containers.parse_pbp(task.input.bytes);
-            _ = try sfo.parse(allocator, pbp.get("PARAM.SFO") orelse "", null);
+            // Validation only: the owner lets legacy title signs normalize.
+            var title: []u8 = &.{};
+            defer allocator.free(title);
+            _ = try sfo.parse(allocator, pbp.get("PARAM.SFO") orelse "", &title);
             if (pbp.get("DATA.BIN")) |psar_bytes| {
                 if (extractor.detect(psar_bytes) == .npumdimg) {
                     const data = try data_psp.Header.parse(pbp.get("DATA.PSP") orelse return error.MissingDataPsp);
