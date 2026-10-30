@@ -11,16 +11,15 @@
 -#include "at3acm.h"
 -#include "gui.h"
  #include "cue_resources.h"
--
--extern void openLogFileForWriting(const char* pbpPath);
 +#include <new>
 +#include <cerrno>
 +
-+
+ 
+-extern void openLogFileForWriting(const char* pbpPath);
  
  
  
-@@ -34,15 +35,17 @@
+@@ -34,15 +35,17 @@ static bool check_output_files_overwrite(const char* game_title, bool use_prebak
          return false;
      }
      
@@ -47,7 +46,7 @@
      
      if (!cue_exists && !bin_exists) {
          return true; // No files exist, proceed
-@@ -53,43 +56,8 @@
+@@ -53,43 +56,14 @@ static bool check_output_files_overwrite(const char* game_title, bool use_prebak
      if (cue_exists) printf("  %s\n", cue_path);
      if (bin_exists) printf("  %s\n", bin_path);
      
@@ -90,10 +89,16 @@
 -    }
 +    printf("ERROR: Refusing to overwrite existing output files\n");
 +    return false;
++}
++
++// Output title used when no prebaked CUE exists; disc_number 0 means a single disc.
++static void generated_output_title(char* title, size_t size, int disc_number) {
++    if (disc_number > 0) snprintf(title, size, "cdrom_%d", disc_number);
++    else snprintf(title, size, "cdrom");
  }
  
  // Helper function to read lines from string buffer (replaces fgets for embedded CUE files)
-@@ -135,117 +103,65 @@
+@@ -135,117 +109,65 @@ static char* get_next_line(char** data_ptr, char* line_buffer, size_t buffer_siz
  // Dynamic pregap override storage
  static PREGAP_OVERRIDE* g_dynamic_pregap_override = NULL;
  
@@ -160,51 +165,9 @@
 -}
 -
 -unsigned long extract_startdat(FILE *psar, bool isMultidisc)
--{
--	if (psar == NULL)
--	{
--		printf("ERROR: Can't open input file for STARTDAT!\n");
--		return -1;
--	}
--
--	// Get the STARTDAT offset (0xC for single disc and 0x10 for multidisc due to header magic length).
--	unsigned long startdat_offset;
--	if (isMultidisc)
--		fseek(psar, 0x10, SEEK_SET);
--	else
--		fseek(psar, 0xC, SEEK_SET);
--	fread(&startdat_offset, sizeof(startdat_offset), 1, psar);
--
--	if (startdat_offset)
--	{
--		printf("Found STARTDAT offset: 0x%08lx\n", startdat_offset);
--
--		// Read the STARTDAT header.
--		STARTDAT_HEADER startdat_header[sizeof(STARTDAT_HEADER)];
--		memset(startdat_header, 0, sizeof(startdat_header));
--
--		// Save the header as well.
--		_fseeki64(psar, startdat_offset, SEEK_SET);
--		fread(startdat_header, sizeof(STARTDAT_HEADER), 1, psar);
--		_fseeki64(psar, startdat_offset, SEEK_SET);
--
--		// Read the STARTDAT data.
--		int startdat_size = startdat_header->header_size + startdat_header->data_size;
--		unsigned char *startdat_data = new unsigned char[startdat_size];   
--		fread(startdat_data, 1, startdat_size, psar);
--
--		// Store the STARTDAT.
--		FILE* startdat = fopen("STARTDAT.BIN", "wb");
--		fwrite(startdat_data, startdat_size, 1, startdat);
--		fclose(startdat);
--
--		// Store the STARTDAT.PNG
--		FILE* startdatpng = fopen("STARTDAT.PNG", "wb");
--		fwrite(startdat_data + startdat_header->header_size, startdat_header->data_size, 1, startdatpng);
--		fclose(startdatpng);
--
 +int64_t extract_startdat(FILE *psar, bool isMultidisc)
-+{
+ {
+-	if (psar == NULL)
 +	if (psar == NULL || _fseeki64(psar, 0, SEEK_END) != 0)
 +		return -1;
 +	const int64_t psar_size = _ftelli64(psar);
@@ -213,7 +176,8 @@
 +	if (psar_size < offset_field + (int64_t)sizeof(startdat_offset) ||
 +	    _fseeki64(psar, offset_field, SEEK_SET) != 0 ||
 +	    fread(&startdat_offset, sizeof(startdat_offset), 1, psar) != 1)
-+	{
+ 	{
+-		printf("ERROR: Can't open input file for STARTDAT!\n");
 +		printf("ERROR: Truncated STARTDAT offset!\n");
 +		return -1;
 +	}
@@ -244,43 +208,94 @@
 +		return -1;
 +	if (fread(startdat_data, 1, (size_t)startdat_size, psar) != startdat_size)
 +	{
- 		delete[] startdat_data;
--
--		printf("Saving STARTDAT as STARTDAT.BIN...\n\n");
--	}
--
-+		return -1;
-+	}
-+
++		delete[] startdat_data;
+ 		return -1;
+ 	}
+ 
+-	// Get the STARTDAT offset (0xC for single disc and 0x10 for multidisc due to header magic length).
+-	unsigned long startdat_offset;
+-	if (isMultidisc)
+-		fseek(psar, 0x10, SEEK_SET);
+-	else
+-		fseek(psar, 0xC, SEEK_SET);
+-	fread(&startdat_offset, sizeof(startdat_offset), 1, psar);
 +	FILE* startdat = fopen("STARTDAT.BIN", "wb");
 +	if (!startdat) { delete[] startdat_data; return -1; }
 +	bool failed = fwrite(startdat_data, 1, (size_t)startdat_size, startdat) != startdat_size;
 +	if (fclose(startdat)) failed = true;
 +	if (failed) { delete[] startdat_data; return -1; }
-+
+ 
+-	if (startdat_offset)
+-	{
+-		printf("Found STARTDAT offset: 0x%08lx\n", startdat_offset);
+-
+-		// Read the STARTDAT header.
+-		STARTDAT_HEADER startdat_header[sizeof(STARTDAT_HEADER)];
+-		memset(startdat_header, 0, sizeof(startdat_header));
+-
+-		// Save the header as well.
+-		_fseeki64(psar, startdat_offset, SEEK_SET);
+-		fread(startdat_header, sizeof(STARTDAT_HEADER), 1, psar);
+-		_fseeki64(psar, startdat_offset, SEEK_SET);
+-
+-		// Read the STARTDAT data.
+-		int startdat_size = startdat_header->header_size + startdat_header->data_size;
+-		unsigned char *startdat_data = new unsigned char[startdat_size];   
+-		fread(startdat_data, 1, startdat_size, psar);
+-
+-		// Store the STARTDAT.
+-		FILE* startdat = fopen("STARTDAT.BIN", "wb");
+-		fwrite(startdat_data, startdat_size, 1, startdat);
+-		fclose(startdat);
+-
+-		// Store the STARTDAT.PNG
+-		FILE* startdatpng = fopen("STARTDAT.PNG", "wb");
+-		fwrite(startdat_data + startdat_header->header_size, startdat_header->data_size, 1, startdatpng);
+-		fclose(startdatpng);
+-
+-		delete[] startdat_data;
+-
+-		printf("Saving STARTDAT as STARTDAT.BIN...\n\n");
+-	}
 +	FILE* startdatpng = fopen("STARTDAT.PNG", "wb");
 +	if (!startdatpng) { delete[] startdat_data; return -1; }
 +	failed = fwrite(startdat_data + startdat_header.header_size, 1, startdat_header.data_size, startdatpng) != startdat_header.data_size;
 +	if (fclose(startdatpng)) failed = true;
 +	delete[] startdat_data;
 +	if (failed) return -1;
-+
+ 
 +	printf("Saving STARTDAT as STARTDAT.BIN...\n\n");
  	return startdat_offset;
  }
  
-@@ -299,174 +215,180 @@
+@@ -299,174 +221,180 @@ int decrypt_document(FILE* document)
  
  int decrypt_special_data(FILE *psar, long long psar_size, int special_data_offset)
  {
 -	if ((psar == NULL))
 -	{
 -		printf("ERROR: Can't open input file for special data!\n");
--		return -1;
++	if (psar == NULL)
+ 		return -1;
 -	}
--
++	if (!special_data_offset)
++		return 0;
+ 
 -	if (special_data_offset)
--	{
++	// Special data is always the last portion of DATA.PSAR.
++	if (special_data_offset < 0 || psar_size < special_data_offset ||
++	    psar_size - special_data_offset < 0x90 ||
++	    psar_size - special_data_offset > INT_MAX ||
++	    _fseeki64(psar, 0, SEEK_END) != 0)
++		return -1;
++	const int64_t source_size = _ftelli64(psar);
++	if (source_size < psar_size || _fseeki64(psar, special_data_offset, SEEK_SET) != 0)
++		return -1;
++	const int special_data_size = (int)(psar_size - special_data_offset);
++	unsigned char *special_data = new (std::nothrow) unsigned char[special_data_size];
++	if (!special_data) return -1;
++	if (fread(special_data, 1, special_data_size, psar) != (size_t)special_data_size)
+ 	{
 -		printf("Found special data offset: 0x%08x\n", special_data_offset);
 -
 -		// Seek to the special data.
@@ -314,66 +329,25 @@
 -		fwrite(special_data + 0xAC, pgd_size - 0x1C, 1, dec_special_data_png);
 -		fclose(dec_special_data_png);
 -
-+	if (psar == NULL)
-+		return -1;
-+	if (!special_data_offset)
-+		return 0;
-+
-+	// Special data is always the last portion of DATA.PSAR.
-+	if (special_data_offset < 0 || psar_size < special_data_offset ||
-+	    psar_size - special_data_offset < 0x90 ||
-+	    psar_size - special_data_offset > INT_MAX ||
-+	    _fseeki64(psar, 0, SEEK_END) != 0)
-+		return -1;
-+	const int64_t source_size = _ftelli64(psar);
-+	if (source_size < psar_size || _fseeki64(psar, special_data_offset, SEEK_SET) != 0)
-+		return -1;
-+	const int special_data_size = (int)(psar_size - special_data_offset);
-+	unsigned char *special_data = new (std::nothrow) unsigned char[special_data_size];
-+	if (!special_data) return -1;
-+	if (fread(special_data, 1, special_data_size, psar) != (size_t)special_data_size)
-+	{
  		delete[] special_data;
 -	}
-+		return -1;
-+	}
-+
-+	printf("Found special data offset: 0x%08x\n", special_data_offset);
-+	printf("Decrypting special data...\n");
-+	const int pgd_size = decrypt_pgd(special_data, special_data_size, 2, NULL);
-+	if (pgd_size < 0x1C || pgd_size > special_data_size - 0x90)
-+	{
-+		printf("ERROR: Special data decryption failed!\n\n");
-+		delete[] special_data;
-+		return -1;
-+	}
-+
-+	FILE* dec_special_data = fopen("SPECIAL_DATA.BIN", "wb");
-+	if (!dec_special_data) { delete[] special_data; return -1; }
-+	bool failed = fwrite(special_data + 0x90, 1, pgd_size, dec_special_data) != (size_t)pgd_size;
-+	if (fclose(dec_special_data)) failed = true;
-+	if (failed) { delete[] special_data; return -1; }
-+
-+	FILE* dec_special_data_png = fopen("SPECIAL_DATA.PNG", "wb");
-+	if (!dec_special_data_png) { delete[] special_data; return -1; }
-+	failed = fwrite(special_data + 0xAC, 1, pgd_size - 0x1C, dec_special_data_png) != (size_t)(pgd_size - 0x1C);
-+	if (fclose(dec_special_data_png)) failed = true;
-+	delete[] special_data;
-+	if (failed) return -1;
-+	printf("Special data successfully decrypted! Saving as SPECIAL_DATA.BIN...\n\n");
- 	return 0;
- }
- 
+-	return 0;
+-}
+-
 -int decrypt_unknown_data(FILE *psar, int unknown_data_offset, int startdat_offset)
 -{
 -	if ((psar == NULL))
 -	{
 -		printf("ERROR: Can't open input file for unknown data!\n");
--		return -1;
--	}
--
+ 		return -1;
+ 	}
+ 
 -	if (unknown_data_offset)
--	{
++	printf("Found special data offset: 0x%08x\n", special_data_offset);
++	printf("Decrypting special data...\n");
++	const int pgd_size = decrypt_pgd(special_data, special_data_size, 2, NULL);
++	if (pgd_size < 0x1C || pgd_size > special_data_size - 0x90)
+ 	{
 -		printf("Found unknown data offset: 0x%08x\n", unknown_data_offset);
 -
 -		// Seek to the unknown data.
@@ -401,9 +375,32 @@
 -		FILE* dec_unknown_data = fopen("UNKNOWN_DATA.BIN", "wb");
 -		fwrite(unknown_data + 0x90, pgd_size, 1, dec_unknown_data);
 -		fclose(dec_unknown_data);
+-		delete[] unknown_data;
++		printf("ERROR: Special data decryption failed!\n\n");
++		delete[] special_data;
++		return -1;
+ 	}
+ 
++	FILE* dec_special_data = fopen("SPECIAL_DATA.BIN", "wb");
++	if (!dec_special_data) { delete[] special_data; return -1; }
++	bool failed = fwrite(special_data + 0x90, 1, pgd_size, dec_special_data) != (size_t)pgd_size;
++	if (fclose(dec_special_data)) failed = true;
++	if (failed) { delete[] special_data; return -1; }
++
++	FILE* dec_special_data_png = fopen("SPECIAL_DATA.PNG", "wb");
++	if (!dec_special_data_png) { delete[] special_data; return -1; }
++	failed = fwrite(special_data + 0xAC, 1, pgd_size - 0x1C, dec_special_data_png) != (size_t)(pgd_size - 0x1C);
++	if (fclose(dec_special_data_png)) failed = true;
++	delete[] special_data;
++	if (failed) return -1;
++	printf("Special data successfully decrypted! Saving as SPECIAL_DATA.BIN...\n\n");
+ 	return 0;
+ }
+ 
+-int decrypt_iso_header(FILE *psar, unsigned int header_offset, unsigned char *pgd_key, int disc_num)
 +int decrypt_unknown_data(FILE *psar, int unknown_data_offset, int64_t startdat_offset)
-+{
-+	if (psar == NULL)
+ {
+ 	if (psar == NULL)
 +		return -1;
 +	if (!unknown_data_offset)
 +		return 0;
@@ -421,13 +418,14 @@
 +	unsigned char *unknown_data = new (std::nothrow) unsigned char[unknown_data_size];
 +	if (!unknown_data) return -1;
 +	if (fread(unknown_data, 1, unknown_data_size, psar) != (size_t)unknown_data_size)
-+	{
- 		delete[] unknown_data;
--	}
--
-+		return -1;
-+	}
-+
+ 	{
+-		printf("ERROR: Can't open input file for ISO header!\n");
++		delete[] unknown_data;
+ 		return -1;
+ 	}
+ 
+-	// Seek to the ISO header.
+-	_fseeki64(psar, header_offset, SEEK_SET);
 +	printf("Found unknown data offset: 0x%08x\n", unknown_data_offset);
 +	printf("Decrypting unknown data...\n");
 +	const int pgd_size = decrypt_pgd(unknown_data, unknown_data_size, 2, NULL);
@@ -437,7 +435,10 @@
 +		delete[] unknown_data;
 +		return -1;
 +	}
-+
+ 
+-	// Read the ISO header.
+-	unsigned char *iso_header = new unsigned char[ISO_HEADER_SIZE];
+-	fread(iso_header, ISO_HEADER_SIZE, 1, psar);
 +	FILE* dec_unknown_data = fopen("UNKNOWN_DATA.BIN", "wb");
 +	if (!dec_unknown_data) { delete[] unknown_data; return -1; }
 +	bool failed = fwrite(unknown_data + 0x90, 1, pgd_size, dec_unknown_data) != (size_t)pgd_size;
@@ -445,23 +446,9 @@
 +	delete[] unknown_data;
 +	if (failed) return -1;
 +	printf("Unknown data successfully decrypted! Saving as UNKNOWN_DATA.BIN...\n\n");
- 	return 0;
- }
- 
--int decrypt_iso_header(FILE *psar, unsigned int header_offset, unsigned char *pgd_key, int disc_num)
--{
--	if (psar == NULL)
--	{
--		printf("ERROR: Can't open input file for ISO header!\n");
--		return -1;
--	}
--
--	// Seek to the ISO header.
--	_fseeki64(psar, header_offset, SEEK_SET);
--
--	// Read the ISO header.
--	unsigned char *iso_header = new unsigned char[ISO_HEADER_SIZE];
--	fread(iso_header, ISO_HEADER_SIZE, 1, psar);
++	return 0;
++}
++
 +int decrypt_iso_header(FILE *psar, int64_t header_offset, unsigned char *pgd_key, int disc_num)
 +{
 +	if (psar == NULL || header_offset < 0 || _fseeki64(psar, 0, SEEK_END) != 0)
@@ -493,15 +480,12 @@
 +	if (pgd_size <= 0 || pgd_size > ISO_HEADER_SIZE - 0x90)
  	{
  		printf("ERROR: ISO header decryption failed!\n\n");
--		return -1;
--	}
--
++		delete[] iso_header;
+ 		return -1;
+ 	}
+ 
 -	// Choose the output ISO header file name based on the disc number.
 -	char iso_header_filename[0x14];
-+		delete[] iso_header;
-+		return -1;
-+	}
-+
 +	char iso_header_filename[0x20];
  	if (disc_num > 0)
  		sprintf(iso_header_filename, "ISO_HEADER_%d.BIN", disc_num);
@@ -526,24 +510,14 @@
  int decrypt_iso_map(FILE *psar, int map_offset, int map_size, unsigned char *pgd_key)
  {
 -	if (psar == NULL)
--	{
--		printf("ERROR: Can't open input file for ISO disc map!\n");
--		return -1;
--	}
--
--	// Seek to the ISO map.
--	fseek(psar, map_offset, SEEK_SET);
--
--	// Read the ISO map.
--	unsigned char *iso_map = new unsigned char[map_size];
--	fread(iso_map, map_size, 1, psar);
 +	if (psar == NULL || map_offset < 0 || map_size < 0x90 ||
 +	    _fseeki64(psar, 0, SEEK_END) != 0)
 +		return -1;
 +	const int64_t source_size = _ftelli64(psar);
 +	if (source_size < map_offset || source_size - map_offset < map_size ||
 +	    _fseeki64(psar, map_offset, SEEK_SET) != 0)
-+	{
+ 	{
+-		printf("ERROR: Can't open input file for ISO disc map!\n");
 +		printf("ERROR: Truncated ISO disc map!\n");
 +		return -1;
 +	}
@@ -552,8 +526,15 @@
 +	if (fread(iso_map, 1, map_size, psar) != (size_t)map_size)
 +	{
 +		delete[] iso_map;
-+		return -1;
-+	}
+ 		return -1;
+ 	}
+-
+-	// Seek to the ISO map.
+-	fseek(psar, map_offset, SEEK_SET);
+-
+-	// Read the ISO map.
+-	unsigned char *iso_map = new unsigned char[map_size];
+-	fread(iso_map, map_size, 1, psar);
  
  	printf("Decrypting ISO disc map...\n");
 -
@@ -567,14 +548,11 @@
 +	if (pgd_size <= 0 || pgd_size > map_size - 0x90)
  	{
  		printf("ERROR: ISO disc map decryption failed!\n\n");
--		return -1;
--	}
--
--	// Store the decrypted ISO disc map.
 +		delete[] iso_map;
-+		return -1;
-+	}
-+
+ 		return -1;
+ 	}
+ 
+-	// Store the decrypted ISO disc map.
  	FILE* dec_iso_map = fopen("ISO_MAP.BIN", "wb");
 -	fwrite(iso_map + 0x90, pgd_size, 1, dec_iso_map);
 -	fclose(dec_iso_map);
@@ -588,7 +566,7 @@
  	return 0;
  }
  
-@@ -499,9 +421,11 @@
+@@ -499,9 +427,11 @@ int build_data_track(FILE *psar, FILE *iso_table, unsigned int disc_offset, int
  	FILE* overdump = fopen("OVERDUMP.BIN", "wb");
  	// Open a new file to write the ISO image.
  	FILE* iso = fopen(iso_filename, "wb");
@@ -601,7 +579,7 @@
  		return -1;
  	}
  
-@@ -513,7 +437,7 @@
+@@ -513,7 +443,7 @@ int build_data_track(FILE *psar, FILE *iso_table, unsigned int disc_offset, int
  	memset(entry, 0, sizeof(entry));
  
  	// Read the first entry.
@@ -610,7 +588,7 @@
  
  	// Keep reading entries until we reach the end of the table.
  	while (entry->size > 0)
-@@ -521,47 +445,50 @@
+@@ -521,47 +451,50 @@ int build_data_track(FILE *psar, FILE *iso_table, unsigned int disc_offset, int
  		read_size += entry->size;
  		if (block_count % 100 == 0) printf(".");
  		// Locate the block offset in the DATA.PSAR.
@@ -686,7 +664,7 @@
  		block_count++;
  					
  		// Clear buffers.
-@@ -571,13 +498,14 @@
+@@ -571,13 +504,14 @@ int build_data_track(FILE *psar, FILE *iso_table, unsigned int disc_offset, int
  		// Go to next entry.
  		table_offset += sizeof(ISO_ENTRY);
  		fseek(iso_table, table_offset, SEEK_SET);
@@ -705,36 +683,28 @@
  }
  						             
  unsigned int ROTR32(unsigned int v, int n)
-@@ -699,23 +627,45 @@
+@@ -699,23 +633,45 @@ int extract_frames_from_cue(FILE *iso_table, int cue_offset, int gap)
  
  int get_track_size_from_cue(FILE *iso_table, int cue_offset)
  {
 -	int cur_track_offset = extract_frames_from_cue(iso_table, cue_offset, 2);
 -	if (cur_track_offset < 0) {
 -		printf("ERROR: unable to get current track offset, aborting...\n");
--		return -1;
--	}
--	int next_track_offset = extract_frames_from_cue(iso_table, cue_offset + sizeof(CUE_ENTRY), 2);
--	if (next_track_offset < 0)
--	{
--		// get disc size to calculate last track, no gap after last track
--		next_track_offset = extract_frames_from_cue(iso_table, CUE_LEADOUT_OFFSET, 0);
--		if (next_track_offset < 0)
--		{
--			printf("ERROR: last track size calculation failed, aborting...\n");
--			return -1;
--		}
--	}
--	return next_track_offset - cur_track_offset;
 +	// CUE records end where the CDDA table begins; track 99 has no next record.
 +	if (iso_table == NULL || cue_offset < 0x41E ||
 +		(cue_offset - 0x41E) % sizeof(CUE_ENTRY) != 0 ||
 +		cue_offset > 0x800 - (int)sizeof(CUE_ENTRY))
-+		return -1;
+ 		return -1;
+-	}
+-	int next_track_offset = extract_frames_from_cue(iso_table, cue_offset + sizeof(CUE_ENTRY), 2);
+-	if (next_track_offset < 0)
 +	int offsets[3] = {cue_offset, cue_offset + (int)sizeof(CUE_ENTRY), CUE_LEADOUT_OFFSET};
 +	int frames[3] = {-1, -1, -1};
 +	for (int i = 0; i < 3; i++)
-+	{
+ 	{
+-		// get disc size to calculate last track, no gap after last track
+-		next_track_offset = extract_frames_from_cue(iso_table, CUE_LEADOUT_OFFSET, 0);
+-		if (next_track_offset < 0)
 +		if (i == 1 && offsets[i] > 0x800 - (int)sizeof(CUE_ENTRY))
 +			continue;
 +		if (i == 2 && frames[1] >= 0)
@@ -742,10 +712,11 @@
 +		CUE_ENTRY entry;
 +		if (fseek(iso_table, offsets[i], SEEK_SET) != 0 ||
 +			fread(&entry, sizeof(entry), 1, iso_table) != 1)
-+		{
+ 		{
+-			printf("ERROR: last track size calculation failed, aborting...\n");
 +			printf("ERROR: Incomplete CUE record at %04x, aborting...\n", offsets[i]);
-+			return -1;
-+		}
+ 			return -1;
+ 		}
 +		if (entry.type == 0x01 || entry.type == 0x21 ||
 +			entry.type == 0x41 || entry.type == 0x61)
 +		{
@@ -757,7 +728,8 @@
 +		}
 +		if (i == 0 && frames[i] < 0)
 +			return -1;
-+	}
+ 	}
+-	return next_track_offset - cur_track_offset;
 +	int next_track_offset = frames[1] >= 0 ? frames[1] : frames[2];
 +	if (next_track_offset < frames[0])
 +	{
@@ -768,25 +740,22 @@
  }
  
  int data_track_sectors(FILE *iso_table)
-@@ -736,164 +686,171 @@
+@@ -736,164 +692,171 @@ void audio_file_name(char* filename, int disc_num, int track_num, char* extensio
  }
  
  int build_audio_at3(FILE *psar, FILE *iso_table, int base_audio_offset, unsigned char *pgd_key, int disc_num, const PREGAP_OVERRIDE* pregap_override)
 -{	
 -	if ((psar == NULL) || (iso_table == NULL))
--	{
--		printf("ERROR: Can't open input files for extracting audio tracks!\n");
--		return -1;
--	}
 +{
 +	if (psar == NULL || iso_table == NULL || base_audio_offset < 0 ||
 +		disc_num < 0 || disc_num > 99 ||
 +		(pregap_override != NULL && pregap_override->num_tracks >
 +			sizeof(pregap_override->timestamps) / sizeof(pregap_override->timestamps[0])))
-+	{
+ 	{
+-		printf("ERROR: Can't open input files for extracting audio tracks!\n");
 +		printf("ERROR: Invalid input for extracting audio tracks!\n");
-+		return -1;
-+	}
+ 		return -1;
+ 	}
 +	if (_fseeki64(psar, 0, SEEK_END) != 0)
 +		return -1;
 +	const auto psar_size = _ftelli64(psar);
@@ -812,34 +781,15 @@
 -	fseek(iso_table, audio_offset, SEEK_SET);
 -	fread(audio_entry, sizeof(CDDA_ENTRY), 1, iso_table);
 -	if (audio_entry->offset == 0)
--	{
++	for (;;)
+ 	{
 -		printf("There are no CDDA audio tracks, continuing...\n");
 -		return 0;
 -	}
 -	while (audio_entry->offset)
 -	{
-+	for (;;)
-+	{
-+		CDDA_ENTRY audio_entry;
-+		if (fseek(iso_table, audio_offset, SEEK_SET) != 0 ||
-+			fread(&audio_entry, sizeof(audio_entry), 1, iso_table) != 1)
-+		{
-+			printf("ERROR: Incomplete CDDA table, aborting...\n");
-+			return -1;
-+		}
-+		if (audio_entry.offset == 0)
-+		{
-+			if (track_num == 1)
-+				printf("There are no CDDA audio tracks, continuing...\n");
-+			return track_num - 1;
-+		}
-+		if (track_num >= 99)
-+		{
-+			printf("ERROR: Too many CDDA tracks, aborting...\n");
-+			return -1;
-+		}
- 		track_num++;
- 		int track_size = get_track_size_from_cue(iso_table, cue_offset);
+-		track_num++;
+-		int track_size = get_track_size_from_cue(iso_table, cue_offset);
 -
 -        if (pregap_override != NULL)
 -        {
@@ -866,23 +816,29 @@
 -                }
 -            }
 -        }
- 		if (track_size < 0)
--		{
+-		if (track_size < 0)
++		CDDA_ENTRY audio_entry;
++		if (fseek(iso_table, audio_offset, SEEK_SET) != 0 ||
++			fread(&audio_entry, sizeof(audio_entry), 1, iso_table) != 1)
+ 		{
 -			printf("ERROR: retrieving offset for track %d, aborting...\n", track_num);
--			return -1;
--		}
--		
--		// Locate the block offset in the DATA.PSAR.
--		printf("seeking to %x + %x (%x)\n", base_audio_offset, audio_entry->offset, base_audio_offset + audio_entry->offset);
--		fseek(psar, base_audio_offset + audio_entry->offset, SEEK_SET);
--
--		// Read the data.
--		unsigned char *track_data = new unsigned char[audio_entry->size + NBYTES];
--		fread(track_data, audio_entry->size + NBYTES, 1, psar);
--		
--		
--		// Store the decrypted track data.
--		// Open a new file to write the track image with AT3 header
++			printf("ERROR: Incomplete CDDA table, aborting...\n");
++			return -1;
++		}
++		if (audio_entry.offset == 0)
++		{
++			if (track_num == 1)
++				printf("There are no CDDA audio tracks, continuing...\n");
++			return track_num - 1;
++		}
++		if (track_num >= 99)
++		{
++			printf("ERROR: Too many CDDA tracks, aborting...\n");
++			return -1;
++		}
++		track_num++;
++		int track_size = get_track_size_from_cue(iso_table, cue_offset);
++		if (track_size < 0)
 +			return -1;
 +		if (pregap_override != NULL)
 +		{
@@ -935,28 +891,25 @@
 +		{
 +			printf("ERROR: Incomplete source for audio track %d, aborting...\n", track_num);
 +			free(track_data);
-+			return -1;
-+		}
+ 			return -1;
+ 		}
+-		
+-		// Locate the block offset in the DATA.PSAR.
+-		printf("seeking to %x + %x (%x)\n", base_audio_offset, audio_entry->offset, base_audio_offset + audio_entry->offset);
+-		fseek(psar, base_audio_offset + audio_entry->offset, SEEK_SET);
+-
+-		// Read the data.
+-		unsigned char *track_data = new unsigned char[audio_entry->size + NBYTES];
+-		fread(track_data, audio_entry->size + NBYTES, 1, psar);
+-		
+-		
+-		// Store the decrypted track data.
+-		// Open a new file to write the track image with AT3 header
  		audio_file_name(track_filename, disc_num, track_num, (char*)"AT3");
  		FILE* track = fopen(track_filename, "wb");
  		if (track == NULL)
  		{
  			printf("ERROR: Can't open output file for audio track %d!\n", track_num);
--			return -1;
--		}
--
--		printf("Extracting audio track %d (%d sectors, %d bytes)\n", track_num, track_size, audio_entry->size + NBYTES);
--		
--		unscramble_atrac_data(track_data, audio_entry);
--		
--		fill_at3_header(at3_header, audio_entry, track_size);
--
--		fwrite(at3_header, sizeof(AT3_HEADER), 1, track);
--		fwrite(track_data, audio_entry->size, 1, track);
--		
--		fclose(track);
--		delete[] track_data;
--		
 +			free(track_data);
 +			return -1;
 +		}
@@ -974,16 +927,28 @@
 +		{
 +			printf("ERROR: Failed to write audio track %d, aborting...\n", track_num);
 +			remove(track_filename);
-+			return -1;
-+		}
+ 			return -1;
+ 		}
+-
+-		printf("Extracting audio track %d (%d sectors, %d bytes)\n", track_num, track_size, audio_entry->size + NBYTES);
+-		
+-		unscramble_atrac_data(track_data, audio_entry);
+-		
+-		fill_at3_header(at3_header, audio_entry, track_size);
+-
+-		fwrite(at3_header, sizeof(AT3_HEADER), 1, track);
+-		fwrite(track_data, audio_entry->size, 1, track);
+-		
+-		fclose(track);
+-		delete[] track_data;
+-		
  		audio_offset += sizeof(CDDA_ENTRY);
  		cue_offset += sizeof(CUE_ENTRY);
 -		// Go to next entry.
 -		fseek(iso_table, audio_offset, SEEK_SET);
 -		fread(audio_entry, sizeof(CDDA_ENTRY), 1, iso_table);
--	}
+ 	}
 -	return track_num - 1;
-+	}
  }
  
  int convert_at3_to_wav(int disc_num, int num_tracks)
@@ -1003,14 +968,10 @@
  		audio_file_name(at3_filename, disc_num, i, (char*)"AT3");
 -		struct stat st;
 -		if (stat(at3_filename, &st) != 0 || st.st_size == 0)
--		{
--			printf("%s doesn't exist or empty, aborting...\n", at3_filename);
--			return -1;
--		}
--
 +		FILE* at3_file = fopen(at3_filename, "rb");
 +		if (at3_file == NULL)
-+		{
+ 		{
+-			printf("%s doesn't exist or empty, aborting...\n", at3_filename);
 +			printf("ERROR: Can't open %s for verification, aborting...\n", at3_filename);
 +			return -1;
 +		}
@@ -1021,23 +982,30 @@
 +		if (!complete)
 +		{
 +			printf("ERROR: Incomplete AT3 header in %s, aborting...\n", at3_filename);
-+			return -1;
-+		}
+ 			return -1;
+ 		}
+-
  		char wav_filename[0x10];
  		audio_file_name(wav_filename, disc_num, i, (char*)"WAV");
 -
 -		printf("Converting %s to %s using ATRAC3 ACM...\n", at3_filename, wav_filename);
 -		int conversion_result = convertAt3ToWav(at3_filename, wav_filename, at3hadid);
 -		if (conversion_result != 0)
--		{
++		printf("Converting %s to %s using native libavcodec ATRAC3...\n", at3_filename, wav_filename);
++		if (decode_atrac3(at3_filename, wav_filename) != 0)
+ 		{
 -			printf("ERROR: Failed to convert %s using ATRAC3 ACM\n", at3_filename);
--			return -1;
--		}
++			printf("ERROR: Failed to convert %s using native libavcodec ATRAC3\n", at3_filename);
+ 			return -1;
+ 		}
 -		if (stat(wav_filename, &st) != 0 || st.st_size <= 44)
--		{
++		struct stat st;
++		if (stat(wav_filename, &st) != 0 || st.st_size <= 46)
+ 		{
 -			printf("%s failed to convert, ignoring audio tracks...\n", wav_filename);
--			return -1;
--		}
++			printf("ERROR: %s failed to convert, aborting...\n", wav_filename);
+ 			return -1;
+ 		}
 -		if (stat(wav_filename, &st) == 0)
 -		{
 -			FILE* at3_file = fopen(at3_filename, "rb");
@@ -1055,24 +1023,12 @@
 -			printf("Unable to open %s for verification...\n", wav_filename);
 -		printf("\n");
 -
-+		printf("Converting %s to %s using native libavcodec ATRAC3...\n", at3_filename, wav_filename);
-+		if (decode_atrac3(at3_filename, wav_filename) != 0)
-+		{
-+			printf("ERROR: Failed to convert %s using native libavcodec ATRAC3\n", at3_filename);
-+			return -1;
-+		}
-+		struct stat st;
-+		if (stat(wav_filename, &st) != 0 || st.st_size <= 46)
-+		{
-+			printf("ERROR: %s failed to convert, aborting...\n", wav_filename);
-+			return -1;
-+		}
 +		printf("%s created with size %lld (expected %llu)...\n\n", wav_filename,
 +			(long long)st.st_size, 44ULL + (uint64_t)at3_header.fact_param1 * 4);
  	}
  	return num_tracks;
  }
-@@ -928,145 +885,157 @@
+@@ -928,145 +891,157 @@ int convert_at3_to_wav(int disc_num, int num_tracks)
  // length.
  int convert_wav_to_bin(int data_gap, int disc_num, int num_tracks, const PREGAP_OVERRIDE* pregap_override)
  {
@@ -1083,14 +1039,19 @@
  	printf("\nAttempting to convert WAV audio to BIN...\n\n");
  	for (int i = 2; i <= num_tracks + 1; i++)
  	{
+-		char wav_filename[0x10];
+-		audio_file_name(wav_filename, disc_num, i, (char*)"WAV");
+-		struct stat st;
+-		if (stat(wav_filename, &st) != 0 || st.st_size == 0)
 +		char at3_filename[0x10];
 +		audio_file_name(at3_filename, disc_num, i, (char*)"AT3");
 +		FILE* at3_file = fopen(at3_filename, "rb");
 +		if (at3_file == NULL)
-+		{
+ 		{
+-			printf("%s doesn't exist or empty, aborting...\n", wav_filename);
 +			printf("ERROR: Can't open %s, aborting...\n", at3_filename);
-+			return -1;
-+		}
+ 			return -1;
+ 		}
 +		AT3_HEADER at3_header;
 +		bool complete = fread(&at3_header, sizeof(at3_header), 1, at3_file) == 1;
 +		if (fclose(at3_file) != 0)
@@ -1128,14 +1089,8 @@
 +		if (target_track_size < pregap_size)
 +			return -1;
 +		int data_size = target_track_size - pregap_size;
- 		char wav_filename[0x10];
- 		audio_file_name(wav_filename, disc_num, i, (char*)"WAV");
--		struct stat st;
--		if (stat(wav_filename, &st) != 0 || st.st_size == 0)
--		{
--			printf("%s doesn't exist or empty, aborting...\n", wav_filename);
--			return -1;
--		}
++		char wav_filename[0x10];
++		audio_file_name(wav_filename, disc_num, i, (char*)"WAV");
  		FILE* wav_file = fopen(wav_filename, "rb");
  		if (wav_file == NULL)
  		{
@@ -1192,8 +1147,9 @@
  		{
  			printf("ERROR: Can't open %s, aborting...\n", bin_filename);
 -			fclose(wav_file);
--			return -1;
--		}
++			free(audio_data);
+ 			return -1;
+ 		}
 -
 -		// grab the expected size from the AT3 header
 -		long expected_size = -1;
@@ -1219,9 +1175,6 @@
 -        
 -		int pregap_size = (((i == 2) ? data_gap : gap_frames) - 1) * SECTOR_SIZE;
 -
-+			free(audio_data);
-+			return -1;
-+		}
  		char zero = '\0';
  		printf("Adding gap %d bytes...\n", pregap_size);
 -		fseek(bin_file, pregap_size - 1, SEEK_SET);
@@ -1283,15 +1236,14 @@
 -				fwrite(padding, padding_needed, 1, bin_file);
 -				free(padding);
 -			}
--		}
++			complete = padding != NULL &&
++				fwrite(padding, 1, padding_needed, bin_file) == (size_t)padding_needed;
++			free(padding);
+ 		}
 -
 -		fseek(bin_file, 0, SEEK_END);
 -		long file_size = ftell(bin_file);
 -		if (file_size < expected_size)
-+			complete = padding != NULL &&
-+				fwrite(padding, 1, padding_needed, bin_file) == (size_t)padding_needed;
-+			free(padding);
-+		}
 +		if (complete)
 +			complete = fseek(bin_file, 0, SEEK_END) == 0;
 +		long file_size = complete ? ftell(bin_file) : -1;
@@ -1303,7 +1255,10 @@
 -			long new_pos = expected_size - 1;
 -			fseek(bin_file, new_pos, SEEK_SET);
 -			(void)fwrite(&zero, 1, 1, bin_file);  // suppress unused variable warning
--		}
++			complete = fseek(bin_file, expected_size - 1, SEEK_SET) == 0 &&
++				fwrite(&zero, 1, 1, bin_file) == 1;
++			file_size = expected_size;
+ 		}
 -
 -		fclose(at3_file);
 -		fclose(wav_file);
@@ -1311,10 +1266,6 @@
 -		
 -		// Verify track length against CUE file expectation
 -		if (pregap_override != NULL && i - 2 < pregap_override->num_tracks)
-+			complete = fseek(bin_file, expected_size - 1, SEEK_SET) == 0 &&
-+				fwrite(&zero, 1, 1, bin_file) == 1;
-+			file_size = expected_size;
-+		}
 +		if (fclose(bin_file) != 0)
 +			complete = false;
 +		if (!complete)
@@ -1340,7 +1291,7 @@
  		}
  	}
  	return num_tracks;
-@@ -1136,7 +1105,7 @@
+@@ -1136,7 +1111,7 @@ int fix_iso(FILE *iso_table, char* data_track_file_name, char* data_fixed_file_p
  	return gap;
  }
  
@@ -1349,7 +1300,16 @@
  )
  {
  	char cdrom_file_path[256];
-@@ -1195,27 +1164,17 @@
+@@ -1187,7 +1162,7 @@ int build_bin_cue(FILE *iso_table, char *data_fixed_file_path, char *cdrom_file_
+ 	int data_track_size = copy_track_to_iso(bin_file, data_fixed_file_path, 1);
+ 	if (data_track_size < 0)
+ 	{
+-		printf("Error copying data track to CDROM.BIN, aborting...\n");
++		printf("Error copying data track to output BIN, aborting...\n");
+ 		fclose(bin_file);
+ 		return -1;
+ 	}
+@@ -1195,27 +1170,17 @@ int build_bin_cue(FILE *iso_table, char *data_fixed_file_path, char *cdrom_file_
  	fseek(iso_table, cue_offset, SEEK_SET);
  	fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
  	int track_num = 2;
@@ -1375,14 +1335,14 @@
 -				fclose(bin_file);
 -				return -1;
 -			}
-+			printf("ERROR: failed to copy track %d to CDROM.BIN, aborting...\n", track_num);
++			printf("ERROR: failed to copy track %d to output BIN, aborting...\n", track_num);
 +			fclose(cue_file);
 +			fclose(bin_file);
 +			return -1;
  		}
  
  		int ff1, ss1, mm1, mm0, ss0, ff0;
-@@ -1260,10 +1219,10 @@
+@@ -1260,10 +1225,10 @@ int build_bin_cue(FILE *iso_table, char *data_fixed_file_path, char *cdrom_file_
  		track_num++;
  	}
  
@@ -1397,7 +1357,7 @@
  }
  
  int extract_and_convert_audio(FILE *psar, FILE *iso_table, int base_audio_offset, unsigned char *pgd_key, int disc_num, int data_gap, const PREGAP_OVERRIDE* pregap_override)
-@@ -1277,30 +1236,9 @@
+@@ -1277,30 +1242,9 @@ int extract_and_convert_audio(FILE *psar, FILE *iso_table, int base_audio_offset
  	else if (num_tracks > 0)
  		printf("%d audio tracks extracted to ATRAC3\n", num_tracks);
  
@@ -1431,7 +1391,7 @@
  	}
  
  	if (num_tracks > 0) {
-@@ -1745,7 +1683,7 @@
+@@ -1745,7 +1689,7 @@ int copy_prebaked_cue_file(char* disc_name, char* game_title, char* output_bin_n
      }
      
      // Open destination CUE file
@@ -1440,7 +1400,7 @@
      if (dest_cue == NULL)
      {
          printf("ERROR: Could not create output CUE file %s\n", output_cue_path);
-@@ -1772,17 +1710,19 @@
+@@ -1772,17 +1716,19 @@ int copy_prebaked_cue_file(char* disc_name, char* game_title, char* output_bin_n
          if (strncmp(trimmed, "FILE ", 5) == 0)
          {
              // Replace with our BIN filename (lowercase .bin extension)
@@ -1463,7 +1423,16 @@
      
      printf("Copied prebaked CUE file to %s\n", output_cue_path);
      return 0;
-@@ -1866,27 +1806,46 @@
+@@ -1846,7 +1792,7 @@ int decrypt_single_disc(FILE* psar, long long psar_size, long long startdat_offs
+ 	else
+ 	{
+ 		printf("No prebaked CUE file found for %s, will generate CUE file\n\n", iso_disc_name);
+-		strcpy(game_title, "CDROM"); // Default fallback
++		generated_output_title(game_title, sizeof(game_title), 0); // Default fallback
+ 		
+ 		// Clear any existing dynamic pregap override
+ 		if (g_dynamic_pregap_override != NULL)
+@@ -1866,27 +1812,46 @@ int decrypt_single_disc(FILE* psar, long long psar_size, long long startdat_offs
  
  	// Seek inside the ISO table to find the special data offset.
  	int special_data_offset;
@@ -1517,7 +1486,7 @@
  	else
  		printf("Data track successfully reconstructed!\n");
  
-@@ -1913,7 +1872,8 @@
+@@ -1913,7 +1878,8 @@ int decrypt_single_disc(FILE* psar, long long psar_size, long long startdat_offs
      }
  
  	// Handle audio tracks
@@ -1527,7 +1496,26 @@
  	{
  		printf("ERROR: extract and convert audio failed, aborting...\n");
  		fclose(iso_table);
-@@ -1982,26 +1942,17 @@
+@@ -1927,16 +1893,8 @@ int decrypt_single_disc(FILE* psar, long long psar_size, long long startdat_offs
+ 	char output_bin_name[256];
+ 	char output_cue_name[256];
+ 	
+-	if (use_prebaked_cue)
+-	{
+-		sprintf(output_bin_name, "%s.bin", game_title);
+-		sprintf(output_cue_name, "%s.cue", game_title);
+-	}
+-	else
+-	{
+-		strcpy(output_bin_name, "CDROM.BIN");
+-		strcpy(output_cue_name, "CDROM.CUE");
+-	}
++	sprintf(output_bin_name, "%s.bin", game_title);
++	sprintf(output_cue_name, "%s.cue", game_title);
+ 	
+ 	if (use_prebaked_cue)
+ 	{
+@@ -1982,26 +1940,17 @@ int decrypt_single_disc(FILE* psar, long long psar_size, long long startdat_offs
  		fseek(iso_table, cue_offset, SEEK_SET);
  		fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
  		
@@ -1559,7 +1547,7 @@
  			}
  			
  			cue_offset += sizeof(CUE_ENTRY);
-@@ -2011,7 +1962,7 @@
+@@ -2011,7 +1960,7 @@ int decrypt_single_disc(FILE* psar, long long psar_size, long long startdat_offs
  			track_num++;
  		}
  		
@@ -1568,7 +1556,7 @@
  		
  		// Copy the prebaked CUE file
  		if (copy_prebaked_cue_file(iso_disc_name, game_title, game_title) < 0)
-@@ -2031,7 +1982,7 @@
+@@ -2031,7 +1980,7 @@ int decrypt_single_disc(FILE* psar, long long psar_size, long long startdat_offs
  	else
  	{
  		// Generate CUE file normally
@@ -1577,7 +1565,7 @@
  		{
  			printf("ERROR: Failed to convert to BIN/CUE!\n");
  			fclose(iso_table);
-@@ -2055,8 +2006,8 @@
+@@ -2055,8 +2004,8 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  	// Decrypt the multidisc ISO map header and get the disc map.
  	// NOTE: The ISO map header is located at offset 0x200 and 
  	// has a length of 0x2A0 (0x200 of real size + 0xA0 for the PGD header).
@@ -1588,7 +1576,7 @@
  
  	// Re-open in read mode (just to be safe).
  	FILE* iso_map = fopen("ISO_MAP.BIN", "rb");
-@@ -2076,8 +2027,11 @@
+@@ -2076,8 +2025,11 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  
  	// Get the discs' offsets.
  	unsigned int disc_offset[5];
@@ -1602,7 +1590,7 @@
  
  	// Get the disc collection ID and title (UTF-8).
  	char iso_title[0x80];
-@@ -2095,12 +2049,20 @@
+@@ -2095,12 +2047,20 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  
  	// Seek inside the ISO map to find the special data offset.
  	int special_data_offset;
@@ -1626,7 +1614,7 @@
  
  	// Build each valid ISO image.
  	int disc_count = 0;
-@@ -2111,7 +2073,7 @@
+@@ -2111,7 +2071,7 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  		{
  			// Decrypt the ISO header and get the block table.
  			// NOTE: In multidisc, the ISO header is located at the disc offset + 0x400 bytes. 
@@ -1635,7 +1623,7 @@
  			{
  				fclose(iso_map);
  				return -1;
-@@ -2123,6 +2085,7 @@
+@@ -2123,6 +2083,7 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  			if (iso_table == NULL)
  			{
  				printf("ERROR: No decrypted ISO header found!\n");
@@ -1643,7 +1631,16 @@
  				return -1;
  			}
  
-@@ -2190,13 +2153,17 @@
+@@ -2170,7 +2131,7 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
+ 			else
+ 			{
+ 				printf("No prebaked CUE file found for disc %d (%s), will generate CUE file\n\n", i + 1, disc_iso_disc_name);
+-				sprintf(disc_game_title, "CDROM_%d", i + 1); // Default fallback
++				generated_output_title(disc_game_title, sizeof(disc_game_title), i + 1); // Default fallback
+ 				
+ 				// Clear any existing dynamic pregap override
+ 				if (g_dynamic_pregap_override != NULL)
+@@ -2190,13 +2151,17 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  			if (!check_output_files_overwrite(disc_game_title, use_prebaked_cue)) {
  				printf("Operation cancelled by user for disc %d.\n", i + 1);
  				fclose(iso_table);
@@ -1662,7 +1659,7 @@
  			else
  				printf("Data track successfully reconstructed for disc %d!\n", i + 1);
  			printf("\n");
-@@ -2216,7 +2183,8 @@
+@@ -2216,7 +2181,8 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  
  
  			// Attempt to extact and convert audio tracks
@@ -1672,7 +1669,26 @@
  			{
  				printf("ERROR: extract and convert audio failed, aborting...\n");
  				fclose(iso_table);
-@@ -2261,7 +2229,7 @@
+@@ -2230,16 +2196,8 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
+ 			char output_bin_name[256];
+ 			char output_cue_name[256];
+ 			
+-			if (use_prebaked_cue)
+-			{
+-				sprintf(output_bin_name, "%s.bin", disc_game_title);
+-				sprintf(output_cue_name, "%s.cue", disc_game_title);
+-			}
+-			else
+-			{
+-				sprintf(output_bin_name, "CDROM_%d.BIN", i + 1);
+-				sprintf(output_cue_name, "CDROM_%d.CUE", i + 1);
+-			}
++			sprintf(output_bin_name, "%s.bin", disc_game_title);
++			sprintf(output_cue_name, "%s.cue", disc_game_title);
+ 			
+ 			if (use_prebaked_cue)
+ 			{
+@@ -2261,7 +2219,7 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  				{
  					printf("ERROR: Can't open %s!\n", bin_file_path);
  					fclose(iso_table);
@@ -1681,7 +1697,7 @@
  				}
  				
  				// Copy data track
-@@ -2271,7 +2239,7 @@
+@@ -2271,7 +2229,7 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  					printf("Error copying data track to %s, aborting disc %d...\n", output_bin_name, i + 1);
  					fclose(bin_file);
  					fclose(iso_table);
@@ -1690,7 +1706,7 @@
  				}
  				
  				// Handle audio tracks if present
-@@ -2285,26 +2253,17 @@
+@@ -2285,26 +2243,17 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  				fseek(iso_table, cue_offset, SEEK_SET);
  				fread(cue_entry, sizeof(CUE_ENTRY), 1, iso_table);
  				
@@ -1722,7 +1738,7 @@
  					}
  					
  					cue_offset += sizeof(CUE_ENTRY);
-@@ -2314,14 +2273,14 @@
+@@ -2314,14 +2263,14 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  					track_num++;
  				}
  				
@@ -1739,7 +1755,7 @@
  				}
  				
  				printf("Disc %d successfully converted using prebaked CUE file!\n\n", i + 1);
-@@ -2329,14 +2288,17 @@
+@@ -2329,14 +2278,17 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  			else
  			{
  				// Generate CUE file normally
@@ -1759,7 +1775,7 @@
  			fclose(iso_table);
  		}
  	}
-@@ -2375,129 +2337,14 @@
+@@ -2375,129 +2327,14 @@ int decrypt_multi_disc(FILE *psar, long long psar_size, long long startdat_offse
  
  int main(int argc, char **argv)
  {
@@ -1897,19 +1913,19 @@
  }
  
  static bool g_verbose = false;
-@@ -2510,11 +2357,6 @@
- {
+@@ -2511,11 +2348,6 @@ int psxtract_main(const char* pbp_file, const char* document_file, const char* k
  	// Set global verbose flag
  	g_verbose = verbose;
--	
+ 	
 -	// If in GUI mode, open log file for writing
 -	if (isGUIMode()) {
 -		openLogFileForWriting(pbp_file);
 -	}
- 	
+-	
  	// Change to output directory if specified
  	char original_dir[MAX_PATH];
-@@ -2567,56 +2409,21 @@
+ 	if (output_dir && strcmp(output_dir, ".") != 0) {
+@@ -2567,56 +2399,21 @@ int psxtract_main(const char* pbp_file, const char* document_file, const char* k
  			printf("%02X", pgd_key[i]);
  		printf("\n\n");
  	}
@@ -1976,7 +1992,7 @@
  
  	// Unpack the EBOOT.PBP file.
  	if (unpack_pbp(input))
-@@ -2636,13 +2443,24 @@
+@@ -2636,13 +2433,24 @@ int psxtract_main(const char* pbp_file, const char* document_file, const char* k
  	if (psar == NULL)
  	{
  		printf("ERROR: No DATA.PSAR found!\n");
@@ -2003,7 +2019,7 @@
  
  	// Check PSISOIMG0000 or PSTITLEIMG0000 magic.
  	// NOTE: If the file represents a single disc, then PSISOIMG0000 is used.
-@@ -2650,13 +2468,21 @@
+@@ -2650,13 +2458,21 @@ int psxtract_main(const char* pbp_file, const char* document_file, const char* k
  	// is used to hold data relative to the different discs.
  	unsigned char magic[0x10];
  	bool isMultidisc;
@@ -2026,7 +2042,7 @@
  			return -1;
  		}
  		else
-@@ -2673,14 +2499,17 @@
+@@ -2673,14 +2489,17 @@ int psxtract_main(const char* pbp_file, const char* document_file, const char* k
  
  	// Extract the STARTDAT sector.
  	// NOTE: STARTDAT data is normally a PNG file with an intro screen of the game.
@@ -2050,7 +2066,7 @@
  	
  	if (decrypt_result < 0) {
  		fclose(psar);
-@@ -2710,16 +2539,6 @@
+@@ -2710,16 +2529,6 @@ int psxtract_main(const char* pbp_file, const char* document_file, const char* k
  	fclose(input);
  
  

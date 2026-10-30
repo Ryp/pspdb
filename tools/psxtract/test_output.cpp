@@ -12,6 +12,19 @@ static void require(bool condition, const char* message) {
 
 int main() {
     save_original_working_directory();
+    char generated[256];
+    generated_output_title(generated, sizeof(generated), 0);
+    require(check_output_files_overwrite(generated, false), "rejected absent generated outputs");
+    FILE* stream = fopen("cdrom.cue", "w");
+    require(stream && fclose(stream) == 0, "cannot create generated CUE fixture");
+    require(!check_output_files_overwrite(generated, false), "missed lowercase generated CUE");
+    require(unlink("cdrom.cue") == 0, "cannot remove generated CUE fixture");
+    stream = fopen("cdrom_2.bin", "w");
+    require(stream && fclose(stream) == 0, "cannot create generated disc BIN fixture");
+    generated_output_title(generated, sizeof(generated), 2);
+    require(strcmp(generated, "cdrom_2") == 0, "wrong generated disc title");
+    require(!check_output_files_overwrite(generated, false), "missed lowercase generated disc BIN");
+    require(unlink("cdrom_2.bin") == 0, "cannot remove generated disc BIN fixture");
     require(check_output_files_overwrite("disc", false), "rejected absent outputs");
     require(symlink("missing-target", "disc.cue") == 0, "cannot create dangling link");
     require(!check_output_files_overwrite("disc", false), "accepted dangling CUE link");

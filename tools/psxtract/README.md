@@ -74,8 +74,12 @@ Ingestion runs that CLI in private scratch space. PBP parsing remains native
 Zig-PSP; contextual POPS executable decryption remains a separate native operation.
 PSX revision 2 attaches reconstructed output beneath the observed `DATA.BIN`
 occurrence, and PBP revision 3 records the changed contextual provenance. Prior
-revision records remain immutable. Provenance hashes the native executable;
-there is no Wine executable hash.
+revision records remain immutable. PSX revision 3 names generated output
+`cdrom.bin`/`cdrom.cue` (`cdrom_N.bin`/`cdrom_N.cue` for multi-disc PBPs, with the
+CUE `FILE` line referencing the lowercase BIN) when no prebaked Redump CUE exists;
+upstream wrote uppercase `CDROM.BIN`/`CDROM.CUE`, which the adapter's
+case-sensitive `*.bin` collection rejected. Prebaked-CUE names are unchanged.
+Provenance hashes the native executable; there is no Wine executable hash.
 
 The adapter inventories `disc.bin` (or numbered discs) and nonempty decoded
 `ISO_HEADER.BIN`, numbered `ISO_HEADER_1.BIN` through `ISO_HEADER_5.BIN`,

@@ -108,6 +108,31 @@ class PsxExtractionTests(unittest.TestCase):
                     adapter.extract_psx(source, output, helper)
                 self.assertEqual(list(output.iterdir()), [])
 
+    def test_generated_lowercase_cdrom_names_are_accepted(self):
+        from tools import extract_external as adapter
+        for names, expected in ((('cdrom',), {'disc.bin'}),
+                                (('cdrom_1', 'cdrom_2'), {'disc-1.bin', 'disc-2.bin'})):
+            with self.subTest(names=names), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source = root / 'parent.pbp'
+                source.write_bytes(b'\0PBP' + bytes(36))
+                output = root / 'output'
+                output.mkdir()
+                helper = root / 'psxtract'
+                helper.write_text(
+                    '#!' + sys.executable + '\n'
+                    'from pathlib import Path\n'
+                    'disc = bytearray(20 * 2352)\n'
+                    "disc[16 * 2352 + 24:16 * 2352 + 31] = b'\\x01CD001\\x01'\n"
+                    f'for name in {names!r}:\n'
+                    "    Path(name + '.bin').write_bytes(disc)\n"
+                    "    Path(name + '.cue').write_text(f'FILE \"{name}.bin\" BINARY\\n')\n"
+                    "print('Disc successfully converted to BIN/CUE format!')\n")
+                helper.chmod(0o755)
+                provenance = adapter.extract_psx(source, output, helper)
+                self.assertEqual({path.name for path in output.iterdir()}, expected)
+                self.assertIn('sha256', provenance)
+
     def test_multidisc_admission_validates_every_disc_before_publishing(self):
         from tools import extract_external as adapter
         for invalid_second in (False, True):
