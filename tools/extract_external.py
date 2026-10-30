@@ -32,10 +32,16 @@ def tool_provenance(kind, tool=None):
         return dict(result, name='pspdb-nand')
     if kind == 'update':
         return dict(result, name='pspdb-update')
-    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat', 'npumdimg', 'psar', 'rco', 'pgd'):
+    if kind in ('iso', 'iso9660', 'pkg', 'sce', 'elf', 'gzip', 'vmp', 'prx', 'kl3e', 'kl4e', 'edat', 'npumdimg', 'psar', 'rco', 'pgd', 'pspedat'):
         return result
     if kind == 'pops':
         return dict(result, name='pspdb-pops', options=['in-memory'])
+    if kind == 'pce':
+        # One static record covers both contextual inputs; it states each one's trust level.
+        return dict(result, name='pspdb-pce', options=[
+            'in-memory', 'xor-table:b2d7084c', 'content-dat:structure-checked', 'content1-sdat:mac-verified'])
+    if kind == 'pcecd':
+        return dict(result, name='pspdb-pcecd', options=['in-memory', 'toc-bound', 'sector-image-2048'])
     if kind not in ('document', 'psx'):
         raise ValueError(f'Unknown extractor kind: {kind}')
     with tool.open('rb') as stream:

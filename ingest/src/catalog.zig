@@ -277,7 +277,7 @@ fn equal(a: std.json.Value, b: std.json.Value) bool {
 
 /// Publish external extractor metadata and the same inventory shape as ISO.
 pub fn publish_extraction(allocator: std.mem.Allocator, io: std.Io, root: []const u8, hash: [64]u8, size: usize, entries: []inventory.Entry, provenance: @import("extractor.zig").Provenance, kind: []const u8, failure: ?[]const u8) !void {
-    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp") or std.mem.eql(u8, kind, "edat") or std.mem.eql(u8, kind, "pgd")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "decoded_suffix" else null;
+    const name_rule: ?[]const u8 = if (std.mem.eql(u8, kind, "prx") or std.mem.eql(u8, kind, "sce") or std.mem.eql(u8, kind, "vmp") or std.mem.eql(u8, kind, "edat") or std.mem.eql(u8, kind, "pgd") or std.mem.eql(u8, kind, "pspedat")) "source_stem" else if (std.mem.eql(u8, kind, "gzip") or std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) "decoded_suffix" else null;
     const tree = .{
         .kind = "tree",
         .schema_version = @as(u32, 1),

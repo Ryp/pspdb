@@ -1,0 +1,113 @@
+--- a/Linux/lz.c
++++ b/Linux/lz.c
+@@ -4,12 +4,23 @@
+ 
+ #include "lz.h"
+ 
++// PSPDB: bounded input. The range decoder never reads past lz_in_end; a
++// would-be overrun reads zero and flags the stream as failed.
++static _Thread_local const unsigned char *lz_in_end;
++static _Thread_local int lz_overrun;
++
+ void decode_range(unsigned int *range, unsigned int *code, unsigned char **src)
+ {
+ 	if (!((*range) >> 24)) 
+ 	{
+ 		(*range) <<= 8;
+-		*code = ((*code) << 8) + (*src)++[5];
++		unsigned int next = 0;
++		if ((*src) + 5 < lz_in_end)
++			next = (*src)[5];
++		else
++			lz_overrun = 1;
++		(*src)++;
++		*code = ((*code) << 8) + next;
+ 	}
+ }
+ 
+@@ -122,7 +133,7 @@
+ {
+ 	int result;
+ 
+-	unsigned char *tmp = (unsigned char *) malloc (0xCC8);
++	unsigned char tmp[0xCC8];
+ 
+ 	int offset = 0;
+ 	int bit_flag = 0;
+@@ -138,7 +149,7 @@
+ 	unsigned char head = in[0];
+ 
+ 	unsigned int range = 0xFFFFFFFF;
+-	unsigned int code = (in[1] << 24) | (in[2] << 16) | (in[3] << 8) | in[4];
++	unsigned int code = ((unsigned int)in[1] << 24) | ((unsigned int)in[2] << 16) | ((unsigned int)in[3] << 8) | in[4];
+ 
+ 	if (head < 0) // Check if we have a valid starting byte.
+ 	{
+@@ -153,9 +164,11 @@
+ 	else
+ 	{
+ 		// Set up a temporary buffer (sliding window).
+-		memset(tmp, 0x80, 0xCA8);
++		memset(tmp, 0x80, sizeof(tmp));
+ 		while (1)
+ 		{
++			if (lz_overrun)
++				return -1;
+ 			// Start reading at 0xB68.
+ 			tmp_sect1 = tmp + offset + 0xB68;
+ 			if (!decode_bit(&range, &code, 0, &in, tmp_sect1))  // Raw char.
+@@ -165,14 +178,15 @@
+ 				if (start == end) return (start - out);
+ 
+ 				// Locate first section.
+-				int sect = (((((((int)(start - out)) & 7) << 8) + prev) >> head) & 7) * 0xFF - 1;
++				// PSPDB: the section is addressed from tmp - 1; index starts at 1.
++				int sect = (head < 32 ? ((((((int)(start - out)) & 7) << 8) + prev) >> head) & 7 : 0) * 0xFF;
+ 				tmp_sect1 = tmp + sect;
+ 				int index = 1;
+ 
+ 				// Read, decode and write back.
+ 				do
+ 				{
+-					decode_bit(&range, &code, &index, &in, tmp_sect1 + index);
++					decode_bit(&range, &code, &index, &in, tmp_sect1 + (index - 1));
+ 				} while ((index >> 8) == 0);
+ 
+ 				// Save index.
+@@ -192,7 +206,7 @@
+ 
+ 				// Default block size is 0x160.
+ 				int b_size = 0x160;
+-				tmp_sect2 = tmp + index + 0x7F1;
++				tmp_sect2 = tmp + (index + 0x7F1); // PSPDB: index may be -1
+ 
+ 				// If the data length was found, parse it as a number.
+ 				if ((index >= 0) || (bit_flag != 0)) 
+@@ -235,7 +249,7 @@
+ 					if (bit_flag == 0) diff -= 8;
+ 
+ 					// Locate section.
+-					tmp_sect3 = tmp + 0x928 + diff;
++					tmp_sect3 = tmp + (0x928 + diff);
+ 
+ 					// Decode the data offset (1 bit fields).
+ 					data_offset = decode_word(tmp_sect3, diff, &bit_flag, &range, &code, &in);
+@@ -272,6 +286,17 @@
+ 		}
+ 		result = (start - out);
+ 	}
+-	free(tmp);
+ 	return result;
+ }
++
++// PSPDB: checked entry point. Returns the decoded length or -1; never reads
++// beyond in_size nor writes beyond out_size.
++int pspdb_lz_decompress(unsigned char *out, unsigned int out_size, unsigned char *in, unsigned int in_size)
++{
++	if (in_size < 5)
++		return -1;
++	lz_in_end = in + in_size;
++	lz_overrun = 0;
++	int result = decompress(out, in, out_size);
++	return lz_overrun ? -1 : result;
++}

@@ -81,11 +81,12 @@ pub fn build(b: *std.Build) void {
     const npdata = b.dependency("make_npdata", .{});
     const prepare_edat = b.addSystemCommand(&.{"python3"});
     prepare_edat.addFileArg(b.path("../tools/prepare_native.py"));
-    prepare_edat.addArgs(&.{ "--normalize", "Linux/make_npdata.c", "--normalize", "Linux/utils.c" });
+    prepare_edat.addArgs(&.{ "--normalize", "Linux/make_npdata.c", "--normalize", "Linux/utils.c", "--normalize", "Linux/lz.c" });
     prepare_edat.addDirectoryArg(npdata.path(""));
     const edat_source = prepare_edat.addOutputDirectoryArg("make-npdata");
     prepare_edat.addFileArg(b.path("../tools/patches/make-npdata-safety.patch"));
     prepare_edat.addFileArg(b.path("../tools/patches/make-npdata-memory.patch"));
+    prepare_edat.addFileArg(b.path("../tools/patches/make-npdata-lz-bounds.patch"));
     module.addIncludePath(edat_source.path(b, "Linux"));
     // Read-only AES tables avoid upstream's unsynchronized first-use setup.
     // Both upstream AES implementations export these CMAC helper names.
@@ -100,7 +101,7 @@ pub fn build(b: *std.Build) void {
     };
     module.addCSourceFiles(.{
         .root = edat_source,
-        .files = &.{ "Linux/aes.c", "Linux/sha1.c", "Linux/utils.c" },
+        .files = &.{ "Linux/aes.c", "Linux/sha1.c", "Linux/utils.c", "Linux/lz.c" },
         .flags = edat_flags,
     });
     module.addCSourceFile(.{ .file = b.path("src/edat_native.c"), .flags = edat_flags });

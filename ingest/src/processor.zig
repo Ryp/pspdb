@@ -9,6 +9,8 @@ const kle = @import("kle.zig");
 const npumdimg = @import("npumdimg.zig");
 const edat = @import("edat.zig");
 const pgd = @import("pgd.zig");
+const pspedat = @import("pspedat.zig");
+const pce = @import("pce.zig");
 const psar = @import("psar.zig");
 const rco = @import("rco.zig");
 const catalog_io = @import("catalog.zig");
@@ -36,6 +38,9 @@ const max_document_size = 128 * 1024 * 1024;
 const document_docinfo_size = 304;
 const document_docinfo_padded_size = 320;
 const pce_key_name = "PSP-KEY.EDAT";
+const pce_options: []const []const u8 = &.{ "in-memory", "xor-table:b2d7084c", "content-dat:structure-checked", "content1-sdat:mac-verified" };
+const pcecd_options: []const []const u8 = &.{ "in-memory", "toc-bound", "sector-image-2048" };
+const pcecd_output_name = "disc.iso";
 const Entry = model.Entry;
 const Result = model.Result;
 const Dependency = model.Dependency;
@@ -224,7 +229,7 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
     errdefer result.deinit(allocator);
     result.sha256 = hashes.sha256;
     result.sha1 = hashes.sha1;
-    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .pair_documents = true, .paths = .init(allocator) };
+    var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .pair_documents = true, .pair_pce = true, .paths = .init(allocator) };
     defer inventory.deinit();
     const PackageInventory = struct {
         inventory: *Inventory,
@@ -563,6 +568,28 @@ const NandFat = struct {
     }
 };
 
+/// Per-occurrence PC Engine context handed to a contextual child inventory.
+const PceContext = struct {
+    sdat: bool = false,
+    track: ?pce.Track = null,
+    require_ipl: bool = false,
+};
+
+const PceRole = struct { sdat: bool, root_len: usize };
+
+/// CONTENT.DAT beside its CONTENT/ key, or the SDAT CONTENT1.sdat of the DOC/
+/// directory. The SDAT is recognised by its header, not just its name.
+fn pce_role(path: []const u8, bytes: []const u8) ?PceRole {
+    const content = "CONTENT/CONTENT.DAT";
+    const manual = "DOC/CONTENT1.sdat";
+    if (std.mem.endsWith(u8, path, content) and (path.len == content.len or path[path.len - content.len - 1] == '/'))
+        return .{ .sdat = false, .root_len = path.len - content.len };
+    if (std.mem.endsWith(u8, path, manual) and (path.len == manual.len or path[path.len - manual.len - 1] == '/') and
+        std.mem.startsWith(u8, bytes, "NPD\x00") and edat.is_sdat(bytes))
+        return .{ .sdat = true, .root_len = path.len - manual.len };
+    return null;
+}
+
 /// Ingest owns names, inventory records, hashes and store writes. The reader
 /// only lends paths and payloads for the duration of emit.
 const Inventory = struct {
@@ -574,6 +601,11 @@ const Inventory = struct {
     owner: ?*memory.Owner = null,
     suppress_dispatch: ?[]const u8 = null,
     pair_documents: bool = false,
+    /// PC Engine Archives pairing (PKG inventories only): CONTENT.DAT and the
+    /// SDAT CONTENT1.sdat resolve their XOR key from a sibling PSP-KEY.EDAT.
+    pair_pce: bool = false,
+    pce_context: PceContext = .{},
+    pce_sources: std.ArrayList(usize) = .empty,
     documents: std.ArrayList(usize) = .empty,
     document_inputs: std.AutoHashMapUnmanaged(usize, memory.View) = .empty,
     entries: std.ArrayList(Entry) = .empty,
@@ -586,6 +618,7 @@ const Inventory = struct {
         while (inputs.next()) |view| view.release();
         self.document_inputs.deinit(self.allocator);
         self.documents.deinit(self.allocator);
+        self.pce_sources.deinit(self.allocator);
         for (self.entries.items) |entry| entry.deinit(self.allocator);
         self.entries.deinit(self.allocator);
     }
@@ -628,16 +661,23 @@ const Inventory = struct {
             else
                 false;
         if (paired_document) try self.documents.append(self.allocator, self.entries.items.len);
+        const pce_source = self.pair_pce and self.dispatch != null and
+            if (contents) |view| pce_role(name, view.bytes) != null else false;
+        if (pce_source) try self.pce_sources.append(self.allocator, self.entries.items.len);
         if (contents) |view| {
-            if (self.pair_documents and self.dispatch != null and
-                (paired_document or std.mem.eql(u8, std.Io.Dir.path.basename(name), "DOCINFO.EDAT")))
+            const pce_key = self.pair_pce and self.dispatch != null and
+                std.mem.eql(u8, std.Io.Dir.path.basename(name), pce_key_name) and std.mem.startsWith(u8, view.bytes, "\x00PSPEDAT");
+            if (self.dispatch != null and
+                ((self.pair_documents and (paired_document or std.mem.eql(u8, std.Io.Dir.path.basename(name), "DOCINFO.EDAT"))) or pce_source or pce_key))
             {
                 try self.document_inputs.put(self.allocator, self.entries.items.len, view);
                 _ = view.retain();
             }
         }
         if (contents) |view| {
-            if (!paired_document and (self.suppress_dispatch == null or !std.mem.eql(u8, name, self.suppress_dispatch.?))) {
+            // A PC Engine SDAT waits for its key sibling; it only falls back to
+            // the generic EDAT decode when no PSP-KEY.EDAT exists.
+            if (!paired_document and !pce_source and (self.suppress_dispatch == null or !std.mem.eql(u8, name, self.suppress_dispatch.?))) {
                 if (self.dispatch) |dispatch| try dispatch.inspect(self.allocator, self.io, name, view, entry.sha256.?);
             }
         }
@@ -649,6 +689,7 @@ const Inventory = struct {
     // the hash-only extraction queue. Wait until both paths have been observed.
     fn extract_documents(self: *Inventory) !void {
         if (self.dispatch == null) return;
+        try self.extract_pce();
         for (self.documents.items) |index| {
             const entry = &self.entries.items[index];
             const prefix = entry.path[0 .. entry.path.len - "DOCUMENT.DAT".len];
@@ -668,6 +709,38 @@ const Inventory = struct {
                 entry.extraction.?.dependencies = dependencies;
             }
         }
+    }
+
+    // The XOR key of a PC Engine container is the payload of the PSP-KEY.EDAT
+    // that sits beside it in the package inventory, never a filename guess:
+    // the key file's path, SHA-256 and size are recorded as a dependency.
+    fn extract_pce(self: *Inventory) !void {
+        for (self.pce_sources.items) |index| {
+            const entry = &self.entries.items[index];
+            const source = self.document_inputs.get(index) orelse return error.InvalidPceContainer;
+            const role = pce_role(entry.path, source.bytes).?;
+            const key_path = try std.fmt.allocPrint(self.allocator, "{s}CONTENT/{s}", .{ entry.path[0..role.root_len], pce_key_name });
+            defer self.allocator.free(key_path);
+            const key_index = self.paths.get(key_path);
+            const key_input = if (key_index) |value| self.document_inputs.get(value) else null;
+            if (key_input == null) {
+                // Without its key the container stays opaque; an SDAT is still an EDAT.
+                if (role.sdat) try self.dispatch.?.inspect(self.allocator, self.io, entry.path, source, entry.sha256.?);
+                continue;
+            }
+            const key_entry = self.entries.items[key_index.?];
+            try self.attach_context(entry, .pce, source.bytes, key_input.?.bytes, entry.sha256.?, .{ .sdat = role.sdat });
+            try self.bind_dependency(entry, key_entry);
+        }
+    }
+
+    fn bind_dependency(self: *Inventory, entry: *Entry, sibling: Entry) !void {
+        const dependencies = try self.allocator.alloc(Dependency, 1);
+        errdefer self.allocator.free(dependencies);
+        const path = try self.allocator.dupe(u8, sibling.path);
+        errdefer self.allocator.free(path);
+        dependencies[0] = .{ .path = path, .sha256 = try self.allocator.dupe(u8, &sibling.sha256.?), .size_bytes = sibling.size_bytes.? };
+        entry.extraction.?.dependencies = dependencies;
     }
 
     fn extract_external(self: *Inventory, hash: [64]u8, input: []const u8, kind: extractor.Kind, companion: ?[]const u8) !external_extractor.Output {
@@ -699,6 +772,18 @@ const Inventory = struct {
             try self.emit_view(try decodedOutputName(kind, output_value.format, output_value.content_format, &name_buffer), view);
             return .{ .name = "pspdb-pops", .version = revisions.pops, .options = &.{"in-memory"} };
         }
+        if (kind == .pce) return self.decode_pce(input, companion);
+        if (kind == .pcecd) {
+            const track = self.pce_context.track orelse return error.InvalidPceTrack;
+            const image = try pce.decode_track(self.allocator, input, track.length, self.pce_context.require_ipl);
+            const view = try memory.Owner.take_allocated(self.allocator, image);
+            defer view.release();
+            // Most PC Engine CD tracks have no file system: only an image that
+            // really carries an ISO9660 volume descriptor may be inventoried as one.
+            if (extractor.detect(image) != .iso9660) self.suppress_dispatch = pcecd_output_name;
+            try self.emit_view(pcecd_output_name, view);
+            return .{ .name = "pspdb-pcecd", .version = revisions.pcecd, .options = pcecd_options };
+        }
         if (kind == .document) {
             if (companion.len != document_docinfo_size and companion.len != document_docinfo_padded_size) return error.InvalidDocinfo;
             if (input.len > max_document_size) return error.InvalidDocument;
@@ -708,8 +793,70 @@ const Inventory = struct {
         return output.*.?.provenance.?.value;
     }
 
+    /// CONTENT.DAT / CONTENT1.sdat: key from `companion` (PSP-KEY.EDAT), SDAT
+    /// MACs first, then XOR, container validation, TOC validation, and only
+    /// then publication. CD data tracks become `.iso` children afterwards.
+    fn decode_pce(self: *Inventory, input: []const u8, companion: []const u8) !extractor.Provenance {
+        var key = try pspedat.content_key(companion);
+        defer std.crypto.secureZero(u8, &key);
+        const plain = if (self.pce_context.sdat) blk: {
+            const bytes = try edat.decode(self.allocator, input, null);
+            errdefer self.allocator.free(bytes);
+            pce.decrypt_in_place(bytes, key);
+            break :blk bytes;
+        } else try pce.decrypt(self.allocator, input, key);
+        const owner = try memory.Owner.take_allocated(self.allocator, plain);
+        defer owner.release();
+        const entries = try pce.parse(self.allocator, plain);
+        defer self.allocator.free(entries);
+
+        var toc_entry: ?pce.Entry = null;
+        for (entries) |entry| {
+            if (!std.ascii.endsWithIgnoreCase(entry.name, ".hcd")) continue;
+            if (toc_entry != null) return error.InvalidPceToc;
+            toc_entry = entry;
+        }
+        var tracks: []pce.Track = &.{};
+        defer self.allocator.free(tracks);
+        if (toc_entry) |entry| {
+            tracks = try pce.parse_toc(self.allocator, plain[entry.offset..][0..entry.size]);
+            for (tracks) |track| {
+                const found = for (entries) |candidate| {
+                    if (std.mem.eql(u8, candidate.name, track.file)) break true;
+                } else false;
+                if (!found) return error.InvalidPceToc;
+            }
+        }
+        for (entries) |entry| {
+            try self.emit_view(entry.name, .{ .bytes = plain[entry.offset..][0..entry.size], .owner = owner.owner });
+        }
+        if (toc_entry) |toc| {
+            const toc_index = self.paths.get(toc.name).?;
+            var first_code = true;
+            for (tracks) |track| {
+                if (!track.code) continue;
+                defer first_code = false;
+                const index = self.paths.get(track.file).?;
+                const entry = &self.entries.items[index];
+                const bin = plain[entries_offset(entries, track.file)..][0..entry.size_bytes.?];
+                try self.attach_context(entry, .pcecd, bin, "", entry.sha256.?, .{ .track = track, .require_ipl = first_code });
+                try self.bind_dependency(entry, self.entries.items[toc_index]);
+            }
+        }
+        return .{ .name = "pspdb-pce", .version = revisions.pce, .options = pce_options };
+    }
+
+    fn entries_offset(entries: []const pce.Entry, name: []const u8) usize {
+        for (entries) |entry| if (std.mem.eql(u8, entry.name, name)) return entry.offset;
+        unreachable;
+    }
+
     fn attach(self: *Inventory, entry: *Entry, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8) !void {
-        var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = self.store, .dispatch = self.dispatch, .paths = .init(self.allocator) };
+        return self.attach_context(entry, kind, input, companion, hash, .{});
+    }
+
+    fn attach_context(self: *Inventory, entry: *Entry, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8, context: PceContext) !void {
+        var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = self.store, .dispatch = self.dispatch, .pce_context = context, .paths = .init(self.allocator) };
         defer child.deinit();
         var output: ?external_extractor.Output = null;
         defer if (output) |value| value.deinit(self.allocator, self.io);
@@ -722,7 +869,7 @@ const Inventory = struct {
             };
             break :blk orchestrator(kind);
         };
-        try self.attach_inline(entry, &child, provenance, if (kind == .pops) "source_stem" else "identity", &failure);
+        try self.attach_inline(entry, &child, provenance, if (kind == .pops or kind == .pcecd) "source_stem" else "identity", &failure);
         if (output) |*value| entry.extraction.?.owned_provenance = value.take_provenance();
     }
 
@@ -929,6 +1076,15 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
                 .options = if (unlicensed_marker) &.{"unlicensed-marker"} else &.{},
             };
         },
+        .pspedat => blk: {
+            var key = try pspedat.content_key(task.input.bytes);
+            defer std.crypto.secureZero(u8, &key);
+            const view = try memory.Owner.take_allocated(allocator, try allocator.dupe(u8, &key));
+            defer view.release();
+            try inventory.emit_view("payload.dat", view);
+            break :blk .{ .name = "pspdb-ingest", .version = revisions.pspedat };
+        },
+        .pce, .pcecd => unreachable,
         .gzip, .prx, .kl3e, .kl4e, .pgd, .npumdimg => blk: {
             const output_value = try switch (task.kind) {
                 .gzip => gzip.extract(allocator, task.input.bytes),

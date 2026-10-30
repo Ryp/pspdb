@@ -1008,9 +1008,17 @@ under a public klicensee (all-zero, PSX, or PSP key 1/2). They publish an empty
 `payload.dat`, with provenance option `unlicensed-marker`. A present RAP is still
 tried first and fully authenticates the marker; markers with a payload still require it.
 
-EDAT extraction otherwise supports license-2 NPD v1/flags-0 and
-v2/flags-0-or-0x0c files, with 16 KiB blocks and at most 64 MiB plaintext. Keyed
-header, metadata-table and every ciphertext-block MAC must pass before publication.
+EDAT revision 6 adds the SDAT and interleaved layouts of PlayStation Store packages. It
+supports license-2 NPD v1/flags-0 and v2/flags-0-or-0x0c files, v3 license-2 flags-0x3c
+files (`PS3-KEY.EDAT`, `ISO.BIN.EDAT`, `MINIS.EDAT`: HMAC block hashes with the 0x20-byte
+metadata ahead of the data; only the observed single-block form, so a payload of up to
+16 KiB), and SDAT (NPD v2/v3, license 0, flags `0x0100000D` = SDAT | encrypted block keys |
+compressed, no content ID). SDAT needs no RAP: its key is the fixed public SDAT key XOR the
+header's dev_hash, its blocks are raw or LZ-range-coded (upstream make-npdata `lz.c`, patched
+to bounds-check input and output, run only after the block's MAC passed), and the result
+must be exactly the declared length. Because that key is public, SDAT MACs prove integrity
+and self-consistency, not origin. All files use 16 KiB blocks and at most 64 MiB
+plaintext. Keyed header, metadata-table and every ciphertext-block MAC must pass before publication.
 The original EDAT, including signatures and any optional 16-byte footer, stays
 unchanged; the decoder does not verify filename-dependent hashes or ECDSA signatures.
 Its sole child is `payload.DAT`, displayed and downloaded using the EDAT source
@@ -1158,3 +1166,57 @@ DOCUMENT extraction publishes only page images, with the generated source/page
 map on helper stdout instead of a `structure.json` child. This also applies to
 inline manual inventories. Rebuild the DOCUMENT helper before use.
 
+### PC Engine Archives
+
+PlayStation Store "PC Engine Archives" (TurboGrafx) packages hold a PSP emulator
+plus two obfuscated containers and a key:
+
+| File | Layer | Authentication |
+| --- | --- | --- |
+| `USRDIR/CONTENT/PSP-KEY.EDAT` | `\0PSPEDAT` header + fixed-key PGD (drm_type 1) with a 16-byte payload | PGD header, table and block MACs; the version key is recovered from the file itself (PPSSPP libkirk logic), so **no RAP is needed** |
+| `USRDIR/CONTENT/CONTENT.DAT` | XOR stream over a container | none intrinsic: bad-magic and structure checks only |
+| `USRDIR/DOC/CONTENT1.sdat` | SDAT (see EDAT revision 6) over the same XOR stream | SDAT header, metadata and every block MAC (public key: integrity, not origin) |
+
+`PSP-KEY.EDAT` is detected by its `\0PSPEDAT` signature and extracted as kind `pspedat`
+(revision 1; `payload.dat`, displayed with the source stem). Its 16-byte payload is the
+content key and is published like any other payload, including `PS3-KEY.EDAT`'s.
+The 0x40-0x8f digest fields and the optional 16 trailing bytes of 336-byte files are
+shape-checked only.
+
+The XOR layer is `plain[i] = data[i] ^ key[i & 15] ^ PUB[i & 511]`, where `PUB` is the
+fixed 512-byte table of qwikrazor87's PCE_py_tool (`keys/public.key`, SHA-256
+`b2d7084c...7165`, embedded in `ingest/src/pce.zig` and pinned by a test). The container
+has a 0x80-byte header (magic `12 34 56 78`, little-endian entry count at 0x28) and 0x50-byte
+entries (`name[0x40]`, LE offset, LE size, 8 zero bytes). It is rejected, publishing nothing,
+for a bad magic, an empty table or a count above 4096, a table or payload outside the
+buffer, payloads inside the table or overlapping, names that are empty, `.`/`..`, non-ASCII,
+containing `/`, `\`, `:` or whitespace, lacking NUL padding or duplicated (also by case), and
+nonzero entry trailers. A wrong key surfaces as a magic mismatch.
+
+Both containers are *contextual* (`pce`, extractor `pspdb-pce`): they live inline on the
+`CONTENT.DAT` / `CONTENT1.sdat` occurrence, key-bound by `dependencies` (path, SHA-256 and
+size of the sibling `USRDIR/CONTENT/PSP-KEY.EDAT`, like `DOCUMENT.DAT` and `DOCINFO.EDAT`),
+never by filename alone and never by the hash of the container. Without the key file the
+containers stay opaque; an SDAT then falls back to the generic EDAT result. A tampered SDAT
+(`EdatAuthenticationFailed`) or any container error leaves an empty inline tree with the
+error. Members keep their original names and case (`ps3_001.png`, `N43800PL.PCE`,
+`HCD2025.hcd`, ...). The single static provenance record states each trust level:
+`content-dat:structure-checked`, `content1-sdat:mac-verified`; origin authenticity is
+never claimed and no key bytes appear in any record. Container limit: 256 MiB.
+
+A `*.hcd` member is the CD-ROM² TOC (`trackNN,audio|code ,<file>,<LBA>,<sectors>`). It
+must parse completely and name only existing members, else the container is rejected. Every
+`code` track's `*_NN.bin` is a Sony data-track container (`u32 n; n * {u32 offset, u32 size};
+n independent zlib streams`) and gets a contextual child (`pcecd`, extractor `pspdb-pcecd`,
+`dependencies` = the `.hcd`): the 2048-byte-sector image `disc.iso` (name rule `source_stem`,
+so it is shown as `<bin stem>.iso`). The image is a cooked 2048-byte user-data sector image (`.iso` is only the conventional
+extension). Most PC Engine CD tracks have **no file system**: of the 17 decoded retail
+tracks, none has an ISO9660 volume descriptor, so they stay plain files. Only an image with
+`CD001` at sector 16 is also offered to the nested ISO9660 extractor. It is published only if the TOC fixes its size
+(`sectors * 2048`, at most 1 GiB), the stream count matches, every stream inflates completely
+to 0x40000 bytes (the last one to the remainder) with no input left, streams tile the file in
+order, and, on the first `code` track, sector 1 carries `PC Engine CD-ROM SYSTEM` at image
+offset 2080. Objects above the store cap remain tree-only. Audio (`.at3`), GIM, PSM and ROM
+members stay opaque. Not covered: PSP-side emulator internals.
+
+Revisions: `edat` 6, new `pspedat` 1, `pce` 1, `pcecd` 1, `pkg` 8 (new inline subtrees).

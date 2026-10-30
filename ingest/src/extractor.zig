@@ -2,7 +2,7 @@ const std = @import("std");
 
 const containers = @import("containers.zig");
 
-pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, edat, pgd, npumdimg, iso9660, pops, psx, vmp, document };
+pub const Kind = enum { psar, rco, prx, sce, pbp, gzip, elf, kl3e, kl4e, edat, pgd, npumdimg, iso9660, pops, psx, vmp, document, pspedat, pce, pcecd };
 
 const document_prefix = "\x00PGD\x01\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00";
 
@@ -17,11 +17,16 @@ pub fn paired_document_candidate(bytes: []const u8) bool {
     return std.mem.startsWith(u8, bytes, document_prefix) and !fixed_document_signature(bytes);
 }
 /// Generic PGD is context-sensitive. Only the NPUMDIMG metadata filename has
-/// a fixed-key profile established by observed retail files.
+/// a fixed-key profile established by observed retail files. PSPEDAT wrappers
+/// (themes, saves, ...) are unrelated formats: only the PC Engine key file
+/// `PSP-KEY.EDAT` has an established fixed-key profile.
 pub fn detect_named(name: []const u8, bytes: []const u8) ?Kind {
     if (std.mem.eql(u8, std.Io.Dir.path.basename(name), "OPNSSMP.PGD") and
         std.mem.startsWith(u8, bytes, "\x00PGD"))
         return .pgd;
+    if (std.mem.eql(u8, std.Io.Dir.path.basename(name), "PSP-KEY.EDAT") and
+        std.mem.startsWith(u8, bytes, "\x00PSPEDAT"))
+        return .pspedat;
     return detect(bytes);
 }
 
@@ -58,6 +63,7 @@ test "format detection uses signatures" {
     try std.testing.expectEqual(null, detect("NPUMDIMG\x00\x00\x00\x03"));
     try std.testing.expectEqual(Kind.npumdimg, detect("NPUMDIMG\x03\x00\x00\x00").?);
     try std.testing.expectEqual(Kind.edat, detect("NPD\x00").?);
+    try std.testing.expectEqual(null, detect("\x00PSPEDAT"));
     try std.testing.expectEqual(null, detect("NPD"));
     try std.testing.expectEqual(null, detect("NPUMD"));
     try std.testing.expectEqual(Kind.psar, detect("PSAR\x03").?);
@@ -70,6 +76,13 @@ test "OPNSSMP filename selects fixed-key PGD without broad signature dispatch" {
     try std.testing.expectEqual(Kind.pgd, detect_named("USRDIR/OPNSSMP.PGD", header).?);
     try std.testing.expectEqual(null, detect_named("USRDIR/OTHER.PGD", header));
     try std.testing.expectEqual(null, detect_named("USRDIR/OPNSSMP.PGD", "not pgd"));
+}
+
+test "PSPEDAT is a PC Engine key only under its fixed basename" {
+    try std.testing.expectEqual(Kind.pspedat, detect_named("USRDIR/CONTENT/PSP-KEY.EDAT", "\x00PSPEDAT\x02").?);
+    try std.testing.expectEqual(null, detect_named("USRDIR/CONTENT/OTHER.EDAT", "\x00PSPEDAT\x02"));
+    try std.testing.expectEqual(null, detect_named("USRDIR/CONTENT/PSP-KEY.EDAT", "\x00PSPEDA"));
+    try std.testing.expectEqual(null, detect_named("USRDIR/Theme.PTF", "\x00PSPEDAT\x02"));
 }
 
 test "PSMF and raw MPEG files remain opaque" {
