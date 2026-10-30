@@ -5,9 +5,7 @@ const std = @import("std");
 const memory = @import("../bytes.zig");
 const config = @import("config.zig");
 const lzr = @import("../lzr.zig");
-const c = @cImport({
-    @cInclude("zlib.h");
-});
+const c = @import("c_zlib");
 pub const nil = std.math.maxInt(u32);
 const label_limit = 16 * 1024 * 1024;
 const tree_limit = 32 * 1024 * 1024;
@@ -59,7 +57,7 @@ pub const Model = struct {
     blocks: std.ArrayList(TextBlock) = .empty,
     entries: std.ArrayList(Entry) = .empty,
     offsets: std.AutoHashMapUnmanaged(usize, usize) = .empty,
-    tables: [10]?usize = .{null} ** 10,
+    tables: [10]?usize = @splat(null),
     labels: []const u8 = &.{},
     events: []const u8 = &.{},
 

@@ -98,7 +98,7 @@ pub fn mastering(bytes: []const u8) !?Mastering {
     const descriptor = volume[16 * 2048 ..][0..2048];
     const root = try extent(volume, descriptor[156..][0..descriptor[156]]);
     var result: Mastering = undefined;
-    var found = [_]bool{false} ** Mastering.names.len;
+    var found: [Mastering.names.len]bool = @splat(false);
     var offset: usize = 0;
     while (offset < root.len) {
         const length = root[offset];
@@ -127,7 +127,7 @@ pub fn mastering(bytes: []const u8) !?Mastering {
 }
 
 test "PSP view changes only descriptor version and never source bytes" {
-    var bytes = [_]u8{0} ** (20 * 2048);
+    var bytes: [20 * 2048]u8 = @splat(0);
     const base = 16 * 2048;
     bytes[base] = 1;
     @memcpy(bytes[base + 1 ..][0..5], "CD001");

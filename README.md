@@ -11,7 +11,7 @@ Run the following commands from the repository root.
 
 ## Build and ingest
 
-Requires **Zig 0.16.0**, GNU **patch**, **pkg-config**, and development headers/libraries
+Requires **Zig 0.17.0**, GNU **patch**, **pkg-config**, and development headers/libraries
 for **libarchive**, **OpenSSL 3**, **zlib** and **Expat**. PSAR filename-table
 decryption also requires OpenSSL's **legacy provider** for DES-CBC.
 Zig-PSP temporarily uses the local checkout at `../Zig-PSP`

@@ -3,9 +3,7 @@ const c = @import("archive");
 const memory = @import("bytes.zig");
 const iso_view = @import("iso_view.zig");
 const IsoView = iso_view.IsoView;
-const iconv = @cImport({
-    @cInclude("iconv.h");
-});
+const iconv = @import("c_iconv");
 
 const Path = struct {
     bytes: []const u8,
@@ -97,7 +95,7 @@ pub fn mastering(allocator: std.mem.Allocator, bytes: []const u8) !?Mastering {
     if (c.archive_read_support_format_iso9660(archive) != c.ARCHIVE_OK) return error.IsoReaderUnavailable;
     if (c.archive_read_open(archive, &view, null, IsoView.read, null) != c.ARCHIVE_OK) return error.InvalidIso;
     var header: ?*c.struct_archive_entry = null;
-    var found = [_]bool{false} ** Mastering.names.len;
+    var found: [Mastering.names.len]bool = @splat(false);
     while (true) {
         const status = c.archive_read_next_header(archive, &header);
         if (status == c.ARCHIVE_EOF) break;

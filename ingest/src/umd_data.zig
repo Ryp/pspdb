@@ -33,10 +33,10 @@ pub fn parse(bytes: []const u8) !Record {
 }
 
 test "game and video records have variable field lengths" {
-    const game = try parse("UMDT-99872|8D53CBDF6A4FC495|0001|G" ++ "\x00" ** 13 ++ "|");
+    const game = try parse("UMDT-99872|8D53CBDF6A4FC495|0001|G" ++ "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ "|");
     try std.testing.expectEqualStrings("UMDT-99872", game.identifier);
     try std.testing.expectEqualStrings("game/update", game.mediaDescription());
-    const video = try parse("UMD Authoring Demo  |AB9B89|0002|V" ++ "\x00" ** 13 ++ "|");
+    const video = try parse("UMD Authoring Demo  |AB9B89|0002|V" ++ "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ "|");
     try std.testing.expectEqualStrings("UMD Authoring Demo  ", video.identifier);
     try std.testing.expectEqualStrings("AB9B89", video.uid);
     try std.testing.expectEqualStrings("video", video.mediaDescription());

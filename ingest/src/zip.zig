@@ -97,6 +97,8 @@ pub const Archive = struct {
     }
 };
 
+const sample_payload: [300]u8 = @bitCast(@as([20][15]u8, @splat("hello iso bytes".*)));
+
 // Generated with Python's zipfile; one DEFLATE member, independent of our reader.
 const fixture = "\x50\x4b\x03\x04\x14\x00\x00\x00\x08\x00\x91\x4a\x2b\x5d\xd1\x72\x46\x58\x16\x00\x00\x00\x2c\x01\x00\x00\x11\x00\x00\x00" ++
     "folder/sample.ISO" ++ "\xcb\x48\xcd\xc9\xc9\x57\xc8\x2c\xce\x57\x48\xaa\x2c\x49\x2d\xce\x18\xe5\xe2\xe6\x02\x00" ++
@@ -119,7 +121,7 @@ test "DEFLATE member is decoded in memory with size and CRC validation" {
     try std.testing.expectEqualStrings("folder/sample.ISO", filename);
     const bytes = try archive.read(entry, filename, allocator);
     defer allocator.free(bytes);
-    try std.testing.expectEqualStrings("hello iso bytes" ** 20, bytes);
+    try std.testing.expectEqualStrings(&sample_payload, bytes);
     try std.testing.expectEqual(null, try entries.next());
     var bad = entry;
     bad.crc32 ^= 1;
@@ -135,7 +137,7 @@ test "DEFLATE member is decoded in memory with size and CRC validation" {
 
 test "stored member and malformed archive handling" {
     const stored = "\x50\x4b\x03\x04\x14\x00\x00\x00\x00\x00\x91\x4a\x2b\x5d\xd1\x72\x46\x58\x2c\x01\x00\x00\x2c\x01\x00\x00\x11\x00\x00\x00" ++
-        "folder/sample.ISO" ++ "hello iso bytes" ** 20 ++
+        "folder/sample.ISO" ++ sample_payload ++
         "\x50\x4b\x01\x02\x14\x03\x14\x00\x00\x00\x00\x00\x91\x4a\x2b\x5d\xd1\x72\x46\x58\x2c\x01\x00\x00\x2c\x01\x00\x00\x11\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x80\x01\x00\x00\x00\x00" ++
         "folder/sample.ISO" ++ "\x50\x4b\x05\x06\x00\x00\x00\x00\x01\x00\x01\x00\x3f\x00\x00\x00\x5b\x01\x00\x00\x00\x00";
     const io = std.testing.io;
@@ -153,7 +155,7 @@ test "stored member and malformed archive handling" {
         const filename = try archive.name(entry);
         const bytes = try archive.read(entry, filename, allocator);
         defer allocator.free(bytes);
-        try std.testing.expectEqualStrings("hello iso bytes" ** 20, bytes);
+        try std.testing.expectEqualStrings(&sample_payload, bytes);
     }
     var corrupted = stored.*;
     // A Unix symlink must never be treated as an ISO payload.

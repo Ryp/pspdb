@@ -4,12 +4,7 @@
 const std = @import("std");
 const model = @import("model.zig");
 const config = @import("config.zig");
-const c = @cImport({
-    @cInclude("stdio.h");
-    @cInclude("locale.h");
-    @cInclude("iconv.h");
-    @cInclude("expat.h");
-});
+const c = @import("c_rco_xml");
 const Writer = std.Io.Writer;
 
 pub fn validate(data: []const u8) !void {

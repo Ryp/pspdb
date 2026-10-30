@@ -175,7 +175,7 @@ fn signed_fixture(allocator: std.mem.Allocator, payload: []const u8, version: u3
 
 test "EDAT authenticates every block before returning immutable unaligned plaintext" {
     const allocator = std.testing.allocator;
-    const payload = [_]u8{0x31} ** (block_size + 1);
+    const payload: [block_size + 1]u8 = @splat(0x31);
     const fixture = try signed_fixture(allocator, &payload, 2, 0x0c, 2);
     defer allocator.free(fixture);
     const storage = try allocator.alloc(u8, fixture.len + 1);

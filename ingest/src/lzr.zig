@@ -277,7 +277,7 @@ test "LZR coded literals use position contexts and require an end marker at exac
 test "LZR overlapping short and long matches check distance and remaining capacity" {
     var output: [131]u8 = @splat(0xa5);
     try std.testing.expectEqual(@as(usize, 130), try decode_into(overlapping, output[0..130]));
-    try std.testing.expectEqualSlices(u8, &([_]u8{'a'} ** 130), output[0..130]);
+    try std.testing.expectEqualSlices(u8, &@as([130]u8, @splat('a')), output[0..130]);
     try std.testing.expectEqual(@as(u8, 0xa5), output[130]);
     try std.testing.expectError(error.LzrOutputTooSmall, decode_into(overlapping, output[0..129]));
     for (0..overlapping.len) |length| try std.testing.expectError(error.InvalidLzr, decode_into(overlapping[0..length], &output));

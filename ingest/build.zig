@@ -168,7 +168,9 @@ pub fn build(b: *std.Build) void {
     module.addAnonymousImport("extractor_versions_json", .{ .root_source_file = b.path("../tools/extractor_versions.json") });
     module.addAnonymousImport("contextual_extractors_json", .{ .root_source_file = b.path("../website/pspdb/data/contextual_extractors.json") });
     const revisions = b.addOptions();
-    const revision_bytes = std.Io.Dir.cwd().readFileAlloc(b.graph.io, b.pathFromRoot("../tools/extractor_versions.json"), b.allocator, .unlimited) catch @panic("Cannot read extractor revisions");
+    // Configure results are cached in Zig 0.17; a revision bump must rerun this.
+    b.dependOnFileContents(b.path("../tools/extractor_versions.json"));
+    const revision_bytes = std.Io.Dir.cwd().readFileAlloc(b.graph.io, b.root.joinString(b.allocator, "../tools/extractor_versions.json") catch @panic("OOM"), b.allocator, .unlimited) catch @panic("Cannot read extractor revisions");
     const parsed = std.json.parseFromSlice(std.json.Value, b.allocator, revision_bytes, .{}) catch @panic("Invalid extractor revisions");
     var it = parsed.value.object.iterator();
     while (it.next()) |entry| {
@@ -186,6 +188,19 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     module.addImport("archive", archive.createModule());
+    // Zig 0.17 removed @cImport; each C surface is a translate-c module.
+    for ([_][2][]const u8{
+        .{ "c_iconv", "src/c_iconv.h" },
+        .{ "c_zlib", "src/c_zlib.h" },
+        .{ "c_rco_xml", "src/c_rco_xml.h" },
+    }) |header| {
+        module.addImport(header[0], b.addTranslateC(.{
+            .root_source_file = b.path(header[1]),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }).createModule());
+    }
     module.linkSystemLibrary("archive", .{});
     module.linkSystemLibrary("crypto", .{});
     module.linkSystemLibrary("z", .{});
@@ -198,9 +213,7 @@ pub fn build(b: *std.Build) void {
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());
 
-    if (b.args) |args| {
-        run.addArgs(args);
-    }
+    run.addPassthruArgs();
 
     b.step("run", "Hash and store extracted files from ISO/PKG/NAND/updater PBP and ZIP ISO/PKG inputs").dependOn(&run.step);
 
