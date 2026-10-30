@@ -1,4 +1,3 @@
-import gzip
 import json
 from pathlib import Path
 import tempfile
@@ -7,7 +6,7 @@ from unittest.mock import patch
 
 from pspdb.server import catalog_data, load_extractor_registry
 from pspdb.export import export_site
-from pspdb.wire import decode_catalog
+from wirehelp import decode_export
 
 
 class VersionedCatalogTests(unittest.TestCase):
@@ -34,7 +33,7 @@ class VersionedCatalogTests(unittest.TestCase):
             self.assertEqual(data['trees']['iso'][digest]['stale_extraction'],
                              {'kind': 'iso', 'version': '10', 'latest_version': '11'})
             export_site(root, Path(tmp) / 'export')
-            exported = decode_catalog(json.loads(gzip.decompress((Path(tmp) / 'export/catalog.json.gz').read_bytes())))
+            exported = decode_export(Path(tmp) / 'export')
             self.assertEqual(exported['trees'], data['trees'])
             self.assertEqual(before, {path: path.read_bytes() for path in root.rglob('*.json')})
             (latest / (digest + '-tree.json')).unlink()
@@ -56,7 +55,7 @@ class VersionedCatalogTests(unittest.TestCase):
             (folder/(digest+'-ingest.json')).write_text(json.dumps(record))
             (folder/(digest+'-tree.json')).write_text(json.dumps(tree))
             export_site(root, Path(tmp)/'export')
-            data = decode_catalog(json.loads(gzip.decompress((Path(tmp)/'export/catalog.json.gz').read_bytes())))
+            data = decode_export(Path(tmp) / 'export')
             self.assertEqual(data['records']['pkg'], [{**record, 'psn_kind': 'unknown'}])
             self.assertEqual(data['trees']['pkg'][digest], {**tree, 'extraction_kind': 'pkg'})
             self.assertFalse(data['downloads_enabled'])

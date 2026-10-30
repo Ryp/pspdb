@@ -3,8 +3,7 @@
 const $ = id => document.getElementById(id);
 const number = new Intl.NumberFormat("en-US");
 const sizeNumber = new Intl.NumberFormat("en-US", { maximumSignificantDigits: 3 });
-// Validate reference identifiers before constructing same-source outbound links.
-const referenceUUID = id => typeof id === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id);
+const { referenceUUID, buildCatalog, parseContainer, HashStore, StaleCatalogError } = PspdbCatalog;
 const REFERENCE_SOURCES = [
   { source: "Redump", field: "redump", className: "redump-link",
     valid: id => Number.isSafeInteger(id) && id > 0,
@@ -51,14 +50,16 @@ async function copyHash(hash) {
     }
   }
 }
-const nodes = [], collapsed = new Set(), rowElements = new Map();
-const disclosures = new Map();
-let root, selected, visible = [];
+// The catalog is a typed-array occurrence tree (catalog.js): a tree row is an
+// integer `node`, an index into its parallel arrays, never an object.
+let catalog = null, hashStore = null;
+let collapsed = new Uint8Array(0);
+const rows = new Map();
+let selected = -1, visible = new Uint32Array(0);
 let catalogReady = false;
 let filterNodes = null, searchTerms = [], savedTree = null;
 let searchWorker = null, searchReady = Promise.resolve(false), searchVersion = 0;
 let searchSettled = Promise.resolve(), settleSearch = null;
-const emptyChildren = Object.freeze([]);
 let searchSort = null, sortDirection = 1;
 const highlightCache = new WeakMap();
 let rowHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-height"));
@@ -66,30 +67,86 @@ const overscan = 20;
 let windowKey = "", windowVersion = 0, scrollFrame = 0;
 let logicalOffset = 0, physicalOffset = 0, scrollViewport = 0;
 let nativeScrolling = false, touchCount = 0, scrollEndTimer = 0;
-let downloadsEnabled = false, checkingDownloads = false;
+let downloadsEnabled = false, checkingDownloads = false, resolvingHashes = false;
 const availability = new Map();
+// Slots whose full digest could not be fetched: their rows report "Check failed".
+const hashFailures = new Set();
+
+const label = node => catalog.label(node);
+const url = node => "#" + catalog.path(node).split("/").map(encodeURIComponent).join("/");
+const expandable = node => catalog.expandable(node);
+
+// Full digests are fetched lazily, a chunk of 4096 at a time. Catalog records
+// carry theirs; every other row resolves its own on demand.
+const hashOf = node => catalog.knownHash(node)
+  ?? (catalog.slot[node] >= 0 ? hashStore.peek(catalog.slot[node]) : undefined);
+
+function hashUrl(chunk) {
+  const template = document.documentElement.dataset.hashes;
+  return new URL(template.replace("{generation}", catalog.generation).replace("{chunk}", chunk), location.href).href;
+}
+
+function catalogChanged() {
+  // The server replaced its catalog, so lazily fetched digests no longer match it.
+  $("notice").textContent = "The catalog changed on the server — reloading…";
+  setTimeout(() => location.reload(), 1000);
+}
+
+async function fullHash(node) {
+  const known = hashOf(node);
+  if (known || catalog.slot[node] < 0) return known;
+  try {
+    const hash = (await hashStore.resolve([catalog.slot[node]])).get(catalog.slot[node]);
+    rows.get(node)?.describe?.(hash);
+    return hash;
+  } catch (error) {
+    if (error instanceof StaleCatalogError) catalogChanged();
+    throw error;
+  }
+}
+
+async function copyNodeHash(node) {
+  let hash;
+  try { hash = await fullHash(node); }
+  catch (error) { $("notice").textContent = `SHA-256 unavailable (${error.message})`; return; }
+  $("notice").textContent = await copyHash(hash) ? "SHA-256 copied" : "Copy unavailable in this browser";
+}
 
 async function refreshDownloads() {
   if (!downloadsEnabled) return;
-  const mounted = [...$("entries").querySelectorAll("tr.node")]
-    .map(row => nodes[Number(row.dataset.node)]).filter(node => node?.type === "file" && node.hash);
-  for (const node of mounted) {
-    const cell = node.downloadCell, state = availability.get(node.hash);
+  const mounted = [], unresolved = [];
+  for (const [node, parts] of rows) {
+    if (!catalog.isFile(node) || catalog.slot[node] < 0) continue;
+    const hash = hashOf(node);
+    mounted.push({ node, parts, hash });
+    if (!hash && !hashFailures.has(catalog.slot[node])) unresolved.push(catalog.slot[node]);
+  }
+  for (const { node, parts, hash } of mounted) {
+    const cell = parts.download;
+    const state = hash ? availability.get(hash) : hashFailures.has(catalog.slot[node]) ? null : undefined;
     if (cell.dataset.state === String(state)) continue;
     cell.dataset.state = String(state);
     cell.classList.toggle("missing", state === false);
     cell.replaceChildren();
     if (state === true) {
+      const name = catalog.nameOf(node);
       const link = element("a", "download-link", "Download");
-      link.href = `download/${node.hash}/${encodeURIComponent(node.name)}`;
-      link.download = node.name;
-      link.title = `Download ${node.name}`;
+      link.href = `download/${hash}/${encodeURIComponent(name)}`;
+      link.download = name;
+      link.title = `Download ${name}`;
       link.onclick = event => event.stopPropagation();
       cell.append(link);
     } else cell.textContent = state === undefined ? "Checking…" : state === false ? "Missing" : "Check failed";
   }
+  if (unresolved.length && !resolvingHashes) {
+    resolvingHashes = true;
+    hashStore.resolve(unresolved).catch(error => {
+      if (error instanceof StaleCatalogError) catalogChanged();
+      else for (const slot of unresolved) hashFailures.add(slot);
+    }).finally(() => { resolvingHashes = false; refreshDownloads(); });
+  }
   if (checkingDownloads) return;
-  const hashes = [...new Set(mounted.filter(node => !availability.has(node.hash)).map(node => node.hash))].slice(0, 128);
+  const hashes = [...new Set(mounted.filter(({ hash }) => hash && !availability.has(hash)).map(({ hash }) => hash))].slice(0, 128);
   if (!hashes.length) return;
   checkingDownloads = true;
   try {
@@ -226,7 +283,7 @@ function resizeScroll() {
     rowHeight = nextHeight;
     windowVersion++;
   }
-  if (root) setScrollOffset(position * rowHeight, nativeScrolling);
+  if (catalog) setScrollOffset(position * rowHeight, nativeScrolling);
 }
 
 function renderWindow() {
@@ -253,38 +310,30 @@ function renderWindow() {
   const before = Math.max(0, physicalOffset + start * rowHeight - metrics.offset);
   spacer(before);
   for (let index = start; index < end; index++) {
-    const node = visible[index], row = rowElements.get(node.index) || createRow(node);
+    const node = visible[index], parts = rows.get(node) || createRow(node);
+    const { row } = parts;
     row.classList.toggle("selected", node === selected);
     row.setAttribute("aria-selected", String(node === selected));
-    const button = disclosures.get(node);
-    if (button) {
-      const expanded = !collapsed.has(node.index);
+    if (parts.disclosure) {
+      const expanded = !collapsed[node];
       row.setAttribute("aria-expanded", String(expanded));
-      button.textContent = expanded ? "▾" : "▸";
-      button.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${node.name}`);
+      parts.disclosure.textContent = expanded ? "▾" : "▸";
+      parts.disclosure.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${catalog.nameOf(node)}`);
     }
-    if (node.gamePrefix) {
-      highlight(node.pathElement, filterNodes && !compact ? node.displayPath.slice(0, -label(node).length) : "");
-      highlight(node.prefixElement, node.gamePrefix);
-      highlight(node.titleElement, label(node).slice(node.gamePrefix.length));
-    } else highlight(node.nameElement, filterNodes && !compact ? node.displayPath : label(node));
-    row.setAttribute("aria-level", filterNodes ? 1 : node.depth + 1);
-    if (node.note) highlight(node.noteElement, node.note);
-    if (node.hashElement) highlight(node.hashElement, node.hash.slice(0, 12));
-    if (node.error) highlight(node.errorElement, `error: ${node.error}`);
+    if (parts.gamePrefix) {
+      highlight(parts.path, filterNodes && !compact ? catalog.displayPath(node).slice(0, -label(node).length) : "");
+      highlight(parts.prefix, parts.gamePrefix);
+      highlight(parts.title, label(node).slice(parts.gamePrefix.length));
+    } else highlight(parts.name, filterNodes && !compact ? catalog.displayPath(node) : label(node));
+    row.setAttribute("aria-level", filterNodes ? 1 : parts.depth + 1);
+    if (parts.hash) highlight(parts.hash, catalog.prefixHex(node, 12));
+    if (parts.error) highlight(parts.error, `error: ${parts.errorText}`);
     row.setAttribute("aria-rowindex", index + 2);
     fragment.append(row);
   }
   spacer(Math.max(0, metrics.height - before - (end - start) * rowHeight));
-  const mounted = new Set(visible.slice(start, end));
-  for (const [index] of rowElements) {
-    const node = nodes[index];
-    if (mounted.has(node)) continue;
-    rowElements.delete(index);
-    disclosures.delete(node);
-    for (const key of ["nameElement", "pathElement", "prefixElement", "titleElement",
-      "noteElement", "hashElement", "errorElement", "downloadCell"]) delete node[key];
-  }
+  const mounted = new Set(visible.subarray(start, end));
+  for (const node of rows.keys()) if (!mounted.has(node)) rows.delete(node);
   $("entries").replaceChildren(fragment);
   refreshDownloads();
 }
@@ -393,36 +442,38 @@ async function initializeSearch() {
   const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
   // Handle early startup errors even while the index is still being assembled.
   ready.catch(() => {});
-  let failure = null;
   worker.onerror = event => {
     event.preventDefault();
-    failure = new Error(event.message || "Search worker failed");
+    const failure = new Error(event.message || "Search worker failed");
     readyReject(failure);
     if (searchWorker === worker) searchFailure(failure);
   };
-  worker.onmessage = async ({ data }) => {
+  worker.onmessage = ({ data }) => {
     if (searchWorker !== worker) return;
     if (data.type === "ready") { readyResolve(true); return; }
     if (data.type === "error") {
-      failure = new Error(data.message);
+      const failure = new Error(data.message);
       readyReject(failure);
       searchFailure(failure);
       return;
     }
-    if (data.type !== "results" || data.version !== searchVersion) return;
-    const matches = new Array(data.ids.length);
-    for (let start = 0; start < matches.length; start += 8192) {
-      const end = Math.min(start + 8192, matches.length);
-      for (let i = start; i < end; i++) matches[i] = nodes[data.ids[i]];
-      if (end < matches.length) await yieldPage();
-      if (data.version !== searchVersion) return;
+    if (data.version !== searchVersion) return;
+    if (data.type === "stale") { catalogChanged(); return; }
+    if (data.type === "hash-error") {
+      // A long hash term could not be verified: report it, keep the page usable.
+      $("tree").removeAttribute("aria-busy");
+      $("search-count").textContent = data.message;
+      settleSearch?.();
+      settleSearch = null;
+      return;
     }
-    filterNodes = matches;
-    $("search-count").textContent = `${number.format(matches.length)} matching files`;
+    if (data.type !== "results") return;
+    filterNodes = data.ids;
+    $("search-count").textContent = `${number.format(filterNodes.length)} matching files`;
     $("tree").removeAttribute("aria-busy");
     const query = $("tree-search").value.trim();
-    $("search-empty").hidden = matches.length !== 0;
-    if (!matches.length) {
+    $("search-empty").hidden = filterNodes.length !== 0;
+    if (!filterNodes.length) {
       $("search-empty").textContent = `No matches for “${query}”`;
       const clear = element("button", "", "Clear filter");
       clear.onclick = clearSearch;
@@ -442,42 +493,11 @@ async function initializeSearch() {
     settleSearch?.();
     settleSearch = null;
   };
-  const count = nodes.length;
-  const parents = new Int32Array(count), names = new Uint32Array(count), labels = new Uint32Array(count);
-  const texts = new Uint32Array(count), hashes = new Uint32Array(count), errors = new Uint32Array(count);
-  const sizes = new Float64Array(count), order = new Uint32Array(root.files);
-  const strings = [""], interned = new Map([["", 0]]);
-  function intern(text) {
-    if (!text) return 0;
-    let id = interned.get(text);
-    if (id === undefined) { id = strings.length; strings.push(text); interned.set(text, id); }
-    return id;
-  }
-  let sent = 0;
-  for (let start = 0; start < count; start += 8192) {
-    for (let i = start; i < Math.min(start + 8192, count); i++) {
-      const node = nodes[i];
-      texts[i] = node.displayName || node.note || node.searchMetadata
-        ? intern(`${node.displayName || ""} ${node.note || ""} ${node.searchMetadata || ""}`) : 0;
-      names[i] = intern(node.name);
-      labels[i] = intern(label(node));
-      parents[i] = node.parent ? node.parent.index : -1;
-      hashes[i] = intern(node.hash);
-      errors[i] = intern(node.error ? `error: ${node.error}` : "");
-      sizes[i] = node.size;
-      if (node.type === "file") order[node.fileOrder] = i;
-    }
-    if (failure) throw failure;
-    if (searchWorker !== worker) return false;
-    if (sent < strings.length) worker.postMessage({ type: "strings", strings: strings.slice(sent) });
-    sent = strings.length;
-    await yieldPage();
-  }
-  worker.postMessage({ type: "index", parents, names, labels, texts, hashes, errors, sizes, order },
-    [parents.buffer, names.buffer, labels.buffer, texts.buffer, hashes.buffer, errors.buffer, sizes.buffer, order.buffer]);
+  // The worker searches copies of the occurrence arrays; ours keep rendering.
+  const { message, transfer } = catalog.searchIndex(hashUrl("__chunk__"), new URL("catalog.js", location.href).href);
+  worker.postMessage(message, transfer);
   await ready;
-  if (searchWorker !== worker) return false;
-  return true;
+  return searchWorker === worker;
 }
 
 function requestSearch() {
@@ -507,9 +527,9 @@ function applySearch() {
   $("tree").classList.toggle("search-results", Boolean(query));
   if (query) {
     if (!savedTree) savedTree = {
-      collapsed: new Set(collapsed), selected, scroll: readScrollOffset() / rowHeight,
+      collapsed: collapsed.slice(), selected, scroll: readScrollOffset() / rowHeight,
     };
-    filterNodes ||= [];
+    filterNodes ||= new Uint32Array(0);
     updateSortHeaders();
     return requestSearch();
   }
@@ -519,10 +539,7 @@ function applySearch() {
   $("search-count").textContent = "";
   $("search-empty").hidden = true;
   $("tree").removeAttribute("aria-busy");
-  if (savedTree) {
-    collapsed.clear();
-    for (const index of savedTree.collapsed) collapsed.add(index);
-  }
+  if (savedTree) collapsed.set(savedTree.collapsed);
   updateSortHeaders();
   render();
   if (savedTree) {
@@ -546,291 +563,63 @@ function element(tag, className, text) {
   return el;
 }
 
-class CatalogNode {
-  constructor(parent, name, data) {
-    this.index = nodes.length;
-    this.parent = parent;
-    this.name = name;
-    this.type = "directory";
-    this.children = emptyChildren;
-    this.depth = parent ? parent.depth + 1 : 0;
-    this.size = 0;
-    this.files = 0;
-    Object.assign(this, data);
-  }
-  get id() { return `node-${this.index}`; }
-  get path() {
-    const parts = [];
-    for (let node = this; node?.parent; node = node.parent) parts.push(node.name);
-    return parts.reverse().join("/");
-  }
-  get displayPath() {
-    if (!this.parent) return label(this);
-    const parts = [];
-    for (let node = this; node.parent; node = node.parent) parts.push(label(node));
-    return parts.reverse().join("/");
-  }
-}
-
-function nodeAtPath(path) {
-  let node = root;
-  if (!path) return node;
-  for (const part of path.split("/")) {
-    node = node.children.find(child => child.name === part);
-    if (!node) return undefined;
-  }
-  return node;
-}
-
-function add(parent, name, data = {}) {
-  const node = new CatalogNode(parent, name, data);
-  nodes.push(node);
-  if (parent) {
-    if (parent.children === emptyChildren) parent.children = [];
-    parent.children.push(node);
-  }
-  return node;
-}
-
-function expandable(node) { return node.type === "directory" || Boolean(node.extraction); }
-
-function extractedName(source, path, rule) {
-  if (rule === "source_stem") return source.replace(/\.[^.]*$/, "") + path.slice(path.indexOf("."));
-  if (rule === "strip_suffix") return source.replace(/\.[^.]*$/, "");
-  if (rule === "decoded_suffix") {
-    let stem = source.replace(/\.[^.]*$/, "");
-    const dot = path.indexOf(".");
-    const suffix = dot < 0 ? "" : path.slice(dot);
-    if (!suffix || suffix === ".bin") return stem;
-    if (suffix === ".elf") stem = stem.replace(/\.(?:elf|prx)$/i, "");
-    return stem.endsWith(suffix) ? stem : stem + suffix;
-  }
-  return path;
-}
-
-let buildWork = 0;
-function* addInventory(parent, entries, extractions = {}, ancestors = new Set(), nameRule = null) {
-  const directories = new Map([["", parent]]);
-  for (const entry of entries) {
-    if (++buildWork % 4096 === 0) yield;
-    const parts = entry.path.split("/");
-    const name = extractedName(parent.name, parts.pop(), nameRule);
-    let path = "", directory = parent;
-    for (const part of parts) {
-      path = path ? `${path}/${part}` : part;
-      if (!directories.has(path)) directories.set(path, add(directory, part));
-      directory = directories.get(path);
-    }
-    if (entry.type === "directory") {
-      if (!directories.has(entry.path)) directories.set(entry.path, add(directory, name));
-    } else {
-      const node = add(directory, name, { type: "file", size: entry.size_bytes, hash: entry.sha256, redump: entry.redump || emptyChildren });
-      if (entry.extraction || extractions[node.hash] !== undefined)
-        yield* attachExtraction(node, extractions, ancestors, entry.extraction);
+// Directories and extraction containers start closed unless they only group
+// further virtual groups: the first screen shows psp / umd / psn / firmware.
+function defaultCollapsed() {
+  const flags = new Uint8Array(catalog.count);
+  const { tree, parent, end } = catalog;
+  for (let i = 0; i < catalog.count; i++) {
+    if (tree[i] >= 0) flags[i] = 1;
+    else if (catalog.isVirtual(i) && parent[i] >= 0) {
+      let groups = false;
+      for (let child = i + 1; child < end[i] && !groups; child = end[child]) groups = catalog.isVirtual(child);
+      if (!groups) flags[i] = 1;
     }
   }
+  return flags;
 }
 
-function* attachExtraction(node, extractions, ancestors = new Set(), contextual = null, source = null) {
-  const extraction = contextual || (source === null ? extractions[node.hash] : source[node.hash]);
-  if (extraction === null) throw new Error(`Ambiguous non-root extraction kinds: ${node.hash}`);
-  if (!extraction || (contextual && extraction.sha256 !== node.hash) || extraction.size_bytes !== node.size || ancestors.has(extraction)) return;
-  node.extraction = extraction.extractor.name;
-  node.extractionKind = extraction.extraction_kind;
-  node.extractionVersion = extraction.extractor.version;
-  if (extraction.error) {
-    node.error = extraction.error;
-    // Surface failures through collapsed ancestors: a container that hides a
-    // failed subtree must still be recognizable as containing one.
-    for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent)
-      ancestor.errorCount = (ancestor.errorCount || 0) + 1;
-  }
-  if (extraction.stale_extraction) node.stale_extraction = extraction.stale_extraction;
-  yield* addInventory(node, extraction.entries, extractions, new Set([...ancestors, extraction]), extraction.name_rule);
-}
-
-function addGroup(parent, name, data = {}) {
-  return add(parent, name, { ...data, virtual: true });
-}
-
-function packageSerial(metadata) {
-  const id = metadata.title_id?.trim() || metadata.content_id?.match(/^[^-]+-([A-Z0-9]{9})_/i)?.[1] || "";
-  return id.toUpperCase().replace(/^([A-Z0-9]{4})-?([0-9]{5})$/, "$1-$2");
-}
-
-function packageLabels(packages) {
-  const groups = new Map();
-  for (const pkg of packages) {
-    const metadata = pkg.metadata || {};
-    const title = metadata.title?.trim().replace(/\s+/g, " ") || "Untitled package";
-    const id = packageSerial(metadata);
-    const base = id ? `${id} ${title}` : title;
-    if (!groups.has(base)) groups.set(base, []);
-    groups.get(base).push({ pkg, id });
-  }
-  const labels = new Map();
-  for (const [base, members] of groups) {
-    const hashes = [...new Set(members.map(({ pkg }) => pkg.sha256))];
-    for (const { pkg, id } of members) {
-      let length = 8;
-      while (length < 64 && hashes.some(hash => hash !== pkg.sha256 && hash.slice(0, length) === pkg.sha256.slice(0, length))) length++;
-      labels.set(pkg.sha256, hashes.length > 1 || !id ? `${base} · ${pkg.sha256.slice(0, length)}` : base);
-    }
-  }
-  return labels;
-}
-
-async function build(data) {
+async function build(built) {
   cancelSearch();
   searchWorker?.terminate();
   searchWorker = null;
-  for (const _ of buildCatalog(data)) await yieldPage();
-  searchReady = initializeSearch().catch(error => { searchFailure(error); return false; });
-}
-
-function* buildCatalog(data) {
-  nodes.length = 0;
-  buildWork = 0;
-  downloadsEnabled = data.downloads_enabled === true;
+  catalog = built;
+  hashStore = new HashStore({ count: catalog.slotCount, prefixes: catalog.prefixes, chunkUrl: hashUrl });
+  downloadsEnabled = catalog.downloadsEnabled;
   availability.clear();
+  hashFailures.clear();
+  rows.clear();
+  selected = -1;
+  savedTree = null;
+  filterNodes = null;
+  visible = new Uint32Array(0);
+  collapsed = defaultCollapsed();
   $("download-col").hidden = !downloadsEnabled;
   $("download-heading").hidden = !downloadsEnabled;
   $("tree").setAttribute("aria-colcount", downloadsEnabled ? "4" : "3");
-  root = addGroup(null, "");
-  // Show the aggregate root without changing existing UMD/PSN URL paths.
-  root.name = "psp";
-  const population = data.coverage || {};
-  const umdPopulation = population.umd || null, psnPopulation = population.psn || null;
-  const umdSnapshot = [umdPopulation?.source?.name, umdPopulation?.source?.version].filter(Boolean).join(" ");
-  // One chip per reference population, on the group that population maps onto. Each
-  // links to that source's own coverage view: Redump's PSP disc list, and the
-  // NoPayStation home page, which draws its own per-list coverage bars.
-  const umd = addGroup(root, "umd", umdPopulation
-    ? { coverage: { present: umdPopulation.present, total: umdPopulation.total, noun: "UMD discs",
-                    source: "Redump", snapshot: umdSnapshot, href: "http://redump.org/discs/system/psp/" } }
-    : {});
-  const categories = new Map();
-  function mediaGroup(code) {
-    const name = code === "G" ? "game" : code === "V" ? "video" : "other";
-    if (!categories.has(name)) categories.set(name, addGroup(umd, name));
-    return categories.get(name);
-  }
-  const isos = data.records.iso || [];
-  const extractions = Object.create(null), sizes = new Map();
-  for (const [kind, sources] of Object.entries(data.trees)) {
-    for (const [hash, tree] of Object.entries(sources)) {
-      if (sizes.has(hash) && sizes.get(hash) !== tree.size_bytes) throw new Error(`Conflicting source sizes: ${hash}`);
-      sizes.set(hash, tree.size_bytes);
-      if (kind === "iso" || kind === "pkg" || kind === "nand" || kind === "update") continue;
-      extractions[hash] = hash in extractions ? null : tree;
-    }
-  }
-  for (const iso of isos) {
-    const metadata = iso.metadata || {};
-    const category = mediaGroup(metadata.media_code);
-    const id = (metadata.disc_id || metadata.identifier || "").trim().replace(/^([A-Z]{4})-?([0-9]{5})$/, "$1-$2");
-    const identity = [id, metadata.disc_version].filter(Boolean).join("/");
-    const displayName = metadata.media_code === "V"
-      ? metadata.title?.trim() || identity
-      : [identity, metadata.title?.trim()].filter(Boolean).join(" ");
-    const serialstationDiscs = (iso.serialstation_discs || []).filter(match => referenceUUID(match.id));
-    const node = add(category, `${iso.sha256}.iso`, {
-      type: "file",
-      serialstation_discs: serialstationDiscs, umdatabase: iso.umdatabase || [], hash: iso.sha256, size: iso.size_bytes,
-      displayName,
-      gamePrefix: metadata.media_code === "G" ? identity : null,
-    });
-    yield* attachExtraction(node, extractions, new Set(), null, data.trees.iso || {});
-  }
-  const packages = data.records.pkg || [];
-  if (packages.length) {
-    const psn = addGroup(root, "psn", psnPopulation
-      ? { coverage: { present: psnPopulation.present, total: psnPopulation.total, noun: "PSN packages",
-                      source: "NoPayStation", href: "https://nopaystation.com/" } }
-      : {});
-    const labels = packageLabels(packages);
-    const groups = new Map();
-    for (const pkg of packages) {
-      const metadata = pkg.metadata || {};
-      const category = pkg.psn_kind || "unknown";
-      if (!groups.has(category)) groups.set(category, addGroup(psn, category));
-      const node = add(groups.get(category), `${pkg.sha256}.pkg`, {
-        type: "file", hash: pkg.sha256, size: pkg.size_bytes,
-        serialstation: pkg.serialstation || null,
-        displayName: labels.get(pkg.sha256),
-        gamePrefix: packageSerial(metadata) || null,
-        searchMetadata: metadata.content_id || "",
-      });
-      yield* attachExtraction(node, extractions, new Set(), null, data.trees.pkg || {});
-    }
-  }
-  const firmware = addGroup(root, "firmware");
-  const nandGroup = addGroup(firmware, "nand");
-  const updateGroup = addGroup(firmware, "update");
-  const nands = data.records.nand || [];
-  for (const nand of nands) {
-    const metadata = nand.metadata || {};
-    const validGeometry = metadata.page_bytes === 512 && metadata.spare_bytes === 16
-      && metadata.pages_per_block === 32 && (metadata.blocks === 2048 || metadata.blocks === 4096)
-      && nand.size_bytes === metadata.blocks * 32 * 528;
-    const node = add(nandGroup, `${nand.sha256}.nand`, {
-      type: "file", hash: nand.sha256, size: nand.size_bytes,
-      displayName: validGeometry ? `${metadata.blocks / 64} MiB NAND · ${nand.sha256.slice(0, 12)}` : null,
-    });
-    yield* attachExtraction(node, extractions, new Set(), null, data.trees.nand || {});
-  }
-  const updates = data.records.update || [];
-  for (const update of updates) {
-    const metadata = update.metadata || {};
-    const version = metadata.updater_version?.trim();
-    const node = add(updateGroup, `${update.sha256}.pbp`, {
-      type: "file", hash: update.sha256, size: update.size_bytes,
-      displayName: version ? `Update ${version}${metadata.updater_target === "psp-go" ? " Go" : ""} · ${update.sha256.slice(0, 12)}` : null,
-      searchMetadata: [metadata.title, metadata.disc_id].filter(Boolean).join(" "),
-    });
-    yield* attachExtraction(node, extractions, new Set(), null, data.trees.update || {});
-  }
-  let fileOrder = 0;
-  const pending = [root];
-  while (pending.length) {
-    const node = pending.pop();
-    if (++buildWork % 8192 === 0) yield;
-    if (node.children.length > 1) node.children.sort((a, b) => (a.type === b.type ? 0 : a.type === "directory" ? -1 : 1)
-      || (label(a) < label(b) ? -1 : label(a) > label(b) ? 1 : 0));
-    if (node.type === "file") node.fileOrder = fileOrder++;
-    node.files = node.type === "file" ? 1 : 0;
-    for (let i = node.children.length - 1; i >= 0; i--) pending.push(node.children[i]);
-  }
-  for (let i = nodes.length - 1; i > 0; i--) {
-    const node = nodes[i], parent = node.parent;
-    parent.files += node.files;
-    if (parent.type === "directory") parent.size += node.size;
-    if (i % 8192 === 0) yield;
-  }
-  $("catalog-count").textContent = `${number.format(root.files)} files`;
+  $("catalog-count").textContent = `${number.format(catalog.files)} files`;
+  searchReady = initializeSearch().catch(error => { searchFailure(error); return false; });
 }
 
-function url(node) { return "#" + node.path.split("/").map(encodeURIComponent).join("/"); }
-function label(node) { return node.displayName || node.name; }
-
 function select(node, scroll = true, updateURL = true) {
-  if (!node || !visible.includes(node)) return;
-  const previous = selected && rowElements.get(selected.index);
+  if (node < 0 || !visible.includes(node)) return;
+  const previous = selected >= 0 ? rows.get(selected)?.row : undefined;
   previous?.classList.remove("selected");
   previous?.setAttribute("aria-selected", "false");
   selected = node;
-  const row = rowElements.get(node.index);
+  const row = rows.get(node)?.row;
   row?.classList.add("selected");
   row?.setAttribute("aria-selected", "true");
-  $("tree").setAttribute("aria-activedescendant", node.id);
-  $("selected-path").textContent = node.path || label(node);
-  $("selected-detail").textContent = `${number.format(node.size)} bytes${node.extraction ? ` · ${node.extraction}` : ""}`;
+  const extraction = catalog.extraction(node);
+  $("tree").setAttribute("aria-activedescendant", `node-${node}`);
+  $("selected-path").textContent = catalog.path(node) || label(node);
+  $("selected-detail").textContent = `${number.format(catalog.size[node])} bytes${extraction?.name ? ` · ${extraction.name}` : ""}`;
   $("open-selected").hidden = !filterNodes;
-  $("copy-selected").hidden = !node.hash;
-  $("selected-error").hidden = !node.error;
-  $("selected-error-message").textContent = node.error ? `error: ${node.error}` : "";
+  $("copy-selected").hidden = catalog.slot[node] < 0;
+  $("selected-error").hidden = !extraction?.error;
+  $("selected-error-message").textContent = extraction?.error ? `error: ${extraction.error}` : "";
   $("notice").textContent = "";
-  if (scroll || node.error) {
+  if (scroll || extraction?.error) {
     // Scroll only vertically, preserving the user's horizontal column position.
     const top = visible.indexOf(node) * rowHeight;
     readScrollOffset();
@@ -844,7 +633,7 @@ function select(node, scroll = true, updateURL = true) {
 
 function jump(node, focus = true) {
   if (savedTree) clearSearch();
-  for (let parent = node.parent; parent; parent = parent.parent) collapsed.delete(parent.index);
+  for (let parent = catalog.parent[node]; parent >= 0; parent = catalog.parent[parent]) collapsed[parent] = 0;
   render();
   select(node);
   setScrollOffset(Math.max(0, (visible.indexOf(node) - 2) * rowHeight));
@@ -853,22 +642,26 @@ function jump(node, focus = true) {
 
 function toggle(node) {
   if (filterNodes || !expandable(node)) return;
-  if (collapsed.has(node.index)) {
-    collapsed.delete(node.index);
-  } else collapsed.add(node.index);
+  collapsed[node] ^= 1;
   render();
   select(node);
   $("tree").focus({ preventScroll: true });
 }
 
-function render(offset = readScrollOffset()) {
-  visible = [];
-  function walk(node) {
-    visible.push(node);
-    if (!collapsed.has(node.index)) for (const child of node.children) walk(child);
+// Visible rows in preorder: a collapsed row skips its whole subtree.
+function walkVisible() {
+  const { end } = catalog;
+  let list = new Uint32Array(1 << 12), length = 0;
+  for (let node = 0; node < catalog.count;) {
+    if (length === list.length) { const next = new Uint32Array(list.length * 2); next.set(list); list = next; }
+    list[length++] = node;
+    node = collapsed[node] ? end[node] : node + 1;
   }
-  if (filterNodes) visible = filterNodes;
-  else walk(root);
+  return list.subarray(0, length);
+}
+
+function render(offset = readScrollOffset()) {
+  visible = filterNodes || walkVisible();
   windowVersion++;
   $("tree").setAttribute("aria-rowcount", visible.length + 1);
   setScrollOffset(offset);
@@ -876,39 +669,46 @@ function render(offset = readScrollOffset()) {
 
 function createRow(node) {
     const folder = expandable(node);
-    const container = Boolean(node.extraction);
-    const row = element("tr", `node ${container ? "file container" : folder ? "folder" : "file"}${node.virtual && !container ? " virtual" : ""}`);
-    if (node.error) row.classList.add("extraction-failed");
-    row.id = node.id;
-    row.dataset.path = node.path;
-    row.dataset.node = node.index;
-    row.setAttribute("aria-level", node.depth + 1);
+    const extraction = catalog.extraction(node);
+    const container = extraction !== null;
+    const attrs = catalog.attrsOf(node) || {};
+    const virtual = catalog.isVirtual(node);
+    const path = catalog.path(node), nodeName = catalog.nameOf(node);
+    const depth = catalog.depth(node);
+    const parts = { depth, gamePrefix: attrs.gamePrefix || null };
+    const row = element("tr", `node ${container ? "file container" : folder ? "folder" : "file"}${virtual && !container ? " virtual" : ""}`);
+    parts.row = row;
+    if (extraction?.error) row.classList.add("extraction-failed");
+    row.id = `node-${node}`;
+    row.dataset.path = path;
+    row.dataset.node = node;
+    row.setAttribute("aria-level", depth + 1);
     row.setAttribute("aria-selected", "false");
-    if (folder) row.setAttribute("aria-expanded", String(!collapsed.has(node.index)));
+    if (folder) row.setAttribute("aria-expanded", String(!collapsed[node]));
     const nameCell = element("td", "name-cell");
-    nameCell.style.setProperty("--depth", node.depth);
+    nameCell.style.setProperty("--depth", depth);
     const content = element("div", "name-content");
     if (folder) {
-      const disclosure = element("button", "toggle", collapsed.has(node.index) ? "▸" : "▾");
+      const disclosure = element("button", "toggle", collapsed[node] ? "▸" : "▾");
       disclosure.tabIndex = -1;
-      disclosure.setAttribute("aria-label", `${collapsed.has(node.index) ? "Expand" : "Collapse"} ${node.name}`);
+      disclosure.setAttribute("aria-label", `${collapsed[node] ? "Expand" : "Collapse"} ${nodeName}`);
       disclosure.onclick = event => { event.stopPropagation(); toggle(node); };
-      disclosures.set(node, disclosure);
+      parts.disclosure = disclosure;
       content.append(disclosure);
     } else content.append(element("span", "file-mark", "·"));
     const name = element("span", "name", label(node));
-    node.nameElement = name;
-    if (node.gamePrefix) {
-      node.pathElement = element("span", "");
-      node.prefixElement = element("span", "game-identity", node.gamePrefix);
-      node.titleElement = element("span", "", label(node).slice(node.gamePrefix.length));
-      name.replaceChildren(node.pathElement, node.prefixElement, node.titleElement);
+    parts.name = name;
+    if (parts.gamePrefix) {
+      parts.path = element("span", "");
+      parts.prefix = element("span", "game-identity", parts.gamePrefix);
+      parts.title = element("span", "", label(node).slice(parts.gamePrefix.length));
+      name.replaceChildren(parts.path, parts.prefix, parts.title);
     }
-    name.title = node.error ? `error: ${node.error}` : node.extraction ? `${node.path} — extracted with ${node.extraction}` : node.virtual ? `${node.path || label(node)} — catalog grouping, not a filesystem directory` : node.path;
+    name.title = extraction?.error ? `error: ${extraction.error}` : container ? `${path} — extracted with ${extraction.name}` : virtual ? `${path || label(node)} — catalog grouping, not a filesystem directory` : path;
     content.append(name);
-    if (node.coverage) content.append(coverageChip(node.coverage));
+    if (attrs.coverage) content.append(coverageChip(attrs.coverage));
     for (const { source, field, className, valid, href } of REFERENCE_SOURCES) {
-      const value = node[field];
+      const value = attrs[field];
       const matches = value == null ? [] : Array.isArray(value) ? value : [value];
       for (const [index, match] of matches.entries()) {
         if (!valid(match.id)) continue;
@@ -927,34 +727,35 @@ function createRow(node) {
         content.append(link);
       }
     }
-    if (node.note) { node.noteElement = element("span", "note", node.note); content.append(node.noteElement); }
-    if (node.error) {
+    if (extraction?.error) {
       const error = element("span", "extraction-error");
       const icon = element("span", "error-icon", "!");
       icon.setAttribute("aria-hidden", "true");
-      node.errorElement = element("span", "error-message", `error: ${node.error}`);
-      node.errorElement.id = `${node.id}-error`;
-      row.setAttribute("aria-describedby", node.errorElement.id);
-      error.append(icon, node.errorElement);
+      parts.error = element("span", "error-message", `error: ${extraction.error}`);
+      parts.errorText = extraction.error;
+      parts.error.id = `node-${node}-error`;
+      row.setAttribute("aria-describedby", parts.error.id);
+      error.append(icon, parts.error);
       content.append(error);
-    } else if (node.errorCount && container) {
+    } else if (container && catalog.errorCount(node)) {
+      const errors = catalog.errorCount(node);
       const contained = element("span", "extraction-error contained");
       const icon = element("span", "error-icon", "!");
       icon.setAttribute("aria-hidden", "true");
       contained.append(icon);
-      contained.title = `Contains ${node.errorCount} extraction error${node.errorCount === 1 ? "" : "s"}`;
+      contained.title = `Contains ${errors} extraction error${errors === 1 ? "" : "s"}`;
       contained.setAttribute("aria-label", contained.title);
       contained.setAttribute("role", "img");
       content.append(contained);
     }
-    if (container && node.extractionKind) {
+    if (container && extraction.kind) {
       const tags = element("span", "extraction-tags");
-      const kind = node.extractionKind.toUpperCase();
+      const kind = extraction.kind.toUpperCase();
       tags.append(element("span", "extraction-tag", kind));
-      if (node.extractionVersion) {
-        const version = element("span", "extraction-tag", `v${node.extractionVersion}`);
-        if (node.stale_extraction) {
-          const { version: recorded, latest_version } = node.stale_extraction;
+      if (extraction.version) {
+        const version = element("span", "extraction-tag", `v${extraction.version}`);
+        if (extraction.stale) {
+          const { version: recorded, latest_version } = extraction.stale;
           const message = `Outdated ${kind} subtree v${recorded} (latest is v${latest_version})`;
           version.classList.add("outdated");
           version.title = message;
@@ -965,27 +766,31 @@ function createRow(node) {
       content.append(tags);
     }
     nameCell.append(content);
-    const displayedSize = node.size;
-    const summed = node.type === "directory";
+    const displayedSize = catalog.size[node];
+    const summed = !catalog.isFile(node);
     const bytes = element("td", "size", `${summed ? "Σ " : ""}${formatSize(displayedSize)}`);
     bytes.title = `${number.format(displayedSize)} bytes${summed ? " — sum of contained file sizes, excluding their extracted contents; includes filtered files" : ""}`;
     const hashCell = element("td", "hash");
-    const hash = node.hash;
-    if (hash) {
-      const copy = element("button", "", hash.slice(0, 12));
-      node.hashElement = copy;
+    if (catalog.slot[node] >= 0) {
+      const copy = element("button", "", catalog.prefixHex(node, 12));
+      parts.hash = copy;
       copy.tabIndex = -1;
-      copy.title = `${hash}\nClick to copy full file SHA-256`;
-      copy.onclick = async event => {
+      const describe = parts.describe = hash => { copy.title = `${hash}\nClick to copy full file SHA-256`; };
+      describe(hashOf(node) || `${catalog.prefixHex(node, 16)}…`);
+      // Resolve the full digest as soon as the pointer gets near, so a click copies instantly.
+      const prefetch = () => { const known = hashOf(node); if (known) describe(known); else fullHash(node).catch(() => {}); };
+      copy.addEventListener("pointerenter", prefetch);
+      copy.addEventListener("focus", prefetch);
+      copy.onclick = event => {
         event.stopPropagation(); select(node, false);
-        $("notice").textContent = await copyHash(hash) ? "SHA-256 copied" : "Copy unavailable in this browser";
+        return copyNodeHash(node);
       };
       hashCell.append(copy);
     } else hashCell.textContent = "—";
     row.append(nameCell, bytes, hashCell);
     if (downloadsEnabled) {
-      node.downloadCell = element("td", "download-cell", folder ? "" : "Checking…");
-      row.append(node.downloadCell);
+      parts.download = element("td", "download-cell", folder ? "" : "Checking…");
+      row.append(parts.download);
     }
     row.onclick = () => { select(node, false); $("tree").focus({ preventScroll: true }); };
     row.ondblclick = event => {
@@ -993,14 +798,15 @@ function createRow(node) {
       if (filterNodes) jump(node);
       else if (folder) toggle(node);
     };
-    rowElements.set(node.index, row);
-    return row;
+    rows.set(node, parts);
+    return parts;
 }
 
 function restore(focus = true) {
   let path;
   try { path = location.hash.slice(1).split("/").map(decodeURIComponent).join("/"); } catch { path = ""; }
-  jump(nodeAtPath(path) || root, focus);
+  const node = catalog.find(path);
+  jump(node >= 0 ? node : 0, focus);
 }
 
 function coveragePercent(present, total) {
@@ -1034,10 +840,8 @@ $("tree-search").value = new URLSearchParams(location.search).get("q") || "";
 $("clear-search").hidden = !$("tree-search").value;
 $("tree-search").addEventListener("input", applySearch);
 $("clear-search").onclick = clearSearch;
-$("open-selected").onclick = () => { if (selected && filterNodes) jump(selected); };
-$("copy-selected").onclick = async () => {
-  if (selected?.hash) $("notice").textContent = await copyHash(selected.hash) ? "SHA-256 copied" : "Copy unavailable in this browser";
-};
+$("open-selected").onclick = () => { if (selected >= 0 && filterNodes) jump(selected); };
+$("copy-selected").onclick = () => { if (selected >= 0 && catalog.slot[selected] >= 0) return copyNodeHash(selected); };
 for (const key of ["name", "size", "hash"]) $("sort-" + key).onclick = () => sortSearch(key);
 
 document.addEventListener("keydown", event => {
@@ -1065,14 +869,15 @@ document.addEventListener("keydown", event => {
   if (!["h", "j", "k", "l", "ArrowLeft", "ArrowDown", "ArrowUp", "ArrowRight", "Enter", "Home", "End"].includes(key)) return;
   event.preventDefault();
   const node = selected;
+  if (node < 0) { select(visible[0]); return; }
   if (filterNodes && ["h", "l", "ArrowLeft", "ArrowRight", "Enter"].includes(key)) return;
   if (key === "h" || key === "ArrowLeft") {
-    if (expandable(node) && !collapsed.has(node.index) && node.children.length) toggle(node);
-    else select(node.parent || node);
+    if (expandable(node) && !collapsed[node] && catalog.hasChildren(node)) toggle(node);
+    else select(catalog.parent[node] >= 0 ? catalog.parent[node] : node);
   } else if (["l", "ArrowRight", "Enter"].includes(key)) {
     if (expandable(node)) {
-      if (collapsed.has(node.index)) toggle(node);
-      else select(node.children.find(child => visible.includes(child)) || node);
+      if (collapsed[node]) toggle(node);
+      else select(catalog.children(node).find(child => visible.includes(child)) ?? node);
     }
   } else {
     const index = visible.indexOf(node);
@@ -1124,69 +929,31 @@ async function loadCatalog() {
   }));
   if (document.documentElement.dataset.catalog.endsWith(".gz"))
     body = body.pipeThrough(new DecompressionStream("gzip"));
-  return decodeCatalog(await new Response(body).json());
+  const reader = body.getReader(), parts = [];
+  let byteCount = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    byteCount += value.length;
+  }
+  const bytes = new Uint8Array(byteCount);
+  for (let offset = 0, i = 0; i < parts.length; offset += parts[i++].length) bytes.set(parts[i], offset);
+  parts.length = 0;
+  // Let the "Preparing catalog…" status paint before the (synchronous) decode.
+  await new Promise(resolve => globalThis.requestAnimationFrame ? requestAnimationFrame(() => setTimeout(resolve)) : setTimeout(resolve));
+  return buildCatalog(parseContainer(bytes));
 }
 
-// Mirrors pspdb/wire.py: directories are objects keyed by child name, files are
-// [size, hash_id] rows with optional extras, and hashes and tree metadata come
-// from shared dictionaries. Decoding restores the inventory entries the tree
-// builder consumes.
-const WIRE_SCHEMA = 3;
-
-function decodeCatalog(payload) {
-  if (payload.wire_schema !== WIRE_SCHEMA) throw new Error("Unsupported catalog wire schema");
-  const { hashes, profiles } = payload;
-  function decodeFile(path, row) {
-    const entry = { path, type: "file" };
-    if (row[0] !== null && row[0] !== undefined) entry.size_bytes = row[0];
-    if (row[1] !== null && row[1] !== undefined) entry.sha256 = hashes[row[1]];
-    for (const [name, value] of Object.entries(row[2] || {}))
-      entry[name] = name === "extraction" ? decodeTree(value) : value;
-    if (entry.type === null || entry.type === undefined) delete entry.type;
-    return entry;
-  }
-  function walk(node, prefix, entries) {
-    for (const name in node) {
-      const child = node[name], path = prefix + name;
-      if (Array.isArray(child)) entries.push(decodeFile(path, child));
-      else {
-        entries.push({ path, type: "directory" });
-        walk(child, path + "/", entries);
-      }
-    }
-    return entries;
-  }
-  function decodeTree([size, profile, digest, root]) {
-    const tree = { ...profiles[profile] };
-    if (size !== null) tree.size_bytes = size;
-    if (digest !== null) tree.sha256 = hashes[digest];
-    tree.entries = walk(root, "", []);
-    return tree;
-  }
-  const data = {};
-  for (const [name, value] of Object.entries(payload))
-    if (!["wire_schema", "hashes", "profiles", "trees"].includes(name)) data[name] = value;
-  data.trees = {};
-  for (const [kind, sources] of Object.entries(payload.trees)) {
-    const decoded = data.trees[kind] = {};
-    for (const [digest, tree] of Object.entries(sources)) decoded[digest] = decodeTree(tree);
-  }
-  return data;
-}
-
-loadCatalog().then(async data => {
-  await build(data);
-  for (const node of nodes) {
-    if (node.extraction || (node.virtual && node.parent && !node.children.some(child => child.virtual)))
-      collapsed.add(node.index);
-  }
+loadCatalog().then(async built => {
+  await build(built);
   $("message").hidden = true;
   $("browser").hidden = false;
   restore(document.activeElement !== $("tree-search") && document.activeElement !== $("clear-search"));
   catalogReady = true;
   if ($("tree-search").value) applySearch();
 }).catch(error => {
-  root = null;
+  catalog = null;
   catalogReady = false;
   $("browser").hidden = true;
   $("message").hidden = false;

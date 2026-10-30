@@ -1,54 +1,16 @@
-// Exercise ISO identity and grouping without requiring a running browser/site.
+// Viewer behaviour without a browser: fixtures go through the real Python
+// encoder, then catalog.js, app.js and the search worker run in a stubbed DOM.
+//   node website/tests/tree-catalog.mjs
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import vm from 'node:vm';
-import {Worker as ThreadWorker} from 'node:worker_threads';
-const workerSource = fs.readFileSync(new URL('../pspdb/web/search-worker.js', import.meta.url), 'utf8');
-class CatalogWorker {
-  constructor() {
-    this.thread = new ThreadWorker(`
-      const {parentPort} = require('node:worker_threads');
-      global.self = {postMessage:(data, transfer)=>parentPort.postMessage(data, transfer)};
-      parentPort.on('message', data=>self.onmessage({data}));
-      ${workerSource}
-    `, {eval:true});
-    this.thread.on('message', data=>this.onmessage?.({data}));
-    this.thread.on('error', error=>this.onerror?.({message:error.message,preventDefault(){}}));
-  }
-  postMessage(data, transfer) { this.thread.postMessage(data, transfer); }
-  terminate() { this.thread.terminate(); }
-}
-const el = {addEventListener(){}, setAttribute(){}, removeAttribute(){}};
-const context = vm.createContext({
-  document: {documentElement:{dataset:{catalog:'api/catalog'}}, getElementById:()=>el, addEventListener(){}},
-  window: {addEventListener(){}},
-  ResizeObserver: class {observe(){}},
-  getComputedStyle: ()=>({getPropertyValue:()=> '21px'}),
-  fetch: ()=>new Promise(()=>{}),
-  Worker: CatalogWorker, setTimeout, URLSearchParams, URL,
-  location: {href:'http://localhost/', search:'', hash:''},
-  history: {replaceState(){}},
-});
-const appSource = fs.readFileSync(new URL('../pspdb/web/app.js', import.meta.url), 'utf8');
-vm.runInContext(appSource, context);
-let queryVersion = 1000;
-async function search(query, sort = null, direction = 1) {
-  assert.equal(await vm.runInContext('searchReady', context), true);
-  const worker = vm.runInContext('searchWorker', context);
-  const model = vm.runInContext('nodes', context);
-  const handler = worker.onmessage, version = ++queryVersion;
-  const ids = await new Promise((resolve, reject) => {
-    worker.onmessage = ({data}) => {
-      if (data.type === 'error') reject(new Error(data.message));
-      else if (data.type === 'results' && data.version === version) resolve(data.ids);
-      else handler({data});
-    };
-    worker.postMessage({type:'search', version, terms:query.toLowerCase().split(/\s+/).filter(Boolean), sort, direction});
-  }).finally(() => { worker.onmessage = handler; });
-  return Array.from(ids, id => model[id]);
-}
+import {catalogModule, childNames, createViewer, encodeFixture, nodeAt, sources} from './viewer-support.mjs';
+import {assertMatchesReference, digestTable} from './reference-tree.mjs';
+
+const viewer = createViewer();
+const {context} = viewer;
+const H = (char, count = 64) => char.repeat(count);
 const metadata = {disc_id:'ULJS00009', identifier:'ULJS-00009', title:'AI Shogi', disc_version:'1.00', umd_uid:'4997E9C6184F3200', media_code:'G'};
-const entries = [{path:'UMD_DATA.BIN',type:'file',size_bytes:48,sha256:'c'.repeat(64)}];
+const entries = [{path:'UMD_DATA.BIN',type:'file',size_bytes:48,sha256:H('c')}];
 function catalog(isos) {
   const trees = {iso:{}};
   const records = {iso:isos.map(({entries, ...record}) => {
@@ -57,162 +19,184 @@ function catalog(isos) {
   })};
   return {records,trees};
 }
-context.fixture = catalog(['a','b'].map(char=>({sha256:char.repeat(64),metadata,entries,size_bytes:2048,redump:char==='a'?[{id:123,name:'Example'}]:[]})));
-await vm.runInContext('build(fixture)', context);
-const nodes = JSON.parse(vm.runInContext('JSON.stringify(nodeAtPath("umd/game").children.map(n=>({label:label(n),hash:n.hash,redump:n.redump,path:n.path,file:n.children[0].hash})))', context));
-assert.equal(nodes.length, 2);
-assert.equal(nodes[0].label, 'ULJS-00009/1.00 AI Shogi');
-assert.equal(nodes[1].label, 'ULJS-00009/1.00 AI Shogi');
-assert.equal(nodes[0].hash, 'a'.repeat(64));
-assert.equal(nodes[1].hash, 'b'.repeat(64));
-assert.notEqual(nodes[0].path, nodes[1].path);
-assert.equal(nodes[0].file, nodes[1].file);
-assert.equal(nodes[0].redump[0].id, 123);
-assert.deepEqual(nodes[1].redump, []);
-console.log('PASS: independent ISO roots, identical inventories, metadata labels, ISO and file hashes.');
+const cat = () => viewer.catalog;
+// Full digests resolve lazily through the chunk endpoint, like the page does.
+async function fullHash(node) { context.__node = node; return vm.runInContext('fullHash(__node)', context); }
+const hashes = async nodes => Promise.all(nodes.map(fullHash));
+const search = (...args) => viewer.search(...args);
+const names = ids => ids.map(id => cat().nameOf(id));
+const paths = ids => ids.map(id => cat().path(id));
+// Every fixture also has to match the original object-per-row tree, row by row.
+async function build(data, options) {
+  const encoded = await viewer.build(data, options);
+  assertMatchesReference(cat(), data, digestTable(encoded));
+  return encoded;
+}
+const rebuild = source => catalogModule.buildCatalog(catalogModule.parseContainer(encodeFixture(source).bytes));
 
-context.videoFixture = catalog([{size_bytes:2048,sha256:'d'.repeat(64),metadata:{identifier:'ICE_AGE   ',title:'Ice Age',media_code:'V'},entries:[]}]);
-await vm.runInContext('build(videoFixture)', context);
-assert.equal(vm.runInContext('label(nodeAtPath("umd/video").children[0])', context), 'Ice Age');
-assert.equal(vm.runInContext('nodeAtPath("umd/video").children[0].hash', context), 'd'.repeat(64));
+await build(catalog(['a','b'].map(char=>({sha256:H(char),metadata,entries,size_bytes:2048,redump:char==='a'?[{id:123,name:'Example'}]:[]}))));
+{
+  const games = cat().children(nodeAt(cat(), 'umd/game'));
+  assert.equal(games.length, 2);
+  assert.deepEqual(games.map(n => cat().label(n)), ['ULJS-00009/1.00 AI Shogi', 'ULJS-00009/1.00 AI Shogi']);
+  assert.deepEqual(games.map(n => cat().knownHash(n)), [H('a'), H('b')]);
+  assert.notEqual(cat().path(games[0]), cat().path(games[1]));
+  const leaves = cat().children(games[0]).concat(cat().children(games[1]));
+  assert.deepEqual(await hashes(leaves), [H('c'), H('c')]);
+  assert.equal(cat().attrsOf(games[0]).gamePrefix, 'ULJS-00009/1.00');
+  // UMD rows never link Redump directly; only inventory rows keep their own matches.
+  assert.equal(cat().attrsOf(games[0]).redump, undefined);
+  console.log('PASS: independent ISO roots, identical inventories, metadata labels, ISO and file hashes.');
+}
+
+await build(catalog([{size_bytes:2048,sha256:H('d'),metadata:{identifier:'ICE_AGE   ',title:'Ice Age',media_code:'V'},entries:[]}]));
+assert.equal(cat().label(cat().children(nodeAt(cat(), 'umd/video'))[0]), 'Ice Age');
+assert.equal(cat().knownHash(cat().children(nodeAt(cat(), 'umd/video'))[0]), H('d'));
 console.log('PASS: video label uses its SFO title and retains its hash.');
 
-context.untitledVideoFixture = catalog([{size_bytes:2048,sha256:'d'.repeat(64),
-  metadata:{identifier:'UMDV-00001',media_code:'V'},entries}]);
-await vm.runInContext('build(untitledVideoFixture)', context);
-const untitledVideo = JSON.parse(vm.runInContext(`JSON.stringify((()=> {
-  const node = nodeAtPath("umd/video").children[0];
-  return {label:label(node),path:node.path,child:node.children[0].name};
-})())`, context));
-assert.deepEqual(untitledVideo, {label:'UMDV-00001',path:'umd/video/'+'d'.repeat(64)+'.iso',child:'UMD_DATA.BIN'});
-console.log('PASS: video without optional SFO title retains its identifier and navigable inventory.');
+await build(catalog([{size_bytes:2048,sha256:H('d'),metadata:{identifier:'UMDV-00001',media_code:'V'},entries}]));
+{
+  const node = cat().children(nodeAt(cat(), 'umd/video'))[0];
+  assert.deepEqual({label:cat().label(node),path:cat().path(node),child:names(cat().children(node))[0]},
+    {label:'UMDV-00001',path:'umd/video/'+H('d')+'.iso',child:'UMD_DATA.BIN'});
+  console.log('PASS: video without optional SFO title retains its identifier and navigable inventory.');
+}
 
-context.failedIsoFixture = catalog([
-  {sha256:'1'.repeat(64),size_bytes:2048,entries:[]},
-  {sha256:'2'.repeat(64),size_bytes:2048,metadata:{title:'Known title'},entries:[]},
-  {sha256:'3'.repeat(64),size_bytes:2048,metadata,entries},
-]);
-context.failedIsoFixture.trees.iso['1'.repeat(64)].error = 'MissingUmdData';
-await vm.runInContext('build(failedIsoFixture)', context);
-const failedIsos = JSON.parse(vm.runInContext(`JSON.stringify([...nodes.values()]
-  .filter(n=>n.type==='file'&&n.name.endsWith('.iso'))
-  .map(n=>({label:label(n),hash:n.hash,path:n.path,error:n.error})))`, context));
-assert.deepEqual(failedIsos.find(n=>n.hash==='1'.repeat(64)), {
-  label:'1'.repeat(64)+'.iso', hash:'1'.repeat(64),
-  path:'umd/other/'+'1'.repeat(64)+'.iso', error:'MissingUmdData',
-});
-assert.equal(failedIsos.find(n=>n.hash==='2'.repeat(64)).label, 'Known title');
-assert.equal(failedIsos.find(n=>n.hash==='3'.repeat(64)).label, 'ULJS-00009/1.00 AI Shogi');
-console.log('PASS: metadata-free failed ISO retains hash/error, optional identifiers work, healthy siblings remain browsable.');
+{
+  const data = catalog([
+    {sha256:H('1'),size_bytes:2048,entries:[]},
+    {sha256:H('2'),size_bytes:2048,metadata:{title:'Known title'},entries:[]},
+    {sha256:H('3'),size_bytes:2048,metadata,entries},
+  ]);
+  data.trees.iso[H('1')].error = 'MissingUmdData';
+  await build(data);
+  const isos = cat().children(nodeAt(cat(), 'umd/other')).concat(cat().children(nodeAt(cat(), 'umd/game')));
+  const byHash = hash => isos.find(n => cat().knownHash(n) === hash);
+  const failed = byHash(H('1'));
+  assert.equal(cat().label(failed), H('1')+'.iso');
+  assert.equal(cat().path(failed), 'umd/other/'+H('1')+'.iso');
+  assert.equal(cat().extraction(failed).error, 'MissingUmdData');
+  assert.equal(cat().label(byHash(H('2'))), 'Known title');
+  assert.equal(cat().label(byHash(H('3'))), 'ULJS-00009/1.00 AI Shogi');
+  console.log('PASS: metadata-free failed ISO retains hash/error, optional identifiers work, healthy siblings remain browsable.');
+}
 
 // A single hash-keyed extraction attaches to both occurrences, without replacing
 // the original file's identity or counting expanded bytes in its parent's size.
-context.fixture.trees.prx = {
-  ['c'.repeat(64)]: {size_bytes:48,extractor:{name:'pspdecrypt'},entries:[
-    {path:'F0/module.prx',type:'file',size_bytes:1024,sha256:'e'.repeat(64)},
-    {path:'again.bin',type:'file',size_bytes:48,sha256:'c'.repeat(64)},
-  ]},
-};
-await vm.runInContext('build(fixture)', context);
-const expanded = JSON.parse(vm.runInContext(`JSON.stringify(nodeAtPath("umd/game").children.map(iso=>({
-  size:iso.size, source:iso.children[0].hash, type:iso.children[0].type,
-  expandable:expandable(iso.children[0]), children:iso.children[0].children.length,
-  leaf:iso.children[0].children[0].children[0].hash,
-  cycleChildren:iso.children[0].children[1].children.length,
-})))`, context));
-for (const iso of expanded) {
-  assert.equal(iso.size,2048);
-  assert.equal(iso.source,'c'.repeat(64));
-  assert.equal(iso.type,'file');
-  assert.equal(iso.expandable,true);
-  assert.equal(iso.children,2);
-  assert.equal(iso.leaf,'e'.repeat(64));
-  assert.equal(iso.cycleChildren,0);
+const baseFixture = () => catalog(['a','b'].map(char=>({sha256:H(char),metadata,entries,size_bytes:2048})));
+{
+  const data = baseFixture();
+  data.trees.prx = {
+    [H('c')]: {size_bytes:48,extractor:{name:'pspdecrypt'},entries:[
+      {path:'F0/module.prx',type:'file',size_bytes:1024,sha256:H('e')},
+      {path:'again.bin',type:'file',size_bytes:48,sha256:H('c')},
+    ]},
+  };
+  await build(data);
+  for (const iso of cat().children(nodeAt(cat(), 'umd/game'))) {
+    const source = cat().children(iso)[0];
+    assert.equal(cat().size[iso], 2048);
+    assert.equal(await fullHash(source), H('c'));
+    assert.ok(cat().isFile(source) && cat().expandable(source));
+    assert.deepEqual(childNames(cat(), source), ['F0', 'again.bin']);
+    const [folder, again] = cat().children(source);
+    assert.equal(await fullHash(cat().children(folder)[0]), H('e'));
+    assert.equal(cat().children(again).length, 0, 'an extraction never re-enters itself');
+    assert.equal(cat().size[source], 48);
+  }
+  assert.equal((await search(H('e'))).length, 2);
+  console.log('PASS: shared extraction subtrees, source sizes/hashes, searchable children, cycle termination.');
 }
-assert.equal((await search('e'.repeat(64))).length, 2);
-console.log('PASS: shared extraction subtrees, source sizes/hashes, searchable children, cycle termination.');
 
-context.namingFixture = catalog([{sha256:'a'.repeat(64),metadata,size_bytes:2048,entries:[
-  {path:'OPNSSMP.BIN',type:'file',size_bytes:48,sha256:'c'.repeat(64)},
-  {path:'ALIAS.BIN',type:'file',size_bytes:48,sha256:'c'.repeat(64)},
-]}]);
-Object.assign(context.namingFixture.trees, {
-  prx: {['c'.repeat(64)]: {size_bytes:48,extractor:{name:'pspdecrypt'},name_rule:'source_stem',entries:[
-    {path:'module.prx.gz',type:'file',size_bytes:32,sha256:'e'.repeat(64)},
-  ]}},
-  gzip: {['e'.repeat(64)]: {size_bytes:32,extractor:{name:'gzip'},name_rule:'strip_suffix',entries:[
-    {path:'module.prx',type:'file',size_bytes:64,sha256:'f'.repeat(64)},
-  ]}},
-});
-await vm.runInContext('build(namingFixture)', context);
-const named = JSON.parse(vm.runInContext(`JSON.stringify([...nodes.values()].filter(n=>n.hash==='e'.repeat(64)||n.hash==='f'.repeat(64)).map(n=>n.name))`,context));
-assert.deepEqual(named,['OPNSSMP.prx.gz','OPNSSMP.prx','ALIAS.prx.gz','ALIAS.prx']);
-console.log('PASS: shared executable trees inherit each occurrence name through decompression.');
+{
+  const data = catalog([{sha256:H('a'),metadata,size_bytes:2048,entries:[
+    {path:'OPNSSMP.BIN',type:'file',size_bytes:48,sha256:H('c')},
+    {path:'ALIAS.BIN',type:'file',size_bytes:48,sha256:H('c')},
+  ]}]);
+  Object.assign(data.trees, {
+    prx: {[H('c')]: {size_bytes:48,extractor:{name:'pspdecrypt'},name_rule:'source_stem',entries:[
+      {path:'module.prx.gz',type:'file',size_bytes:32,sha256:H('e')},
+    ]}},
+    gzip: {[H('e')]: {size_bytes:32,extractor:{name:'gzip'},name_rule:'strip_suffix',entries:[
+      {path:'module.prx',type:'file',size_bytes:64,sha256:H('f')},
+    ]}},
+  });
+  await build(data);
+  const found = [];
+  for (let node = 0; node < cat().count; node++) {
+    const hash = cat().isFile(node) && cat().slot[node] >= 0 ? await fullHash(node) : null;
+    if (hash === H('e') || hash === H('f')) found.push(cat().nameOf(node));
+  }
+  // Children sort by name: ALIAS before OPNSSMP.
+  assert.deepEqual(found, ['ALIAS.prx.gz','ALIAS.prx','OPNSSMP.prx.gz','OPNSSMP.prx']);
+  console.log('PASS: shared executable trees inherit each occurrence name through decompression.');
+}
 
 // PSN packages are root siblings of UMD and retain their exact package hash.
-context.pkgFixture = {records:{iso:[],pkg:[{sha256:'9'.repeat(64),size_bytes:123,psn_kind:'neogeo',
+await build({records:{iso:[],pkg:[{sha256:H('9'),size_bytes:123,psn_kind:'neogeo',
   metadata:{content_type:16,content_id:'UP9000-NPUG00001_00-FIXTURE',title:'Demo'}}]},trees:{pkg:{
-    ['9'.repeat(64)]:{size_bytes:123,extractor:{name:'pspdb-ingest'},entries:[{path:'PARAM.SFO',type:'file',size_bytes:10,sha256:'8'.repeat(64)}]}}}};
-await vm.runInContext('build(pkgFixture)',context);
-const psn = JSON.parse(vm.runInContext(`JSON.stringify((()=>{const n=nodeAtPath('psn/neogeo/'+'9'.repeat(64)+'.pkg');
-  return {path:n.path,hash:n.hash,size:n.size,label:label(n),child:n.children[0].name};})())`,context));
-assert.equal(psn.path, 'psn/neogeo/'+'9'.repeat(64)+'.pkg');
-assert.equal(psn.hash,'9'.repeat(64));
-assert.equal(psn.size,123);
-assert.equal(psn.label,'NPUG-00001 Demo');
-assert.equal(psn.child,'PARAM.SFO');
-console.log('PASS: PSN package grouping, identity, label, and attached inventory.');
+    [H('9')]:{size_bytes:123,extractor:{name:'pspdb-ingest'},entries:[{path:'PARAM.SFO',type:'file',size_bytes:10,sha256:H('8')}]}}}});
+{
+  const node = nodeAt(cat(), 'psn/neogeo/'+H('9')+'.pkg');
+  assert.equal(cat().knownHash(node), H('9'));
+  assert.equal(cat().size[node], 123);
+  assert.equal(cat().label(node), 'NPUG-00001 Demo');
+  assert.deepEqual(childNames(cat(), node), ['PARAM.SFO']);
+  assert.deepEqual(names(await search('up9000-npug00001_00-fixture')), [H('9')+'.pkg', 'PARAM.SFO']);
+  console.log('PASS: PSN package grouping, identity, label, and attached inventory; full content-ID search.');
+}
 
-context.labelPackages = [
-  {sha256:'aaaaaaaa0'+'0'.repeat(55),metadata:{title:' Demo  title ',title_id:'NPUG00001'}},
-  {sha256:'aaaaaaaa1'+'0'.repeat(55),metadata:{title:'Demo title',content_id:'UP9000-NPUG00001_00-OTHER'}},
-  {sha256:'b'.repeat(64),metadata:{}},
-];
-const labels = JSON.parse(vm.runInContext('JSON.stringify([...packageLabels(labelPackages).values()])',context));
-assert.deepEqual(labels,['NPUG-00001 Demo title · aaaaaaaa0','NPUG-00001 Demo title · aaaaaaaa1','Untitled package · bbbbbbbb']);
-assert.deepEqual((await search('up9000-npug00001_00-fixture')).map(node=>node.name), ['9'.repeat(64)+'.pkg', 'PARAM.SFO']);
-console.log('PASS: compact package titles, unique collision suffixes, metadata fallback and full content-ID search.');
-
-assert.equal(vm.runInContext("packageSerial({title_id:'npug80135'})", context), 'NPUG-80135');
-assert.equal(vm.runInContext("packageSerial({title_id:'NPUG-80135'})", context), 'NPUG-80135');
-console.log('PASS: serial-first package labels share UMD ID formatting.');
+{
+  const labels = [...catalogModule.packageLabels([
+    {sha256:'aaaaaaaa0'+'0'.repeat(55),metadata:{title:' Demo  title ',title_id:'NPUG00001'}},
+    {sha256:'aaaaaaaa1'+'0'.repeat(55),metadata:{title:'Demo title',content_id:'UP9000-NPUG00001_00-OTHER'}},
+    {sha256:H('b'),metadata:{}},
+  ]).values()];
+  assert.deepEqual(labels,['NPUG-00001 Demo title · aaaaaaaa0','NPUG-00001 Demo title · aaaaaaaa1','Untitled package · bbbbbbbb']);
+  console.log('PASS: compact package titles, unique collision suffixes and metadata fallback.');
+  assert.equal(catalogModule.packageSerial({title_id:'npug80135'}), 'NPUG-80135');
+  assert.equal(catalogModule.packageSerial({title_id:'NPUG-80135'}), 'NPUG-80135');
+  console.log('PASS: serial-first package labels share UMD ID formatting.');
+}
 
 // Server-computed kinds own the grouping; package_flags and content_type stay ignored.
-context.updateFixture = {records:{pkg:[
-  {sha256:'1'.repeat(64),size_bytes:1,psn_kind:'patch',metadata:{content_type:7,package_flags:0x8000021c}},
-  {sha256:'2'.repeat(64),size_bytes:1,psn_kind:'game',metadata:{content_type:7,package_flags:0x20c}},
-  {sha256:'3'.repeat(64),size_bytes:1,psn_kind:'theme',metadata:{content_type:9,package_flags:0x21c}},
-  {sha256:'4'.repeat(64),size_bytes:1,psn_kind:'dlc',metadata:{content_type:7}},
-  {sha256:'5'.repeat(64),size_bytes:1,metadata:{content_type:7,package_flags:0x8000021c}},
-]},trees:{}};
-await vm.runInContext('build(updateFixture)',context);
-const updatePaths = JSON.parse(vm.runInContext(
-  "JSON.stringify([...nodes.values()].filter(n=>n.type==='file').map(n=>n.path).sort())",context));
-assert.deepEqual(updatePaths,[
-  'psn/dlc/'+'4'.repeat(64)+'.pkg',
-  'psn/game/'+'2'.repeat(64)+'.pkg',
-  'psn/patch/'+'1'.repeat(64)+'.pkg',
-  'psn/theme/'+'3'.repeat(64)+'.pkg',
-  'psn/unknown/'+'5'.repeat(64)+'.pkg',
-]);
-console.log('PASS: server kinds group every package, no package sits at the PSN root, missing kinds fall back to unknown.');
+await build({records:{pkg:[
+  {sha256:H('1'),size_bytes:1,psn_kind:'patch',metadata:{content_type:7,package_flags:0x8000021c}},
+  {sha256:H('2'),size_bytes:1,psn_kind:'game',metadata:{content_type:7,package_flags:0x20c}},
+  {sha256:H('3'),size_bytes:1,psn_kind:'theme',metadata:{content_type:9,package_flags:0x21c}},
+  {sha256:H('4'),size_bytes:1,psn_kind:'dlc',metadata:{content_type:7}},
+  {sha256:H('5'),size_bytes:1,metadata:{content_type:7,package_flags:0x8000021c}},
+]},trees:{}});
+{
+  const files = [];
+  for (let node = 0; node < cat().count; node++) if (cat().isFile(node)) files.push(cat().path(node));
+  assert.deepEqual(files.sort(),[
+    'psn/dlc/'+H('4')+'.pkg', 'psn/game/'+H('2')+'.pkg', 'psn/patch/'+H('1')+'.pkg',
+    'psn/theme/'+H('3')+'.pkg', 'psn/unknown/'+H('5')+'.pkg',
+  ]);
+  console.log('PASS: server kinds group every package, no package sits at the PSN root, missing kinds fall back to unknown.');
+}
 
 // Contextual output is bound to one file occurrence, not globally to its hash.
-const sourceHash = '1'.repeat(64), payloadHash = '2'.repeat(64);
+const sourceHash = H('1'), payloadHash = H('2');
 const inlineTree = {sha256:sourceHash,size_bytes:14,extractor:{name:'pops'},name_rule:'source_stem',entries:[
   {path:'payload.gz',type:'file',sha256:payloadHash,size_bytes:7},
 ]};
-context.contextFixture = catalog([{sha256:'3'.repeat(64),size_bytes:100,metadata,entries:[
-  {path:'DATA.BIN',type:'file',sha256:'4'.repeat(64),size_bytes:50},
+const contextFixture = catalog([{sha256:H('3'),size_bytes:100,metadata,entries:[
+  {path:'DATA.BIN',type:'file',sha256:H('4'),size_bytes:50},
   {path:'DATA.PSP',type:'file',sha256:sourceHash,size_bytes:14,extraction:inlineTree},
   {path:'OTHER.PSP',type:'file',sha256:sourceHash,size_bytes:14},
-  {path:'WRONG.PSP',type:'file',sha256:'5'.repeat(64),size_bytes:14,extraction:inlineTree},
+  {path:'WRONG.PSP',type:'file',sha256:H('5'),size_bytes:14,extraction:inlineTree},
 ]}]);
-await vm.runInContext('build(contextFixture)',context);
-const scoped = JSON.parse(vm.runInContext(`JSON.stringify(nodeAtPath("umd/game").children[0].children.map(n=>({name:n.name,hash:n.hash,children:n.children.map(c=>({name:c.name,hash:c.hash}))})))`,context));
-assert.deepEqual(scoped.find(n=>n.name==='DATA.PSP').children,[{name:'DATA.gz',hash:payloadHash}]);
-for (const name of ['DATA.BIN','OTHER.PSP','WRONG.PSP']) assert.deepEqual(scoped.find(n=>n.name===name).children,[]);
-console.log('PASS: PBP-scoped output attaches only to its matching DATA.PSP occurrence.');
+await build(contextFixture);
+{
+  const iso = cat().children(nodeAt(cat(), 'umd/game'))[0];
+  const kids = Object.fromEntries(cat().children(iso).map(n => [cat().nameOf(n), n]));
+  assert.deepEqual(childNames(cat(), kids['DATA.PSP']), ['DATA.gz']);
+  assert.equal(await fullHash(cat().children(kids['DATA.PSP'])[0]), payloadHash);
+  for (const name of ['DATA.BIN','OTHER.PSP','WRONG.PSP']) assert.deepEqual(childNames(cat(), kids[name]), []);
+  console.log('PASS: PBP-scoped output attaches only to its matching DATA.PSP occurrence.');
+}
 
 // Decode-stage naming uses the observed format instead of dropping it.
 for (const [source, path, expected] of [
@@ -222,31 +206,36 @@ for (const [source, path, expected] of [
   ['archive.gz','payload.bin','archive'],
   ['notes.txt.gz','payload.bin','notes.txt'],
   ['DATA.gz.gz','payload.gz','DATA.gz'],
-]) {
-  context.namingArgs = {source,path};
-  assert.equal(vm.runInContext('extractedName(namingArgs.source,namingArgs.path,"decoded_suffix")',context),expected);
+]) assert.equal(catalogModule.extractedName(source, path, 'decoded_suffix'), expected);
+{
+  const data = structuredClone(contextFixture);
+  data.trees.gzip = {[payloadHash]: {size_bytes:7,extractor:{name:'gzip'},name_rule:'decoded_suffix',entries:[
+    {path:'module.elf',type:'file',size_bytes:20,sha256:H('6')},
+  ]}};
+  await build(data);
+  let decoded = null;
+  for (let node = 0; node < cat().count; node++)
+    if (cat().isFile(node) && cat().slot[node] >= 0 && await fullHash(node) === H('6')) decoded = cat().nameOf(node);
+  assert.equal(decoded, 'DATA.elf');
+  console.log('PASS: decoded ELF suffix survives contextual gzip naming without duplicate suffixes.');
 }
-context.contextFixture.trees.gzip = {[payloadHash]: {size_bytes:7,extractor:{name:'gzip'},name_rule:'decoded_suffix',entries:[
-  {path:'module.elf',type:'file',size_bytes:20,sha256:'6'.repeat(64)},
-]}};
-await vm.runInContext('build(contextFixture)',context);
-assert.equal(vm.runInContext("[...nodes.values()].find(n=>n.hash==='6'.repeat(64)).name",context),'DATA.elf');
-console.log('PASS: decoded ELF suffix survives contextual gzip naming without duplicate suffixes.');
 
-const matchedChild = vm.runInContext(`(() => {
-  const parent = {name: 'DATA.BIN', path: 'DATA.BIN', children: [], hash: 'parent'};
-  for (const _ of addInventory(parent, [{path: 'disc.bin', type: 'file', size_bytes: 42,
-    sha256: 'disc', redump: [{id: 38300, name: 'Saikyou Ginsei Chess'}]}])) {}
-  return parent.children[0];
-})()`, context);
-assert.equal(matchedChild.redump[0].id, 38300);
-console.log('PASS: nested reconstructed discs retain exact Redump annotations.');
+{
+  await build(catalog([{sha256:H('3'),size_bytes:100,metadata,entries:[
+    {path:'DATA.BIN',type:'file',size_bytes:42,sha256:H('7'),redump:[{id:38300,name:'Saikyou Ginsei Chess'}]},
+    {path:'PLAIN.BIN',type:'file',size_bytes:42,sha256:H('8'),redump:[]},
+  ]}]));
+  const [data, plain] = cat().children(nodeAt(cat(), 'umd/game/'+H('3')+'.iso'));
+  assert.equal(cat().attrsOf(data).redump[0].id, 38300);
+  assert.equal(cat().attrsOf(plain), undefined);
+  console.log('PASS: nested reconstructed discs retain exact Redump annotations.');
+}
 
 // The same bytes can be an original ISO, a package root, and a nested ISO9660 image.
 // Inventories belong to those observations, not to the hash alone.
-const roleHash = '7'.repeat(64), parentHash = '8'.repeat(64), rootOnlyHash = '0'.repeat(64);
-const roleLeaf = name => ({path:name,type:'file',size_bytes:1,sha256:'9'.repeat(64)});
-context.roleFixture = catalog([
+const roleHash = H('7'), parentHash = H('8'), rootOnlyHash = H('0');
+const roleLeaf = name => ({path:name,type:'file',size_bytes:1,sha256:H('9')});
+const roleFixture = catalog([
   {sha256:roleHash,size_bytes:42,metadata,entries:[
     roleLeaf('root-only.bin'), {path:'self.iso',type:'file',size_bytes:42,sha256:roleHash},
   ]},
@@ -259,61 +248,61 @@ context.roleFixture = catalog([
   ]},
   {sha256:rootOnlyHash,size_bytes:42,metadata,entries:[roleLeaf('other-root-only.bin')]},
 ]);
-context.roleFixture.records.pkg = [{sha256:roleHash,size_bytes:42,metadata:{title:'Package role',title_id:'NPUG00001'}}];
-context.roleFixture.trees.pkg = {[roleHash]: {size_bytes:42,extractor:{name:'pkg'},entries:[roleLeaf('package-only.bin')]}};
-context.roleFixture.trees.iso9660 = {[roleHash]: {size_bytes:42,extractor:{name:'iso9660'},entries:[
+roleFixture.records.pkg = [{sha256:roleHash,size_bytes:42,metadata:{title:'Package role',title_id:'NPUG00001'}}];
+roleFixture.trees.pkg = {[roleHash]: {size_bytes:42,extractor:{name:'pkg'},entries:[roleLeaf('package-only.bin')]}};
+roleFixture.trees.iso9660 = {[roleHash]: {size_bytes:42,extractor:{name:'iso9660'},entries:[
   roleLeaf('nested-only.bin'), {path:'again.iso',type:'file',size_bytes:42,sha256:roleHash},
 ]}};
-await vm.runInContext('build(roleFixture)',context);
-const roles = JSON.parse(vm.runInContext(`JSON.stringify((() => {
-  const original = nodeAtPath('umd/game/'+'7'.repeat(64)+'.iso');
-  const parent = nodeAtPath('umd/game/'+'8'.repeat(64)+'.iso');
-  const nested = parent.children.find(n=>n.name==='nested.iso');
-  return {
-    root:original.children.map(n=>n.name),
-    nested:nested.children.map(n=>n.name),
-    self:original.children.find(n=>n.name==='self.iso').children.map(n=>n.name),
-    cycle:nested.children.find(n=>n.name==='again.iso').children.map(n=>n.name),
-    hash:nested.hash,size:nested.size,
-    rootFallback:parent.children.find(n=>n.name==='root-observation-only.iso').children.map(n=>n.name),
-    inline:parent.children.find(n=>n.name==='inline.iso').children.map(n=>n.name),
-    pkg:nodeAtPath('psn/unknown/'+'7'.repeat(64)+'.pkg').children.map(n=>n.name),
-  };
-})())`,context));
-assert.deepEqual(roles,{
-  root:['root-only.bin','self.iso'],nested:['again.iso','nested-only.bin'],
-  self:['again.iso','nested-only.bin'],cycle:[],hash:roleHash,size:42,
-  rootFallback:[],inline:['inline-only.bin'],pkg:['package-only.bin'],
-});
-console.log('PASS: same-hash root, nested, package, and inline inventories retain their own names and byte identity.');
+await build(roleFixture);
+{
+  const original = nodeAt(cat(), 'umd/game/'+H('7')+'.iso'), parent = nodeAt(cat(), 'umd/game/'+H('8')+'.iso');
+  const named = (node, name) => cat().children(node).find(n => cat().nameOf(n) === name);
+  const nested = named(parent, 'nested.iso');
+  assert.deepEqual({
+    root:childNames(cat(), original), nested:childNames(cat(), nested),
+    self:childNames(cat(), named(original, 'self.iso')),
+    cycle:childNames(cat(), named(nested, 'again.iso')),
+    hash:await fullHash(nested), size:cat().size[nested],
+    rootFallback:childNames(cat(), named(parent, 'root-observation-only.iso')),
+    inline:childNames(cat(), named(parent, 'inline.iso')),
+    pkg:childNames(cat(), nodeAt(cat(), 'psn/unknown/'+H('7')+'.pkg')),
+  }, {
+    root:['root-only.bin','self.iso'],nested:['again.iso','nested-only.bin'],
+    self:['again.iso','nested-only.bin'],cycle:[],hash:roleHash,size:42,
+    rootFallback:[],inline:['inline-only.bin'],pkg:['package-only.bin'],
+  });
+  console.log('PASS: same-hash root, nested, package, and inline inventories retain their own names and byte identity.');
+}
 
-const ambiguousFixture = structuredClone(context.roleFixture);
-ambiguousFixture.trees.prx = {[roleHash]: {size_bytes:42,extractor:{name:'prx'},entries:[roleLeaf('wrong-kind.bin')]}};
-context.ambiguousFixture = ambiguousFixture;
-await assert.rejects(vm.runInContext('build(ambiguousFixture)',context),/Ambiguous non-root extraction kinds/);
-// Inline extraction remains authoritative even when no global kind can be selected.
-context.inlineAmbiguousFixture = catalog([{sha256:parentHash,size_bytes:100,metadata,entries:[
-  {path:'inline.iso',type:'file',size_bytes:42,sha256:roleHash,extraction:{
-    sha256:roleHash,size_bytes:42,extractor:{name:'contextual'},entries:[roleLeaf('inline-only.bin')],
-  }},
-]}]);
-context.inlineAmbiguousFixture.trees.iso9660 = {[roleHash]: {size_bytes:42,extractor:{name:'iso9660'},entries:[]}};
-context.inlineAmbiguousFixture.trees.prx = ambiguousFixture.trees.prx;
-await vm.runInContext('build(inlineAmbiguousFixture)',context);
-assert.equal(vm.runInContext("[...nodes.values()].find(n=>n.name==='inline-only.bin').parent.name",context),'inline.iso');
-const conflictingFixture = structuredClone(context.roleFixture);
-conflictingFixture.trees.iso9660[roleHash].size_bytes++;
-context.conflictingFixture = conflictingFixture;
-await assert.rejects(vm.runInContext('build(conflictingFixture)',context),/Conflicting source sizes/);
-console.log('PASS: ambiguous byte references and cross-role size conflicts fail explicitly; inline extraction overrides lookup.');
+{
+  const ambiguous = structuredClone(roleFixture);
+  ambiguous.trees.prx = {[roleHash]: {size_bytes:42,extractor:{name:'prx'},entries:[roleLeaf('wrong-kind.bin')]}};
+  assert.throws(() => rebuild(ambiguous), /Ambiguous non-root extraction kinds/);
+  // Inline extraction remains authoritative even when no global kind can be selected.
+  const inline = catalog([{sha256:parentHash,size_bytes:100,metadata,entries:[
+    {path:'inline.iso',type:'file',size_bytes:42,sha256:roleHash,extraction:{
+      sha256:roleHash,size_bytes:42,extractor:{name:'contextual'},entries:[roleLeaf('inline-only.bin')],
+    }},
+  ]}]);
+  inline.trees.iso9660 = {[roleHash]: {size_bytes:42,extractor:{name:'iso9660'},entries:[]}};
+  inline.trees.prx = ambiguous.trees.prx;
+  await build(inline);
+  const holder = cat().children(nodeAt(cat(), 'umd/game/'+H('8')+'.iso'))[0];
+  assert.equal(cat().nameOf(holder), 'inline.iso');
+  assert.deepEqual(childNames(cat(), holder), ['inline-only.bin']);
+  const conflicting = structuredClone(roleFixture);
+  conflicting.trees.iso9660[roleHash].size_bytes++;
+  assert.throws(() => rebuild(conflicting), /Conflicting source sizes/);
+  console.log('PASS: ambiguous byte references and cross-role size conflicts fail explicitly; inline extraction overrides lookup.');
+}
 
 // Updater roots and generic PBP occurrences can observe the same bytes independently.
-const updaterHash = 'a'.repeat(64), variantHash = 'b'.repeat(64), missingTreeHash = 'c'.repeat(64);
+const updaterHash = H('a'), variantHash = H('b'), missingTreeHash = H('c');
 const updateRecord = (sha256, size_bytes, metadata = {}) => ({sha256, size_bytes, metadata});
 const updateTree = (size_bytes, name) => ({
   size_bytes, extractor:{name:'pspdb-update', version:'1', options:[]}, entries:[roleLeaf(name)],
 });
-context.updaterFixture = {
+await build({
   records:{
     update:[
       updateRecord(updaterHash, 42, {updater_version:'6.61', title:'System Software', disc_id:'UCJS10041'}),
@@ -332,84 +321,225 @@ context.updaterFixture = {
       {path:'EBOOT.PBP',type:'file',size_bytes:42,sha256:updaterHash},
     ]}},
   },
-};
-await vm.runInContext('build(updaterFixture)',context);
-const updaterRoles = JSON.parse(vm.runInContext(`JSON.stringify((() => {
-  const updates = nodeAtPath('firmware/update');
-  return {
-    roots:updates.children.map(node=>({
-      hash:node.hash, size:node.size, path:node.path, url:url(node),
-      children:node.children.map(child=>child.name),
-    })).sort((a,b)=>a.hash.localeCompare(b.hash)),
-    total:updates.size,
-    nested:nodeAtPath('psn/patch/'+'8'.repeat(64)+'.pkg/EBOOT.PBP').children.map(node=>node.name),
-  };
-})())`,context));
-assert.deepEqual(updaterRoles.roots, [
-  {hash:updaterHash, size:42, path:`firmware/update/${updaterHash}.pbp`,
-    url:`#firmware/update/${updaterHash}.pbp`, children:['DATA.BIN']},
-  {hash:variantHash, size:43, path:`firmware/update/${variantHash}.pbp`,
-    url:`#firmware/update/${variantHash}.pbp`, children:['DATA.BIN']},
-  {hash:missingTreeHash, size:44, path:`firmware/update/${missingTreeHash}.pbp`,
-    url:`#firmware/update/${missingTreeHash}.pbp`, children:[]},
-]);
-assert.equal(updaterRoles.total, 129);
-assert.deepEqual(updaterRoles.nested, ['generic-only.bin']);
-for (const term of ['6.61', 'system software', 'ucjs10041', updaterHash])
-  assert.ok((await search(term)).some(node=>node.hash===updaterHash));
-console.log('PASS: updater variants retain full raw identities, sizes, searchable metadata and root-specific inventories beside generic PBP and PSN update roles.');
+});
+{
+  const updates = nodeAt(cat(), 'firmware/update');
+  const roots = cat().children(updates).map(node => ({
+    hash:cat().knownHash(node), size:cat().size[node], path:cat().path(node),
+    url:vm.runInContext(`url(${node})`, context), children:childNames(cat(), node),
+  })).sort((a,b)=>a.hash.localeCompare(b.hash));
+  assert.deepEqual(roots, [
+    {hash:updaterHash, size:42, path:`firmware/update/${updaterHash}.pbp`,
+      url:`#firmware/update/${updaterHash}.pbp`, children:['DATA.BIN']},
+    {hash:variantHash, size:43, path:`firmware/update/${variantHash}.pbp`,
+      url:`#firmware/update/${variantHash}.pbp`, children:['DATA.BIN']},
+    {hash:missingTreeHash, size:44, path:`firmware/update/${missingTreeHash}.pbp`,
+      url:`#firmware/update/${missingTreeHash}.pbp`, children:[]},
+  ]);
+  assert.equal(cat().size[updates], 129);
+  assert.deepEqual(childNames(cat(), nodeAt(cat(), 'psn/patch/'+H('8')+'.pkg/EBOOT.PBP')), ['generic-only.bin']);
+  for (const term of ['6.61', 'system software', 'ucjs10041', updaterHash])
+    assert.ok((await search(term)).some(node => cat().knownHash(node) === updaterHash));
+  console.log('PASS: updater variants retain full raw identities, sizes, searchable metadata and root-specific inventories beside generic PBP and PSN update roles.');
+}
 
 // Refinements must not retain ancestor matches when a term becomes hash-only,
 // and extraction failures belong only to their exact source occurrence.
-const hashRoot = 'deadbeef' + '0'.repeat(56), duplicateHash = 'f'.repeat(64);
-context.searchFixture = catalog([{sha256:hashRoot, size_bytes:100,
+const hashRoot = 'deadbeef' + '0'.repeat(56), duplicateHash = H('f');
+const searchFixture = catalog([{sha256:hashRoot, size_bytes:100,
   metadata:{...metadata,title:'Ancestor title'}, entries:[
     {path:'one.bin',type:'file',size_bytes:10,sha256:duplicateHash},
     {path:'two.bin',type:'file',size_bytes:10,sha256:duplicateHash},
-    {path:'broken.bin',type:'file',size_bytes:10,sha256:'e'.repeat(64),extraction:{
-      sha256:'e'.repeat(64),size_bytes:10,extractor:{name:'partial'},error:'ChildFailure',
-      entries:[{path:'decoded.bin',type:'file',size_bytes:5,sha256:'d'.repeat(64)}],
+    {path:'broken.bin',type:'file',size_bytes:10,sha256:H('e'),extraction:{
+      sha256:H('e'),size_bytes:10,extractor:{name:'partial'},error:'ChildFailure',
+      entries:[{path:'decoded.bin',type:'file',size_bytes:5,sha256:H('d')}],
     }},
   ]}]);
-context.searchFixture.trees.iso[hashRoot].error = 'ParentFailure';
-await vm.runInContext('build(searchFixture)',context);
+searchFixture.trees.iso[hashRoot].error = 'ParentFailure';
+await build(searchFixture);
 assert.equal((await search('deadbee')).length, 5);
-assert.deepEqual((await search('DEADBEEF')).map(node=>node.hash), [hashRoot]);
+assert.deepEqual(await hashes(await search('DEADBEEF')), [hashRoot]);
 assert.equal((await search(hashRoot+'.iso')).length, 5);
-assert.deepEqual((await search(duplicateHash)).map(node=>node.name), ['one.bin','two.bin']);
-assert.deepEqual((await search('ANCESTOR two.bin')).map(node=>node.name), ['two.bin']);
-assert.deepEqual((await search('ParentFailure')).map(node=>node.hash), [hashRoot]);
-assert.deepEqual((await search('ChildFailure')).map(node=>node.name), ['broken.bin']);
-const defaultOrder = (await search('ancestor')).map(node=>node.path);
-assert.deepEqual((await search('ancestor','size')).map(node=>node.size), [5,10,10,10,100]);
-assert.deepEqual((await search('ancestor','size',-1)).map(node=>node.size), [100,10,10,10,5]);
-assert.deepEqual((await search('ancestor')).map(node=>node.path), defaultOrder);
+assert.deepEqual(names(await search(duplicateHash)), ['one.bin','two.bin']);
+assert.deepEqual(names(await search('ANCESTOR two.bin')), ['two.bin']);
+assert.deepEqual(await hashes(await search('ParentFailure')), [hashRoot]);
+assert.deepEqual(names(await search('ChildFailure')), ['broken.bin']);
+const defaultOrder = paths(await search('ancestor'));
+assert.deepEqual((await search('ancestor','size')).map(id => cat().size[id]), [5,10,10,10,100]);
+assert.deepEqual((await search('ancestor','size',-1)).map(id => cat().size[id]), [100,10,10,10,5]);
+assert.deepEqual(paths(await search('ancestor')), defaultOrder);
+// Hash order is the digest's byte order; names sort by label, digit runs numerically.
+assert.deepEqual(await hashes(await search('ancestor','hash')), [H('d'), hashRoot, H('e'), duplicateHash, duplicateHash]);
+assert.deepEqual(names(await search('ancestor','name')).slice(0, 2), ['broken.bin','decoded.bin']);
 
 // Sparse results exercise candidate-only matching, including ancestor text,
 // own errors, duplicate hashes and broadening back to the complete index.
-context.refinementFixture = structuredClone(context.searchFixture);
-const unrelatedHash = '9'.repeat(64);
-context.refinementFixture.records.iso.push({sha256:unrelatedHash,size_bytes:128,metadata:{title:'Unrelated'}});
-context.refinementFixture.trees.iso[unrelatedHash] = {size_bytes:128,extractor:{name:'iso'},
-  entries:Array.from({length:128},(_,i)=>({path:`other-${i}.bin`,type:'file',size_bytes:1,
-    sha256:'abcdef00'+i.toString(16).padStart(56,'0')}))};
-await vm.runInContext('build(refinementFixture)',context);
-assert.equal((await search('ancestor')).length, 5);
-assert.deepEqual((await search('ancestor bin')).map(node=>node.name).sort(),
-  ['broken.bin','decoded.bin','one.bin','two.bin']);
-assert.deepEqual((await search('ancestor bin child')).map(node=>node.name), ['broken.bin']);
-assert.deepEqual((await search('ancestor bin')).map(node=>node.name).sort(),
-  ['broken.bin','decoded.bin','one.bin','two.bin']);
-assert.deepEqual((await search('ffffffff')).map(node=>node.name).sort(), ['one.bin','two.bin']);
-assert.deepEqual((await search(duplicateHash)).map(node=>node.name).sort(), ['one.bin','two.bin']);
-assert.equal((await search('deadbee')).length, 5);
-assert.deepEqual((await search('deadbeef')).map(node=>node.hash), [hashRoot]);
-assert.deepEqual((await search('ancestor absent')).map(node=>node.name), []);
-assert.deepEqual((await search('ancestor absent-longer')).map(node=>node.name), []);
-assert.equal((await search('ancestor')).length, 5);
-console.log('PASS: sparse refinements preserve ancestor context, own errors, duplicate hashes, hash transitions, empty results and broadening.');
-vm.runInContext('searchWorker.terminate()',context);
-console.log('PASS: asynchronous ancestor/own-hash transitions, duplicate occurrences, source-only errors and reversible sorting.');
+{
+  const data = structuredClone(searchFixture);
+  const unrelatedHash = H('9');
+  data.records.iso.push({sha256:unrelatedHash,size_bytes:128,metadata:{title:'Unrelated'}});
+  data.trees.iso[unrelatedHash] = {size_bytes:128,extractor:{name:'iso'},
+    entries:Array.from({length:128},(_,i)=>({path:`other-${i}.bin`,type:'file',size_bytes:1,
+      sha256:i.toString(16).padStart(8,'0')+'abcdef00'+'0'.repeat(48)}))};
+  await build(data);
+  assert.equal((await search('ancestor')).length, 5);
+  assert.deepEqual(names(await search('ancestor bin')).sort(), ['broken.bin','decoded.bin','one.bin','two.bin']);
+  assert.deepEqual(names(await search('ancestor bin child')), ['broken.bin']);
+  assert.deepEqual(names(await search('ancestor bin')).sort(), ['broken.bin','decoded.bin','one.bin','two.bin']);
+  assert.deepEqual(names(await search('ffffffff')).sort(), ['one.bin','two.bin']);
+  assert.deepEqual(names(await search(duplicateHash)).sort(), ['one.bin','two.bin']);
+  assert.equal((await search('deadbee')).length, 5);
+  assert.deepEqual(await hashes(await search('deadbeef')), [hashRoot]);
+  assert.deepEqual(names(await search('ancestor absent')), []);
+  assert.deepEqual(names(await search('ancestor absent-longer')), []);
+  assert.equal((await search('ancestor')).length, 5);
+  // Refining a hash term by typing more digits keeps only the longer prefix's matches.
+  assert.equal((await search('00000001')).length, 1);
+  assert.equal((await search('00000001a')).length, 1);
+  assert.equal((await search('00000001b')).length, 0);
+  console.log('PASS: sparse refinements preserve ancestor context, own errors, duplicate hashes, hash transitions, empty results and broadening.');
+}
+
+// Hash terms are prefix-anchored: up to 16 digits match the 8-byte prefix locally,
+// longer terms are verified against full digests fetched by chunk.
+{
+  const tail = 'abcdef0123456789' + H('0',47) + '1';
+  await build(catalog([{sha256:H('1'), size_bytes:100, metadata, entries:[
+    {path:'tail.bin',type:'file',size_bytes:1,sha256:tail},
+    {path:'other.bin',type:'file',size_bytes:3,sha256:'abcdef0123450000'+H('2',48)},
+  ]}]));
+  assert.deepEqual(names(await search('abcdef01')).sort(), ['other.bin','tail.bin']);
+  assert.deepEqual(names(await search('abcdef0123456789')), ['tail.bin']);
+  assert.deepEqual(names(await search('bcdef012')), [], 'a hash term is anchored at the start of the digest');
+  assert.deepEqual(names(await search('cdef0123 tail')), [], 'mid-hash text is not matched');
+  assert.deepEqual(names(await search(tail)), ['tail.bin']);
+  assert.deepEqual(names(await search(tail.slice(0, 40))), ['tail.bin']);
+  // Same first 16 digits, wrong remainder: only the full digest can refuse it.
+  assert.deepEqual(names(await search(tail.slice(0, 63) + '2')), []);
+  assert.deepEqual(names(await search('abcdef0123456789 ancestor')), []);
+  assert.deepEqual(names(await search('abcdef0123456789 shogi')), ['tail.bin']);
+  // The encoder refuses two digests that share an 8-byte prefix instead of mis-merging them.
+  assert.throws(() => encodeFixture(catalog([{sha256:H('1'), size_bytes:100, metadata, entries:[
+    {path:'x.bin',type:'file',size_bytes:1,sha256:tail},
+    {path:'y.bin',type:'file',size_bytes:1,sha256:tail.slice(0, 63) + '2'}]}])), /prefix collision/);
+  console.log('PASS: hash search is prefix-anchored; terms past 16 digits verify full digests lazily; prefix collisions fail loudly.');
+}
+
+// Chunk addressing: slot i lives in chunk i div 4096 at offset (i mod 4096) * 32.
+{
+  const files = 4096 + 9;
+  const digest = i => (i + 1).toString(16).padStart(8,'0') + 'cafe0000' + H('5',48);
+  const bulk = Array.from({length:files}, (_, i) => ({path:`f${i}.bin`,type:'file',size_bytes:i,sha256:digest(i)}));
+  await build(catalog([{sha256:H('1'), size_bytes:100, metadata, entries:bulk}]));
+  const store = vm.runInContext('hashStore', context);
+  // The ISO's own digest is slot 0; file i then takes slot i + 1.
+  assert.equal(store.count, files + 1);
+  // Slots follow first use, i.e. the (sorted) child order, so look files up by slot.
+  const bySlot = new Map(cat().children(nodeAt(cat(), 'umd/game/'+H('1')+'.iso')).map(node => [cat().slot[node], node]));
+  for (const slot of [4095, 4096, 4105, 1]) {
+    const node = bySlot.get(slot), index = Number(/^f(\d+)\.bin$/.exec(cat().nameOf(node))[1]);
+    assert.equal(await fullHash(node), digest(index), `slot ${slot}`);
+  }
+  const requests = viewer.state.server.requests;
+  assert.equal(requests.length, 2, 'one request per chunk, cached afterwards');
+  assert.ok(requests.every(url => /api\/hashes\/[0-9a-f]{16}\/[01]$/.test(url)));
+  assert.equal(await fullHash(nodeAt(cat(), 'umd/game/'+H('1')+'.iso')), H('1'), 'records carry their own digest');
+  assert.equal(await (async () => { try { await store.load(7); } catch (error) { return error.message; } })(), 'Hash chunk 7: HTTP 404');
+  console.log('PASS: full hashes resolve by 4096-slot chunk, including the short last chunk, with one fetch per chunk.');
+}
+
+// A chunk from another export (or a tampered one) is rejected against the prefixes.
+{
+  const encoded = await build(catalog([{sha256:H('1'), size_bytes:100, metadata, entries}]));
+  const leaf = cat().children(nodeAt(cat(), 'umd/game/'+H('1')+'.iso'))[0];
+  const bad = Uint8Array.from(encoded.chunks[0]);
+  bad[32 * cat().slot[leaf]] ^= 1;
+  viewer.state.server = {requests:[], respond: async () => ({ok:true, status:200, arrayBuffer: async () => bad.buffer})};
+  await assert.rejects(fullHash(leaf), /does not match the catalog/);
+  // A server that has moved on answers 409; the page reloads instead of showing stale digests.
+  const timers = [];
+  context.setTimeout = callback => timers.push(callback);
+  viewer.state.server = {requests:[], respond: async () => ({ok:false, status:409})};
+  await assert.rejects(fullHash(leaf), error => error.name === 'StaleCatalogError');
+  assert.equal(timers.length, 1, 'a stale generation schedules a catalog reload');
+  context.setTimeout = setTimeout;
+  console.log('PASS: chunks are checked against the catalog prefixes; a 409 generation schedules a reload.');
+}
+
+// Hash lookup failures in the worker are reported per query and do not break search.
+{
+  const data = catalog([{sha256:H('1'), size_bytes:100, metadata, entries:[
+    {path:'tail-a.bin',type:'file',size_bytes:1,sha256:'abcdef0123456789'+H('0',48)}]}]);
+  await build(data, {status:500});
+  const failed = await viewer.query('abcdef0123456789'+H('0',48));
+  assert.equal(failed.type, 'hash-error');
+  assert.match(failed.message, /Could not verify a long SHA-256/);
+  assert.deepEqual(names(await search('tail-a')), ['tail-a.bin']);
+  await build(data, {status:409});
+  assert.equal((await viewer.query('abcdef0123456789'+H('0',48))).type, 'stale');
+  console.log('PASS: failed or stale long-hash verification is reported without disabling search.');
+}
+// Rows are ordered by the viewer too: directories first, then labels in UTF-16 order,
+// whatever order a container happens to list them in.
+{
+  const jumbled = catalog([{sha256:H('1'), size_bytes:100, metadata, entries:[
+    {path:'zeta.bin',type:'file',size_bytes:1,sha256:H('a')},
+    {path:'Beta/inner.bin',type:'file',size_bytes:1,sha256:H('b')},
+    {path:'alpha.bin',type:'file',size_bytes:1,sha256:H('c')},
+    {path:'Alpha.bin',type:'file',size_bytes:1,sha256:H('d')},
+    {path:'\u{1F600}.bin',type:'file',size_bytes:1,sha256:H('e')},
+    {path:'\uFF21.bin',type:'file',size_bytes:1,sha256:H('f')},
+    {path:'beta/inner.bin',type:'file',size_bytes:1,sha256:H('0')},
+  ]}]);
+  const encoded = await build(jumbled, {unsorted:true});
+  const iso = nodeAt(cat(), 'umd/game/'+H('1')+'.iso');
+  // Directories first; names compare by UTF-16 code unit (an astral character, a surrogate pair, precedes U+FF21).
+  assert.deepEqual(childNames(cat(), iso), ['Beta','beta','Alpha.bin','alpha.bin','zeta.bin','\u{1F600}.bin','\uFF21.bin']);
+  console.log('PASS: rows are ordered directories-first by label even when the container lists them otherwise.');
+}
+
+// A damaged or foreign container is refused with a clear error, never half-decoded.
+{
+  const good = encodeFixture(catalog([{sha256:H('1'), size_bytes:100, metadata, entries}])).bytes;
+  assert.doesNotThrow(() => catalogModule.parseContainer(good));
+  assert.throws(() => catalogModule.parseContainer(good.subarray(0, 5)), /Truncated/);
+  assert.throws(() => catalogModule.parseContainer(good.subarray(0, Math.floor(good.length / 2))), /Truncated/);
+  const foreign = Uint8Array.from(good); foreign[0] = 0x7b;
+  assert.throws(() => catalogModule.parseContainer(foreign), /Not a PSPDB catalog container/);
+  const future = Uint8Array.from(good); future[6] = 5;
+  assert.throws(() => catalogModule.parseContainer(future), /Unsupported catalog container version 5/);
+  console.log('PASS: truncated, foreign and future containers are refused explicitly.');
+}
+
+// The live API hands the browser an identity body (the browser undoes Content-Encoding);
+// the static export is a gzip file the page inflates itself. Both decode to the same catalog.
+{
+  const {gzipSync} = await import('node:zlib');
+  const encoded = encodeFixture(catalog([{sha256:H('1'), size_bytes:100, metadata, entries}]));
+  for (const [url, body, headers] of [
+    ['api/catalog', Buffer.from(encoded.bytes), {'Content-Length': String(encoded.bytes.length)}],
+    ['api/catalog', Buffer.from(encoded.bytes), {'Content-Encoding': 'zstd'}],
+    ['catalog.bin.gz', gzipSync(encoded.bytes, {level: 9}), {}],
+  ]) {
+    const loader = createViewer({catalogUrl: url});
+    const status = {textContent: ''}, detail = {textContent: ''};
+    loader.elements.set('loading-status', status);
+    loader.elements.set('download-detail', detail);
+    loader.state.server = {requests: [], respond: async () => new Response(body, {headers})};
+    const built = await loader.run('loadCatalog()');
+    assert.equal(built.count, 8, url);
+    assert.deepEqual(Array.from(built.children(built.find('umd/game/'+H('1')+'.iso')), n => built.nameOf(n)), ['UMD_DATA.BIN']);
+    assert.equal(status.textContent, 'Preparing catalog…');
+    assert.match(detail.textContent, headers['Content-Encoding'] ? /received \(decoded\)/ : /received|100%/);
+    loader.stop();
+  }
+  // A failed request is reported, not swallowed.
+  const failing = createViewer();
+  failing.state.server = {requests: [], respond: async () => ({ok: false, status: 503})};
+  await assert.rejects(failing.run('loadCatalog()'), /HTTP 503/);
+  console.log('PASS: identity, content-decoded and gzip catalog bodies load identically, with progress; HTTP failures surface.');
+}
+viewer.stop();
 
 // Browsers can advance scrollTop before delivering a passive wheel callback.
 // The first movement must remain native pixels even on a compressed scroll rail.
@@ -422,6 +552,7 @@ for (const count of [28000, 3240000]) {
     set scrollTop(value) { position = Math.round(value); },
     addEventListener(type, handler) { handlers.set(type, handler); },
   };
+  const el = {addEventListener(){}, setAttribute(){}, removeAttribute(){}};
   const tree = {...el, tHead:{offsetHeight:40}};
   const scrollContext = vm.createContext({
     document:{documentElement:{dataset:{catalog:'api/catalog'}}, addEventListener(){},
@@ -437,7 +568,8 @@ for (const count of [28000, 3240000]) {
     history:{replaceState(){}},
     count,
   });
-  vm.runInContext(appSource, scrollContext);
+  vm.runInContext(sources.catalog, scrollContext);
+  vm.runInContext(sources.app, scrollContext);
   vm.runInContext(`
     visible = {length:count};
     renderWindow = ()=>{};

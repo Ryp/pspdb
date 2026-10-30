@@ -1,0 +1,309 @@
+{
+ "records": {
+  "iso": [
+   {
+    "kind": "iso",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sha1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "size_bytes": 42,
+    "metadata": {
+     "title": "日本語"
+    },
+    "redump": [
+     {
+      "id": 5,
+      "name": "Example"
+     }
+    ]
+   },
+   {
+    "kind": "iso",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sha1": "cccccccccccccccccccccccccccccccccccccccc",
+    "size_bytes": 43,
+    "metadata": {
+     "title": "Region B"
+    }
+   }
+  ],
+  "pkg": [
+   {
+    "kind": "pkg",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "size_bytes": 99,
+    "metadata": {
+     "content_id": "HP0000-X"
+    }
+   }
+  ]
+ },
+ "downloads_enabled": true,
+ "coverage": {
+  "umd": {
+   "total": 2
+  }
+ },
+ "trees": {
+  "iso": {
+   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+    "kind": "tree",
+    "schema_version": 1,
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "size_bytes": 42,
+    "extractor": {
+     "name": "iso",
+     "version": "3"
+    },
+    "extraction_kind": "iso",
+    "entries": [
+     {
+      "path": "PSP_GAME",
+      "type": "directory"
+     },
+     {
+      "path": "PSP_GAME/USRDIR",
+      "type": "directory"
+     },
+     {
+      "path": "PSP_GAME/USRDIR/a.bin",
+      "type": "file",
+      "size_bytes": 100,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+     },
+     {
+      "path": "PSP_GAME/USRDIR/b.bin",
+      "type": "file",
+      "size_bytes": 200,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+     },
+     {
+      "path": "PSP_GAME/PARAM.SFO",
+      "type": "file",
+      "size_bytes": 50,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+     },
+     {
+      "path": "PSP_GAME/SYSDIR",
+      "type": "directory"
+     },
+     {
+      "path": "PSP_GAME/SYSDIR/EBOOT.BIN",
+      "type": "file",
+      "size_bytes": 7,
+      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+     },
+     {
+      "path": "UMD_DATA.BIN",
+      "type": "file",
+      "size_bytes": 9,
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "extraction": {
+       "kind": "tree",
+       "schema_version": 1,
+       "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+       "size_bytes": 9,
+       "extractor": {
+        "name": "gzip",
+        "version": "3"
+       },
+       "extraction_kind": "gzip",
+       "name_rule": "strip_suffix",
+       "stale_extraction": {
+        "kind": "gzip",
+        "version": "1",
+        "latest_version": "2"
+       },
+       "entries": [
+        {
+         "path": "inner.dat",
+         "type": "file",
+         "size_bytes": 3,
+         "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+        }
+       ]
+      }
+     },
+     {
+      "path": "EMPTY.GZ",
+      "type": "file",
+      "size_bytes": 2,
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "extraction": {
+       "kind": "tree",
+       "schema_version": 1,
+       "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+       "size_bytes": 2,
+       "extractor": {
+        "name": "gzip",
+        "version": "3"
+       },
+       "extraction_kind": "gzip",
+       "error": "Corrupt stream",
+       "entries": []
+      }
+     },
+     {
+      "path": "nohash.txt",
+      "type": "file"
+     }
+    ]
+   },
+   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+    "kind": "tree",
+    "schema_version": 1,
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "size_bytes": 43,
+    "extractor": {
+     "name": "iso",
+     "version": "3"
+    },
+    "extraction_kind": "iso",
+    "entries": [
+     {
+      "path": "PSP_GAME",
+      "type": "directory"
+     },
+     {
+      "path": "PSP_GAME/USRDIR",
+      "type": "directory"
+     },
+     {
+      "path": "PSP_GAME/USRDIR/a.bin",
+      "type": "file",
+      "size_bytes": 100,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+     },
+     {
+      "path": "PSP_GAME/USRDIR/b.bin",
+      "type": "file",
+      "size_bytes": 200,
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+     },
+     {
+      "path": "PSP_GAME/PARAM.SFO",
+      "type": "file",
+      "size_bytes": 50,
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+     },
+     {
+      "path": "PSP_GAME/SYSDIR",
+      "type": "directory"
+     },
+     {
+      "path": "PSP_GAME/SYSDIR/EBOOT.BIN",
+      "type": "file",
+      "size_bytes": 7,
+      "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+     },
+     {
+      "path": "UMD_DATA.BIN",
+      "type": "file",
+      "size_bytes": 9,
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "extraction": {
+       "kind": "tree",
+       "schema_version": 1,
+       "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+       "size_bytes": 9,
+       "extractor": {
+        "name": "gzip",
+        "version": "3"
+       },
+       "extraction_kind": "gzip",
+       "name_rule": "strip_suffix",
+       "stale_extraction": {
+        "kind": "gzip",
+        "version": "1",
+        "latest_version": "2"
+       },
+       "entries": [
+        {
+         "path": "inner.dat",
+         "type": "file",
+         "size_bytes": 3,
+         "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+        }
+       ]
+      }
+     },
+     {
+      "path": "EMPTY.GZ",
+      "type": "file",
+      "size_bytes": 2,
+      "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "extraction": {
+       "kind": "tree",
+       "schema_version": 1,
+       "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+       "size_bytes": 2,
+       "extractor": {
+        "name": "gzip",
+        "version": "3"
+       },
+       "extraction_kind": "gzip",
+       "error": "Corrupt stream",
+       "entries": []
+      }
+     },
+     {
+      "path": "nohash.txt",
+      "type": "file"
+     },
+     {
+      "path": "extra",
+      "type": "directory"
+     },
+     {
+      "path": "extra/redump.bin",
+      "type": "file",
+      "size_bytes": 11,
+      "sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+      "redump": [
+       {
+        "id": 1
+       }
+      ]
+     }
+    ]
+   },
+   "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": {
+    "kind": "tree",
+    "schema_version": 1,
+    "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "size_bytes": 12,
+    "extractor": {
+     "name": "iso",
+     "version": "3"
+    },
+    "extraction_kind": "iso",
+    "error": "Unreadable image",
+    "entries": []
+   }
+  },
+  "pkg": {
+   "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+    "kind": "tree",
+    "schema_version": 1,
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "size_bytes": 99,
+    "extractor": {
+     "name": "pkg",
+     "version": "3"
+    },
+    "extraction_kind": "pkg",
+    "entries": [
+     {
+      "path": "USRDIR",
+      "type": "directory"
+     },
+     {
+      "path": "USRDIR/a.bin",
+      "type": "file",
+      "size_bytes": 100,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+     }
+    ]
+   }
+  }
+ }
+}

@@ -1,5 +1,6 @@
 """Read-only local web browser for a catalog; no index regeneration needed."""
 
+from compression import zstd
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import gzip
 import hashlib
@@ -12,14 +13,13 @@ import re
 import shutil
 import stat
 import tempfile
-import zlib
 from time import monotonic
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from . import coverage
 from .psn import package_kind
 from .serialstation import serial_key
-from .wire import decode_catalog, encode_catalog
+from .wire import decode_container, encode_container, hash_chunk
 
 
 def load_extractor_registry():
@@ -352,30 +352,41 @@ class _CatalogCache:
                              ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest().encode("ascii")
 
-    def _payload(self, signature, body, compressed, data=None, body_digest=None):
+    def _payload(self, signature, container, hashes, generation, bodies, data=None):
         if self.store is not None and data is None:
-            data = decode_catalog(json.loads(body))
-        return dict(signature=signature, body=body, gzip=compressed,
-                    etag='"' + (body_digest or hashlib.sha256(body).hexdigest()) + '"',
-                    gzip_etag='"' + hashlib.sha256(compressed).hexdigest() + '"',
+            data = decode_container(container, hashes)
+        bodies = dict(bodies, identity=container)
+        return dict(signature=signature, generation=generation, hashes=hashes, bodies=bodies,
+                    etags={coding: '"' + hashlib.sha256(body).hexdigest() + '"' for coding, body in bodies.items()},
                     objects=download_index(data) if self.store is not None else None)
+
+    def _build(self, signature, encoded, data=None):
+        bodies = {"zstd": zstd.compress(encoded.container, level=3),
+                  "gzip": gzip.compress(encoded.container, compresslevel=1, mtime=0)}
+        return self._payload(signature, encoded.container, encoded.hashes, encoded.generation, bodies, data)
 
     def _load_disk(self, signature):
         if self.cache_path is None:
             return None
         try:
             with self.cache_path.open("rb") as stream:
-                if stream.readline(128) != b"PSPDB-WEB-1 " + self._disk_key(signature) + b"\n":
+                if stream.readline(128) != b"PSPDB-WEB-2 " + self._disk_key(signature) + b"\n":
                     return None
-                digest = stream.readline(128).strip()
-                compressed = stream.read()
-            body = gzip.decompress(compressed)
-            if digest != hashlib.sha256(body).hexdigest().encode("ascii"):
+                layout = json.loads(stream.readline(1024))
+                bodies = {coding: stream.read(layout[coding]) for coding in ("zstd", "gzip")}
+                hashes = stream.read(layout["hashes"])
+                if stream.read(1) or any(len(body) != layout[coding] for coding, body in bodies.items()) \
+                        or len(hashes) != layout["hashes"]:
+                    raise ValueError("Snapshot cache has the wrong length")
+            container = zstd.decompress(bodies["zstd"])
+            if layout["identity"] != hashlib.sha256(container).hexdigest():
                 raise ValueError("Snapshot checksum mismatch")
-            return self._payload(signature, body, compressed, body_digest=digest.decode("ascii"))
+            if layout["generation"] != hashlib.sha256(hashes).hexdigest()[:16]:
+                raise ValueError("Snapshot hash table mismatch")
+            return self._payload(signature, container, hashes, layout["generation"], bodies)
         except FileNotFoundError:
             return None
-        except (OSError, EOFError, zlib.error, ValueError, KeyError, TypeError):
+        except (OSError, EOFError, zstd.ZstdError, ValueError, KeyError, TypeError):
             logging.getLogger(__name__).warning("Ignoring unreadable website snapshot cache", exc_info=True)
             return None
 
@@ -385,9 +396,16 @@ class _CatalogCache:
             self.cache_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=self.cache_path.parent, prefix=".snapshot-", delete=False) as stream:
                 temporary = Path(stream.name)
-                stream.write(b"PSPDB-WEB-1 " + self._disk_key(signature) + b"\n")
-                stream.write(payload["etag"].strip('"').encode("ascii") + b"\n")
-                stream.write(payload["gzip"])
+                bodies = payload["bodies"]
+                layout = {"generation": payload["generation"],
+                          "identity": payload["etags"]["identity"].strip('"'),
+                          "zstd": len(bodies["zstd"]), "gzip": len(bodies["gzip"]),
+                          "hashes": len(payload["hashes"])}
+                stream.write(b"PSPDB-WEB-2 " + self._disk_key(signature) + b"\n")
+                stream.write(json.dumps(layout, separators=(",", ":")).encode("ascii") + b"\n")
+                stream.write(bodies["zstd"])
+                stream.write(bodies["gzip"])
+                stream.write(payload["hashes"])
             os.replace(temporary, self.cache_path)
         except OSError:
             logging.getLogger(__name__).warning("Unable to persist website snapshot cache", exc_info=True)
@@ -408,10 +426,7 @@ class _CatalogCache:
                     data = catalog_data(self.catalog, self.redump, self.umdatabase,
                                         self.redump_population, self.nopaystation, self.serialstation)
                     data["downloads_enabled"] = self.store is not None
-                    body = json.dumps(encode_catalog(data), ensure_ascii=False,
-                                      separators=(",", ":")).encode("utf-8")
-                    compressed = gzip.compress(body, compresslevel=1, mtime=0)
-                    payload = self._payload(signature, body, compressed, data)
+                    payload = self._build(signature, encode_container(data), data)
                     # Never persist a mixed generation observed during active ingestion.
                     if self.cache_path is not None and catalog_signature(self.catalog) == signature:
                         self._save_disk(signature, payload)
@@ -459,6 +474,28 @@ class _CatalogCache:
             return self.payload
 
 
+def negotiate_encoding(header):
+    """Pick zstd, gzip or identity from an Accept-Encoding header (highest q, zstd before gzip)."""
+    accepted = {}
+    for item in header.lower().split(","):
+        coding, *parameters = item.strip().split(";")
+        quality = 1.0
+        for parameter in parameters:
+            name, _, value = parameter.strip().partition("=")
+            if name.strip() == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        accepted[coding.strip()] = quality
+    best, best_quality = "identity", 0.0
+    for coding in ("zstd", "gzip"):
+        quality = accepted.get(coding, accepted.get("*", 0.0))
+        if quality > best_quality:
+            best, best_quality = coding, quality
+    return best
+
+
 def handler_for(catalog, store=None, redump=None, umdatabase=None, redump_population=None, nopaystation=None,
                 serialstation=None):
     assets = Path(__file__).with_name("web")
@@ -477,35 +514,33 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None, redump_popula
         def do_GET(self):
             request = urlsplit(self.path)
             route = request.path
-            encoding = None
+            encoding, cache_control = "identity", "no-store"
             try:
                 if route == "/api/catalog":
                     payload = cache.get()
-                    mime = "application/json; charset=utf-8"
-                    accepted = {}
-                    for item in self.headers.get("Accept-Encoding", "").lower().split(","):
-                        coding, *parameters = item.strip().split(";")
-                        quality = 1.0
-                        for parameter in parameters:
-                            if parameter.strip().startswith("q="):
-                                try:
-                                    quality = float(parameter.strip()[2:])
-                                except ValueError:
-                                    quality = 0.0
-                        accepted[coding] = quality
-                    if accepted.get("gzip", accepted.get("*", 0)) > 0:
-                        body, encoding, etag = payload["gzip"], "gzip", payload["gzip_etag"]
-                    else:
-                        body, etag = payload["body"], payload["etag"]
+                    mime, cache_control = "application/octet-stream", "private, no-cache"
+                    encoding = negotiate_encoding(self.headers.get("Accept-Encoding", ""))
+                    body, etag = payload["bodies"][encoding], payload["etags"][encoding]
                     validators = (tag.strip().removeprefix("W/") for tag in
                                   self.headers.get("If-None-Match", "").split(","))
                     if any(tag in ("*", etag) for tag in validators):
                         self.send_response(304)
                         self.send_header("ETag", etag)
                         self.send_header("Vary", "Accept-Encoding")
-                        self.send_header("Cache-Control", "private, no-cache")
+                        self.send_header("Cache-Control", cache_control)
                         self.end_headers()
                         return
+                elif route.startswith("/api/hashes/"):
+                    match = re.fullmatch(r"/api/hashes/([^/]+)/(0|[1-9][0-9]*)", route)
+                    payload = cache.get() if match else None
+                    if match and match[1] != payload["generation"]:
+                        self.send_error(409, "Catalog changed; reload it")
+                        return
+                    body = hash_chunk(payload["hashes"], int(match[2])) if match else None
+                    if body is None:
+                        self.send_error(404)
+                        return
+                    mime, cache_control = "application/octet-stream", "public, max-age=31536000, immutable"
                 elif route == "/api/availability" and store is not None:
                     hashes = parse_qs(request.query).get("hash", [])
                     if len(hashes) > 128:
@@ -526,11 +561,12 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None, redump_popula
                 elif route.startswith("/download/") and store is not None:
                     self.download(route)
                     return
-                elif route in ("/", "/app.js", "/search-worker.js", "/style.css"):
-                    filename, mime = {"/": ("index.html", "text/html"),
-                                      "/app.js": ("app.js", "text/javascript"),
-                                      "/search-worker.js": ("search-worker.js", "text/javascript"),
-                                      "/style.css": ("style.css", "text/css")}[route]
+                elif route == "/" or re.fullmatch(r"/[A-Za-z0-9_-]+\.(?:js|css)", route):
+                    filename = "index.html" if route == "/" else route[1:]
+                    if not (assets / filename).is_file():
+                        self.send_error(404)
+                        return
+                    mime = {"html": "text/html", "js": "text/javascript", "css": "text/css"}[filename.rpartition(".")[2]]
                     body = (assets / filename).read_bytes()
                     mime += "; charset=utf-8"
                 else:
@@ -546,10 +582,10 @@ def handler_for(catalog, store=None, redump=None, umdatabase=None, redump_popula
             if route == "/api/catalog":
                 self.send_header("Vary", "Accept-Encoding")
                 self.send_header("ETag", etag)
-            if encoding:
+            if encoding != "identity":
                 self.send_header("Content-Encoding", encoding)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "private, no-cache" if route == "/api/catalog" else "no-store")
+            self.send_header("Cache-Control", cache_control)
             self.end_headers()
             self.wfile.write(body)
 

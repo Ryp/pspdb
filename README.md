@@ -517,7 +517,7 @@ after a registry change.
 
 ## Browse
 
-Requires **uv** and **Python 3.11+**. The website has no third-party runtime dependencies.
+Requires **uv** and **Python 3.14+** (the live server compresses with the standard library's `compression.zstd`). The website has no third-party runtime dependencies.
 
 ```sh
 uv run pspdb-web --catalog catalog --host 0.0.0.0 --port 8000 --store /path/to/store
@@ -620,60 +620,90 @@ in the API and export for analysis; the browser header shows only the total file
 count.
 UMD video labels use the SFO title when available, otherwise the observed disc
 identifier. Missing optional SFO metadata does not prevent browsing its inventory.
-The API and exported `catalog.json.gz` keep inventories in `trees[kind][sha256]`.
+The API and exported `catalog.bin.gz` keep inventories in `trees[kind][sha256]`.
 Root rows use their explicit `iso`, `pkg`, `nand` or `update` inventory; nested
 files use their derived extractor inventory. Inline contextual extractions retain occurrence precedence.
 
-Both the API and the export send a compact transport encoding (`wire_schema` 3,
-`website/pspdb/wire.py`). Inventories mirror their directory layout instead of
-repeating full paths: a directory is an object keyed by child name and a file is
-`[size_bytes, hash_id]`, with rare extras such as a contextual extraction or
-Redump matches in a trailing object. Repeated SHA-256 strings become one shared
-`hashes` dictionary, and repeated tree metadata such as extractor, extraction
-kind, naming rule, staleness and errors becomes one shared `profiles`
-dictionary. The browser rebuilds `trees[kind][sha256]` entries, so the structure
-above still describes what the viewer works with; parents that a path only
-implied come back as ordinary directory entries, and one name cannot describe
-two different children of a directory. On the current catalog this cut the
-gzip-encoded response from 72.5 MB to 45.0 MB and the decoded JSON the browser
-parses from 250 MB to 101 MB.
+Both the API and the export send one binary columnar container (wire format 4,
+`website/pspdb/wire.py`, which documents the exact byte layout). Directory
+structure, names, sizes and hash references are varint columns; names live once in
+a dictionary; every distinct SHA-256 gets one slot; identical subtrees (the same
+game assets under every regional ISO) are stored once and referenced; a file size
+is stored once per hash; and everything that is not tree structure (records,
+coverage, tree profiles such as extractor/naming rule/staleness/errors, per-file
+extras such as Redump matches, flags like `downloads_enabled`) travels as one JSON
+`meta` section. The viewer reads the columns straight into typed arrays and never
+builds per-occurrence objects. Full 32-byte digests are not part of the container:
+it carries an 8-byte prefix per slot (the viewer shows the first 12 hex characters
+of a hash from it) and the full digests are fetched lazily in chunks of 4096
+slots (`slot // 4096`, byte offset `(slot % 4096) * 32`; raw concatenated digests,
+the last chunk is short). Encoding fails loudly if two different digests ever share
+an 8-byte prefix. Parents that a path only implied come back as ordinary directory
+entries, and one name cannot describe two different children of a directory. Every
+directory is stored directories-first, then by name in UTF-16 code unit order, the
+order the viewer shows. On the 2026-10-30 catalog (41,458 trees, 2.73 M file rows,
+1,248,854 distinct digests) the container is 42.9 MB raw, 22.7 MB with gzip-1,
+21.9 MB with gzip-9 and 20.2 MB with zstd-3, against 178.6 MB raw and 78.8 MB
+gzip-1 for the previous JSON encoding; the digest chunks (40.0 MB) are only fetched
+for the rows a user asks about.
 
-The local server caches compact catalog JSON, gzip bytes and the download index
-as one coherent snapshot. Requests recheck catalog paths, modification/change times,
+`GET /api/catalog` returns the container as `application/octet-stream` with
+`Content-Encoding: zstd` (level 3) when the client accepts it, otherwise gzip
+(level 1), otherwise identity (the highest `q` wins, zstd before gzip on a tie).
+`Vary: Accept-Encoding` is always sent. Full digests come from
+`GET /api/hashes/<generation>/<chunk>` (`application/octet-stream`, immutable
+cache headers). `<generation>` is the `generation` string in the container's
+`meta` (a digest of the full hash table); the server answers 409 for any other
+generation, so a viewer holding an older catalog reloads it, and 404 for a chunk
+that does not exist. Availability and download endpoints keep taking full hashes;
+the viewer resolves the full hashes of the rows it needs through the chunk fetch
+first.
+
+The local server caches the container's zstd, gzip and identity bytes, the hash
+table and the download index as one coherent snapshot. Requests recheck catalog paths, modification/change times,
 sizes, inode identities and annotation dependencies at most once every five seconds. One background
 refresh runs at a time; requests can use the previous snapshot for up to 30 seconds
 after its last successful check. Cold or expired requests wait for regeneration.
 Refresh errors are logged and return HTTP 500 rather than hiding failures behind
-an indefinitely stale catalog. Conditional requests use representation-specific
-ETags, so unchanged reloads can return HTTP 304 without transferring the catalog.
-Availability checks still inspect requested store objects live.
+an indefinitely stale catalog. Conditional requests use encoding-specific
+ETags (a digest of each representation's bytes), so unchanged reloads can return
+HTTP 304 without transferring the catalog; a validator for one encoding never
+validates another. Availability checks still inspect requested store objects live.
 
 Completed, stable snapshots are also cached outside `catalog/`, under
 `$XDG_CACHE_HOME/pspdb/web` (default `~/.cache/pspdb/web`). Set
 `PSPDB_WEB_CACHE_DIR` to choose another directory, or to an empty string to disable
-disk caching. A restart reuses the compressed snapshot only when source signatures,
+disk caching. A restart reuses the compressed snapshot (the zstd and gzip
+representations plus the raw hash table) only when source signatures,
 annotation mappings, download mode and viewer implementation still match. Cache
 files are private, atomically replaced and checksum-checked; missing, corrupt or
 unwritable caches fall back to the authoritative catalog. Invalid catalog data
 still fails validation. A source change during generation prevents publishing that
 generation to disk. This cache is disposable, not another catalog or database.
 
-The live server uses gzip level 1 to reduce preparation latency; static exports
-retain level 9 compression. With downloads enabled on the 2026-09-21 catalog
-(814,263 indexed objects), native filename validation and avoiding redundant
-hash serialization reduced cold preparation from 19.5 to 12.1 seconds and
-disk-cache restart preparation from 9.6 to 5.7 seconds on this Linux workstation.
-The live compressed response grew from 45.0 to 48.3 MB. These measurements include
-the download index but exclude browser download and tree construction.
+The live server uses zstd level 3 (0.1 s for the whole container; gzip level 1 for
+clients without zstd takes 0.4 s) to keep preparation latency low; static exports
+retain gzip level 9. On the 2026-10-30 catalog with downloads enabled and the
+`--redump/--umdatabase/--nopaystation/--serialstation` annotations, on this Linux
+workstation: a cold start prepares the first response in about 26 s (catalog scan
+5.5 s, container encoding 9 s, download index 8 s, compression 0.5 s); a restart
+that reuses the disk cache takes 13 s with a store (the download index is rebuilt
+from the cached container) and 0.5 s without one. These measurements
+exclude browser download and tree construction.
 
 The lowest-level virtual groups start folded: `umd/game`, `umd/video`,
 `umd/other`, `firmware/nand`, `firmware/update`, and the PSN categories. Their
 parent groups remain expanded. Opening a category reveals source files whose
 extractions still start folded; search and deep links reveal the required ancestors.
 
-The browser constructs the tree in yielding batches, retains compact occurrence
-identities and computes paths only when needed. A Web Worker searches and sorts
-an interned text/typed-array index without blocking keyboard input. Superseded
+The browser reads the container straight into typed arrays (`catalog.js`) and expands
+shared directories and extraction trees into an occurrence tree: parallel typed arrays
+in preorder (parent, name, subtree end, size, hash slot, attached extraction, flags),
+one entry per row a user can reach (7.6 M on the 2026-10-30 catalog) and no per-row
+JavaScript object. A row is an integer; its path, label, extractor tags, error counters
+and annotations are derived when needed, folding is one byte per row, and the visible
+list skips collapsed subtrees. A Web Worker searches and sorts copies of the same arrays
+(transferred, not re-interned) without blocking keyboard input. Superseded
 queries are cancelled; no results are dropped or capped. Only viewport rows are
 mounted, and the DOM scroll height stays below browser layout limits. Wheel,
 native touch/momentum, and page-scrolling keys move one logical pixel per native
@@ -688,10 +718,19 @@ scrolling remain native. Search covers files inside collapsed branches;
 narrowing a query reuses matches and checks only the surviving candidates' strings,
 memoizing repeated lookups and skipping already-satisfied terms. Broadening searches
 the full index.
-Hash-only terms (8–64 hexadecimal characters, case-insensitive) match each file's
-own SHA-256, not hashes inherited from parent containers. Matching occurrences
-remain separate; ordinary text and filename searches include ancestor context.
-The same worker is included in static exports; serve them over HTTP as below.
+Hash terms are 8–64 hexadecimal characters (case-insensitive) matched as **prefixes**
+of a file's own SHA-256: not hashes inherited from parent containers, and no longer
+anywhere inside the digest (a mid-hash fragment such as `06fdaefe3c62` finds
+nothing). Terms up to 16 digits are compared locally with the 8-byte prefixes in the
+catalog. A longer term matches its first 16 digits locally, then checks the remaining
+digits against the full digests of the (few) candidate slots, fetched in 128 KiB
+chunks; if that fetch fails the search status says so and search stays usable, and a
+409 (the server holds a newer catalog) reloads the page. Shorter hex strings are
+ordinary text and match names, labels, metadata and errors, never hashes. A catalog
+record's name carries its full SHA-256, so a text search still finds it by any part of
+its hash. Matching occurrences remain separate; ordinary text and filename searches
+include ancestor context.
+The same worker and `catalog.js` are included in static exports; serve them over HTTP as below.
 
 On narrow screens, the viewer prioritizes names and sizes, shows search-result
 filenames instead of long ancestor paths, and keeps the full selected path, exact
@@ -709,18 +748,25 @@ preparation. The latest entered query runs automatically once ready, without
 stealing focus from the field. Clearing a pending query is safe, and a catalog
 download failure preserves the entered text.
 
-On a frozen 1,654,763-file catalog, Chromium measurements on a Ryzen 9 5950X
-showed search results in 21–64 ms versus 371–751 ms before these changes, with
-matching result counts. Main-thread heap fell from about 2 GB to 240 MB, plus
-about 115 MB for the worker and its typed-array index. Static catalog readiness
-improved from 4.9 to 2.9 seconds; the longest main-thread task fell from 4.5 seconds
-to 225 ms. These are local measurements, not latency guarantees.
+The hash column shows the first 12 hex digits, taken from the prefix. Copying a hash
+(the row button or **Copy SHA-256**), a **Download** link and a store check resolve
+the row's full digest through its chunk first (one request per chunk, cached, and
+checked against the catalog's prefixes before use); the availability and download
+endpoints still take full hashes. Hovering a hash prefetches its chunk, so the click
+copies at once.
 
-On a later 3,022,137-file snapshot, candidate-only string matching reduced median
-incremental search time over three Chromium runs: `eboot` → `eboot.bin` from
-37.5 to 13.1 ms, adding `psp_game` from 48.0 to 13.8 ms, and extending an
-eight-character hash prefix to twelve characters from 29.3 to 0.8 ms. Result counts
-matched; these timings include installing the results, not just worker execution.
+Measured on the 2026-10-30 catalog (7,601,835 rows, 7,367,003 files; 20.2 MB on the
+wire with zstd, 42.9 MB decoded) in Chromium 150 on this Linux workstation against a
+local server: the tree is browsable 1.1 s after navigation (1.2 s with the search index
+ready), against 7.7 s (15.8 s) for the previous viewer fed the 78.8 MB JSON by the same
+browser. After a garbage collection the page holds a 34 MB JS heap plus 249 MB of typed
+arrays (previous viewer: 1.06 GB after collection, 1.62 GB before); the whole renderer
+process, worker included, is about 0.87 GB, against 1.93 GB before. Searching the
+whole catalog, installing the results and rendering them took 110–180 ms for `eboot.bin`
+(62,261 files) and 120–130 ms for `psp_game` (7,128,068 files, 7,349,188 rows counting
+folders); typing a 12-digit hash takes under 80 ms and refining it a few ms. The page
+fetches digest chunks only for rows a user touches, 128 KiB each, instead of the 40 MB
+table. These are local measurements, not latency guarantees.
 
 On a later frozen catalog with 40,934 JSON files and a 155 MB response (45.5 MB
 gzip), catalog preparation took 3.81 seconds without a disk cache and 0.52 seconds
@@ -752,12 +798,19 @@ included separately. Export leaves ingested records unchanged and publishes only
 browser assets and metadata; Store/downloads are disabled. Relative asset URLs
 support repository paths such as `/pspdb/`.
 
-Static exports contain `catalog.json.gz` rather than uncompressed JSON, keeping
-large snapshots below GitHub's 100 MiB per-file limit. The viewer decompresses it
-with the browser's native `DecompressionStream` API before building its index.
-Serve this file as gzip data (for example, `application/gzip`), not as an already
-HTTP-decoded JSON response. Python's static server and GitHub Pages serve it this
-way without additional configuration.
+Static exports contain the container as `catalog.bin.gz` (gzip level 9, about 22 MB
+on the current catalog) plus the full digests as `hashes/<chunk>.bin` files of at
+most 4096 digests (128 KiB) each beside it, keeping every file far below GitHub's
+100 MiB per-file limit. The viewer decompresses the catalog with the browser's
+native `DecompressionStream('gzip')` and fetches `hashes/<chunk>.bin` on demand.
+`index.html` declares both locations (`data-catalog`, `data-hashes`); the live
+server uses `api/catalog` and `api/hashes/<generation>/<chunk>`. Serve
+`catalog.bin.gz` as gzip data (for example, `application/gzip`), not as an
+already HTTP-decoded response. Python's static server and GitHub Pages serve it
+this way without additional configuration. The hash chunks carry no generation in
+their path: replace them together with the catalog, and the viewer checks every
+fetched digest against the catalog's 8-byte prefixes so a stale cached chunk is
+detected rather than trusted.
 
 While loading, the viewer shows download progress and received bytes, with a
 percentage when the response provides a usable length. Unknown-length or
@@ -766,7 +819,7 @@ percentage. After transfer, the status changes to “Preparing catalog…” unt
 the tree is ready; failed transfers show an error rather than a completed bar.
 
 Keep source code on `main` and exported snapshots at the root of a separate
-`pages` branch (`index.html`, assets, and `catalog.json.gz`, without a `site/` wrapper).
+`pages` branch (`index.html`, assets, `catalog.bin.gz` and `hashes/`, without a `site/` wrapper).
 Export into an empty staging directory, then copy its contents into a separate
 clone of that branch. Never switch branches in a checkout used by active ingestion.
 Pages can publish directly from **pages / (root)**, or use **GitHub Actions** and
@@ -795,8 +848,22 @@ uv sync --locked
 uv run --locked python -m unittest discover -s ingest/tests
 uv run --locked python -m unittest discover -s website/tests
 uv run --locked python -m unittest discover -s tools/tests
-node website/tests/tree-catalog.mjs
+# The viewer tests encode their fixtures with the real Python encoder, so run them
+# inside the uv environment (python3 on PATH must be 3.14+).
+uv run --locked node website/tests/tree-catalog.mjs
+uv run --locked node website/tests/catalog-oracle.mjs
 ```
+
+`tree-catalog.mjs` drives `catalog.js`, `app.js` and the search worker in a stubbed
+DOM; every fixture must also match, row by row, the object-per-row tree the viewer
+used before the typed-array occurrence tree (`reference-tree.mjs`, a test-only
+oracle). `catalog-oracle.mjs` repeats that comparison on the checked-in fixture and,
+with `PSPDB_ORACLE_DATA` (a JSON dump of the data dict) and `PSPDB_ORACLE_CONTAINER`
+(a directory with `catalog.bin` and `hashes/`), on a whole catalog under
+`node --max-old-space-size=12000` (7.6 M rows in about 25 s). `browser-tree.mjs`
+needs a running site and Chromium with `--remote-debugging-port=9333`; it exercises
+folding, search, sorting, downloads, copy, deep links, narrow screens and stale
+catalogs in the real page (`PSPDB_BROWSER_QUICK=1` skips its exhaustive first sweep).
 
 ## Extractors
 

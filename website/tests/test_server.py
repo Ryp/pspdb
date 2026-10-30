@@ -2,6 +2,7 @@ import hashlib
 from http.server import ThreadingHTTPServer
 import json
 import gzip
+from compression import zstd
 import io
 import os
 from pathlib import Path
@@ -16,7 +17,8 @@ from unittest.mock import patch
 from pspdb.server import _CatalogCache, catalog_data, handler_for, download_index
 from pspdb.cli import main
 from pspdb.export import export_site
-from pspdb.wire import decode_catalog
+from pspdb.wire import HASH_CHUNK_SLOTS, unpack
+from wirehelp import container_meta, decode_export, decode_http, decode_payload
 
 
 class ContextualIndexTests(unittest.TestCase):
@@ -140,18 +142,19 @@ class DownloadTests(unittest.TestCase):
         replacement.replace(path)
         self.start(self.store)
         with self.get('/api/catalog') as response:
-            self.assertEqual(decode_catalog(json.load(response))['records']['iso'][0]['metadata']['title'], 'New')
+            pass
+        self.assertEqual(decode_http(self.client, self.base)['records']['iso'][0]['metadata']['title'], 'New')
 
     def test_disk_snapshot_separates_annotations_and_download_mode(self):
         first = {('b' * 40, 42): [dict(id=1, name='First association')]}
         second = {('b' * 40, 42): [dict(id=2, name='Second association')]}
         _CatalogCache(self.catalog, self.store, first, None).get()
-        changed = decode_catalog(json.loads(_CatalogCache(self.catalog, self.store, second, None).get()['body']))
+        changed = decode_payload(_CatalogCache(self.catalog, self.store, second, None).get())
         self.assertEqual(changed['records']['iso'][0]['redump'], second[('b' * 40, 42)])
         self.assertEqual(changed['records']['pkg'][0]['psn_kind'], 'patch')
         self.assertIsNone(changed['coverage'])
         readonly = _CatalogCache(self.catalog, None, second, None).get()
-        self.assertFalse(decode_catalog(json.loads(readonly['body']))['downloads_enabled'])
+        self.assertFalse(decode_payload(readonly)['downloads_enabled'])
         self.assertIsNone(readonly['objects'])
 
     def test_corrupt_cache_rebuilds_but_invalid_catalog_still_fails(self):
@@ -179,41 +182,116 @@ class DownloadTests(unittest.TestCase):
         with patch.dict(os.environ, {'PSPDB_WEB_CACHE_DIR': str(unusable)}):
             self.start(None)
             with self.assertLogs('pspdb.server', level='WARNING'):
-                with self.get('/api/catalog') as response:
-                    self.assertEqual(decode_catalog(json.load(response))['records']['iso'][0]['sha256'], 'a' * 64)
+                self.assertEqual(decode_http(self.client, self.base)['records']['iso'][0]['sha256'], 'a' * 64)
 
-    def test_catalog_validators_and_compression(self):
+    def catalog_request(self, accept=None, etag=None):
+        headers = {}
+        if accept is not None:
+            headers['Accept-Encoding'] = accept
+        if etag is not None:
+            headers['If-None-Match'] = etag
+        return Request(self.base + '/api/catalog', headers=headers)
+
+    def test_catalog_negotiates_zstd_gzip_and_identity_with_validators(self):
         self.start(None)
+        decoders = {'zstd': zstd.decompress, 'gzip': gzip.decompress, 'identity': bytes}
         with self.get('/api/catalog') as response:
             original = response.read()
-            identity_etag = response.headers['ETag']
-            self.assertEqual(response.headers['Cache-Control'], 'private, no-cache')
-        request = Request(self.base + '/api/catalog', headers={'Accept-Encoding': 'gzip'})
-        with self.client.open(request) as response:
-            self.assertEqual(response.headers['Content-Encoding'], 'gzip')
-            self.assertEqual(response.headers['Vary'], 'Accept-Encoding')
-            self.assertEqual(gzip.decompress(response.read()), original)
-            gzip_etag = response.headers['ETag']
-            self.assertNotEqual(gzip_etag, identity_etag)
-        request = Request(self.base + '/api/catalog', headers={
-            'Accept-Encoding': 'gzip', 'If-None-Match': '"unrelated", W/' + gzip_etag})
-        with self.assertRaises(HTTPError) as result:
-            self.client.open(request)
-        with result.exception as response:
-            self.assertEqual(response.code, 304)
-            self.assertEqual(response.headers['ETag'], gzip_etag)
-            self.assertEqual(response.headers['Vary'], 'Accept-Encoding')
-            self.assertEqual(response.read(), b'')
-        request = Request(self.base + '/api/catalog', headers={'If-None-Match': gzip_etag})
-        with self.client.open(request) as response:
-            self.assertEqual(response.status, 200)
-            self.assertEqual(response.read(), original)
-        request = Request(self.base + '/api/catalog', headers={'Accept-Encoding': 'gzip;q=0, *;q=1'})
-        with self.client.open(request) as response:
+            self.assertEqual(response.headers['Content-Type'], 'application/octet-stream')
             self.assertIsNone(response.headers['Content-Encoding'])
+            self.assertEqual(response.headers['Cache-Control'], 'private, no-cache')
+            self.assertEqual(response.headers['Vary'], 'Accept-Encoding')
+            etags = {'identity': response.headers['ETag']}
+        self.assertEqual(original[:6], b'PSPDBW')
+        for accept, coding in (('zstd', 'zstd'), ('gzip', 'gzip'), ('gzip, deflate, br, zstd', 'zstd'),
+                               ('gzip;q=1, zstd;q=0.5', 'gzip'), ('zstd;q=0, gzip', 'gzip'),
+                               ('*', 'zstd'), ('gzip;q=0, *;q=1', 'zstd'), ('zstd;q=0, gzip;q=0', 'identity'),
+                               ('br, deflate', 'identity'), ('zstd;q=bogus, gzip', 'gzip'), ('', 'identity')):
+            with self.subTest(accept=accept):
+                with self.client.open(self.catalog_request(accept)) as response:
+                    self.assertEqual(response.headers['Content-Encoding'],
+                                     None if coding == 'identity' else coding)
+                    self.assertEqual(response.headers['Vary'], 'Accept-Encoding')
+                    self.assertEqual(decoders[coding](response.read()), original)
+                    etags.setdefault(coding, response.headers['ETag'])
+                    self.assertEqual(etags[coding], response.headers['ETag'])
+        self.assertEqual(len(set(etags.values())), 3)
+        for coding, etag in etags.items():
+            accept = coding if coding != 'identity' else 'identity'
+            with self.assertRaises(HTTPError) as result:
+                self.client.open(self.catalog_request(accept, '"unrelated", W/' + etag))
+            with result.exception as response:
+                self.assertEqual(response.code, 304)
+                self.assertEqual(response.headers['ETag'], etag)
+                self.assertEqual(response.headers['Vary'], 'Accept-Encoding')
+                self.assertEqual(response.read(), b'')
+        # A validator for one representation never validates another.
+        with self.client.open(self.catalog_request('gzip', etags['zstd'])) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(gzip.decompress(response.read()), original)
+        with self.client.open(self.catalog_request(None, etags['gzip'])) as response:
             self.assertEqual(response.read(), original)
         with self.get('/search-worker.js') as response:
             self.assertEqual(response.headers.get_content_type(), 'text/javascript')
+
+    def test_every_viewer_script_and_stylesheet_is_served_and_nothing_else(self):
+        self.start(None)
+        web = Path(__file__).resolve().parents[1] / 'pspdb' / 'web'
+        types = {'.js': 'text/javascript', '.css': 'text/css'}
+        served = [path for path in web.iterdir() if path.suffix in types]
+        self.assertTrue({path.name for path in served} >= {'app.js', 'catalog.js', 'search-worker.js', 'style.css'})
+        for path in served:
+            with self.get('/' + path.name) as response:
+                self.assertEqual(response.headers.get_content_type(), types[path.suffix])
+                self.assertEqual(response.read(), path.read_bytes())
+        with self.get('/') as response:
+            self.assertEqual(response.headers.get_content_type(), 'text/html')
+        for route in ('/index.html', '/missing.js', '/%2e%2e/x.js', '/..%2fapp.js', '/web/app.js', '/app.js.map'):
+            self.status(route, 404)
+
+    def test_hash_chunks_are_addressed_by_generation_and_slot(self):
+        self.start(None)
+        with self.get('/api/catalog') as response:
+            container = response.read()
+        meta = container_meta(container)
+        generation, count = meta['generation'], meta['hash_count']
+        prefixes = bytes(unpack(container)['prefixes'])
+        self.assertEqual(len(prefixes), count * 8)
+        self.assertEqual(meta['hash_chunk_size'], HASH_CHUNK_SLOTS)
+        with self.get(f'/api/hashes/{generation}/0') as response:
+            chunk = response.read()
+            self.assertEqual(response.headers['Content-Type'], 'application/octet-stream')
+            self.assertIn('immutable', response.headers['Cache-Control'])
+            self.assertEqual(response.headers['Content-Length'], str(len(chunk)))
+            self.assertIsNone(response.headers['Content-Encoding'])
+        self.assertEqual(len(chunk), count * 32)
+        self.assertTrue(all(chunk[32 * slot:32 * slot + 8] == prefixes[8 * slot:8 * slot + 8]
+                            for slot in range(count)))
+        self.assertEqual(bytes.fromhex('a' * 64), chunk[:32])
+        self.status(f'/api/hashes/{generation}/1', 404)
+        self.status(f'/api/hashes/{generation}/01', 404)
+        self.status(f'/api/hashes/{generation}/-1', 404)
+        self.status(f'/api/hashes/{generation}/x', 404)
+        self.status(f'/api/hashes/{generation}', 404)
+        self.status(f'/api/hashes/{generation}/0/0', 404)
+        self.status('/api/hashes/0000000000000000/0', 409)
+        self.status('/api/hashes/0000000000000000/7', 409)
+
+    @patch('pspdb.server.monotonic', return_value=0)
+    def test_changed_catalog_hashes_invalidate_the_previous_generation(self, clock):
+        self.start(None)
+        with self.get('/api/catalog') as response:
+            old = container_meta(response.read())['generation']
+        folder = self.catalog / 'pkg'
+        (folder / ('f' * 64 + '.json')).write_text(json.dumps(dict(kind='pkg', schema_version=1,
+            sha256='f' * 64, size_bytes=5, metadata={})))
+        clock.return_value = 62
+        with self.get('/api/catalog') as response:
+            new = container_meta(response.read())['generation']
+        self.assertNotEqual(old, new)
+        self.status(f'/api/hashes/{old}/0', 409)
+        with self.get(f'/api/hashes/{new}/0') as response:
+            self.assertIn(bytes.fromhex('f' * 64), response.read())
 
     @patch('pspdb.server.monotonic', return_value=0)
     def test_cached_catalog_refreshes_with_new_validator(self, clock):
@@ -231,16 +309,16 @@ class DownloadTests(unittest.TestCase):
         with self.client.open(request) as response:
             self.assertEqual(response.status, 200)
             self.assertNotEqual(response.headers['ETag'], etag)
-            self.assertEqual(json.load(response)['records']['iso'][0]['metadata']['title'], 'Changed title')
+            self.assertEqual(container_meta(response.read())['records']['iso'][0]['metadata']['title'], 'Changed title')
         path.unlink()
         clock.return_value = 62
         with self.get('/api/catalog') as response:
-            self.assertNotIn('iso', json.load(response)['records'])
+            self.assertNotIn('iso', container_meta(response.read())['records'])
 
     @patch('pspdb.server.monotonic', return_value=0)
     def test_refresh_keeps_warm_readers_live_and_blocks_expired_readers(self, clock):
         cache = _CatalogCache(self.catalog, None, None, None)
-        original = cache.get()['body']
+        original = cache.get()['bodies']['identity']
         path = self.catalog / 'iso' / ('a' * 64 + '.json')
         record = json.loads(path.read_text())
         record['metadata']['title'] = 'First refresh'
@@ -257,7 +335,7 @@ class DownloadTests(unittest.TestCase):
 
         def expired_read():
             try:
-                result.append(cache.get()['body'])
+                result.append(cache.get()['bodies']['identity'])
             finally:
                 finished.set()
 
@@ -265,11 +343,11 @@ class DownloadTests(unittest.TestCase):
             clock.return_value = 5
             reader = None
             try:
-                self.assertEqual(cache.get()['body'], original)
+                self.assertEqual(cache.get()['bodies']['identity'], original)
                 self.assertTrue(entered.wait(5))
                 record['metadata']['title'] = 'Next refresh'
                 path.write_text(json.dumps(record))
-                self.assertEqual(cache.get()['body'], original)
+                self.assertEqual(cache.get()['bodies']['identity'], original)
                 clock.return_value = 31
                 reader = threading.Thread(target=expired_read)
                 reader.start()
@@ -279,9 +357,9 @@ class DownloadTests(unittest.TestCase):
                 if reader is not None:
                     reader.join(5)
         self.assertTrue(finished.is_set())
-        self.assertEqual(json.loads(result[0])['records']['iso'][0]['metadata']['title'], 'First refresh')
+        self.assertEqual(container_meta(result[0])['records']['iso'][0]['metadata']['title'], 'First refresh')
         clock.return_value = 62
-        self.assertEqual(json.loads(cache.get()['body'])['records']['iso'][0]['metadata']['title'], 'Next refresh')
+        self.assertEqual(container_meta(cache.get()['bodies']['identity'])['records']['iso'][0]['metadata']['title'], 'Next refresh')
 
     @patch('pspdb.server.monotonic', return_value=0)
     def test_refresh_errors_are_visible_and_recovery_is_bounded(self, clock):
@@ -314,8 +392,8 @@ class DownloadTests(unittest.TestCase):
     def test_optional_store_and_read_only_catalog(self):
         before = {p: p.read_bytes() for p in self.catalog.rglob('*.json')}
         self.start(None)
-        with self.get('/api/catalog') as response: data = json.load(response)
-        self.assertFalse(data['downloads_enabled'])
+        with self.get('/api/catalog') as response: meta = container_meta(response.read())
+        self.assertFalse(meta['downloads_enabled'])
         self.status('/api/availability?hash=' + self.digest, 404)
         self.status('/download/' + self.digest + '/alias.prx', 404)
         self.assertEqual(before, {p: p.read_bytes() for p in self.catalog.rglob('*.json')})
@@ -329,10 +407,9 @@ class DownloadTests(unittest.TestCase):
                                     size_bytes=len(self.content), sha256=self.digest)])
         (folder / f'{self.digest}.json').write_text(json.dumps(record))
         self.start(self.store)
-        with self.get('/api/catalog') as response:
-            # The transport nests inventories, so the implied parent is explicit.
-            self.assertEqual(decode_catalog(json.load(response))['trees']['tree'][self.digest],
-                             {**record, 'entries': [{'path': 'F0', 'type': 'directory'}] + record['entries']})
+        # The transport nests inventories, so the implied parent is explicit.
+        self.assertEqual(decode_http(self.client, self.base)['trees']['tree'][self.digest],
+                         {**record, 'entries': [{'path': 'F0', 'type': 'directory'}] + record['entries']})
         with self.get('/download/' + self.digest + '/decoded.prx') as response:
             self.assertEqual(response.read(), self.content)
 
@@ -361,11 +438,10 @@ class DownloadTests(unittest.TestCase):
         write_pair('pkg', parent, 1, 100, [file('recovered.iso', self.digest, len(self.content))])
         before = {p: p.read_bytes() for p in self.catalog.rglob('*.json')}
         self.start(self.store)
-        with self.get('/api/catalog') as response:
-            data = decode_catalog(json.load(response))
+        data = decode_http(self.client, self.base)
         output = self.root / 'export'
         export_site(self.catalog, output)
-        exported = decode_catalog(json.loads(gzip.decompress((output / 'catalog.json.gz').read_bytes())))
+        exported = decode_export(output)
         for snapshot in (data, exported):
             self.assertEqual([entry['path'] for entry in snapshot['trees']['iso'][self.digest]['entries']], ['root-only.prx'])
             self.assertEqual([entry['path'] for entry in snapshot['trees']['iso9660'][self.digest]['entries']], ['nested-only.prx'])
@@ -383,14 +459,12 @@ class DownloadTests(unittest.TestCase):
         completed_tree = pending.read_bytes()
         pending.unlink()
         clock.return_value = 31
-        with self.get('/api/catalog') as response:
-            data = decode_catalog(json.load(response))
+        data = decode_http(self.client, self.base)
         self.assertEqual(data['trees']['iso'][self.digest]['extractor']['version'], '10')
         self.status(f'/download/{self.empty}/published-root.prx', 404)
         pending.write_bytes(completed_tree)
         clock.return_value = 62
-        with self.get('/api/catalog') as response:
-            data = decode_catalog(json.load(response))
+        data = decode_http(self.client, self.base)
         self.assertEqual(data['trees']['iso'][self.digest]['extractor']['version'], '12')
         self.assertEqual(data['trees']['iso9660'][self.digest]['extractor']['version'], '1')
         with self.get(f'/download/{self.empty}/published-root.prx') as response:
@@ -415,7 +489,7 @@ class DownloadTests(unittest.TestCase):
 
     def test_availability_and_download_preserves_names(self):
         self.start(self.store)
-        with self.get('/api/catalog') as response: self.assertTrue(json.load(response)['downloads_enabled'])
+        with self.get('/api/catalog') as response: self.assertTrue(container_meta(response.read())['downloads_enabled'])
         query = urlencode([('hash', h) for h in [self.digest, self.empty, self.missing, 'b' * 64]])
         with self.get('/api/availability?' + query) as response: availability = json.load(response)
         self.assertEqual(availability, {self.digest: True, self.empty: True, self.missing: False, 'b' * 64: False})

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from pspdb.serialstation import load_matches, serial_key
 from pspdb.server import _CatalogCache, catalog_data
-from pspdb.wire import decode_catalog
+from wirehelp import decode_payload
 
 PRESENT = 'UP0555-NPUF30007_00-BOMBERMAN940EH01'
 ABSENT = 'JP0101-NPJH50721_00-GAMEUPDATE000101'
@@ -152,7 +152,7 @@ class SerialStationTests(unittest.TestCase):
                 matches = load_matches(snapshot(source, {'a' * 64: entry(id=pkg_id)},
                                                 discs={'33401': [{'id': disc_id, 'name': DISC_NAME}]}))
                 payload = _CatalogCache(self.catalog, None, redump, None, serialstation=matches).get()
-                records = decode_catalog(json.loads(payload['body']))['records']
+                records = decode_payload(payload)['records']
                 packages = {record['sha256']: record for record in records['pkg']}
                 self.assertEqual(packages['a' * 64]['serialstation']['id'], pkg_id)
                 self.assertEqual(records['iso'][0]['serialstation_discs'], [

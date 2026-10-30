@@ -1,6 +1,7 @@
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import gzip
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -12,7 +13,8 @@ from urllib.request import build_opener, ProxyHandler
 from pspdb.cli import main
 from pspdb.export import export_site
 from pspdb.server import catalog_data
-from pspdb.wire import decode_catalog
+from pspdb.wire import HASH_CHUNK_SLOTS
+from wirehelp import container_meta, decode_export, decode_with
 
 
 class ExportTests(unittest.TestCase):
@@ -43,7 +45,7 @@ class ExportTests(unittest.TestCase):
                                           '<p class="text-value">' + 'b' * 40 + '</p>')
         before = {p: p.read_bytes() for p in self.catalog.rglob('*.json')}
         export_site(self.catalog, self.output, dat, pages)
-        data = decode_catalog(json.loads(gzip.decompress((self.output / 'catalog.json.gz').read_bytes())))
+        data = decode_export(self.output)
         self.assertFalse(data['downloads_enabled'])
         iso = data['records']['iso'][0]
         self.assertEqual(iso['metadata']['title'], '日本語')
@@ -67,24 +69,54 @@ class ExportTests(unittest.TestCase):
         base = f'http://127.0.0.1:{server.server_port}/pspdb/'
         with client.open(base) as response:
             html = response.read().decode()
-        self.assertIn('data-catalog="catalog.json.gz"', html)
+        self.assertIn('data-catalog="catalog.bin.gz"', html)
+        self.assertIn('data-hashes="hashes/{chunk}.bin"', html)
+        self.assertNotIn('api/', html)
         self.assertIn('href="style.css"', html)
         self.assertIn('src="app.js"', html)
-        for asset in ('app.js', 'search-worker.js', 'style.css', 'catalog.json.gz'):
+        for asset in ('app.js', 'search-worker.js', 'style.css', 'catalog.js', 'catalog.bin.gz', 'hashes/0.bin'):
             with client.open(base + asset) as response:
                 self.assertEqual(response.status, 200)
-                if asset.endswith('.gz'):
-                    data = decode_catalog(json.loads(gzip.decompress(response.read())))
+                if asset == 'catalog.bin.gz':
+                    container = gzip.decompress(response.read())
+                    data = decode_with(container, lambda generation, index: client.open(
+                        f'{base}hashes/{index}.bin').read())
                     self.assertEqual(data['records']['iso'][0]['metadata']['title'], '日本語')
                     self.assertFalse(data['downloads_enabled'])
+
+    def test_export_layout_has_one_catalog_and_fixed_size_hash_chunks(self):
+        export_site(self.catalog, self.output)
+        web = Path(__file__).resolve().parents[1] / 'pspdb' / 'web'
+        scripts = {path.name for pattern in ('*.js', '*.css') for path in web.glob(pattern)}
+        self.assertTrue({'app.js', 'search-worker.js', 'style.css'} <= scripts)
+        self.assertEqual({path.name for path in self.output.iterdir() if path.is_file()},
+                         scripts | {'.nojekyll', 'catalog.bin.gz', 'index.html'})
+        container = gzip.decompress((self.output / 'catalog.bin.gz').read_bytes())
+        meta = container_meta(container)
+        chunks = sorted((self.output / 'hashes').iterdir())
+        self.assertEqual([chunk.name for chunk in chunks], ['0.bin'])
+        self.assertEqual(chunks[0].stat().st_size, 32 * meta['hash_count'])
+        self.assertLessEqual(meta['hash_count'], HASH_CHUNK_SLOTS)
+        self.assertEqual(bytes.fromhex('a' * 64), chunks[0].read_bytes()[:32])
+
+    def test_export_splits_large_hash_tables_into_chunks(self):
+        folder = self.catalog / 'pkg'
+        for index in range(HASH_CHUNK_SLOTS + 10):
+            record = dict(kind='pkg', schema_version=1, sha256=hashlib.sha256(str(index).encode()).hexdigest(), size_bytes=1, metadata={})
+            (folder / (record['sha256'] + '.json')).write_text(json.dumps(record))
+        export_site(self.catalog, self.output)
+        sizes = {chunk.name: chunk.stat().st_size for chunk in (self.output / 'hashes').iterdir()}
+        meta = container_meta(gzip.decompress((self.output / 'catalog.bin.gz').read_bytes()))
+        self.assertEqual(sizes, {'0.bin': 32 * HASH_CHUNK_SLOTS, '1.bin': 32 * (meta['hash_count'] - HASH_CHUNK_SLOTS)})
+        self.assertEqual(len(decode_export(self.output)['records']['pkg']), HASH_CHUNK_SLOTS + 11)
 
     def test_export_cli_and_destination_guards(self):
         with patch('sys.argv', ['pspdb-web', 'export', '--catalog', str(self.catalog), '--output', str(self.output)]):
             self.assertEqual(main(), 0)
-        before = (self.output / 'catalog.json.gz').read_bytes()
+        before = (self.output / 'catalog.bin.gz').read_bytes()
         with self.assertRaisesRegex(ValueError, 'empty'):
             export_site(self.catalog, self.output)
-        self.assertEqual((self.output / 'catalog.json.gz').read_bytes(), before)
+        self.assertEqual((self.output / 'catalog.bin.gz').read_bytes(), before)
         for output in (self.catalog, self.catalog / 'export', self.root):
             with self.assertRaisesRegex(ValueError, 'separate'):
                 export_site(self.catalog, output)
