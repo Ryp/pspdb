@@ -257,6 +257,63 @@ class PkgCliTests(unittest.TestCase):
                     }])
                 self.assertFalse(list((catalog/'document').rglob('*-ingest.json')))
 
+    def _document_helper(self, base, pages=1):
+        tool = base/'document-helper'
+        tool.write_text(f'''#!{sys.executable}
+import json, sys
+from pathlib import Path
+if sys.argv[1:] == ['--provenance']:
+    print(json.dumps({{'name': 'PSP-DOCUMENT.DAT', 'options': ['page-files-only:1']}}))
+    raise SystemExit
+output = Path(sys.argv[sys.argv.index('--output') + 1])
+if {pages}:
+    (output / 'psp').mkdir()
+    (output / 'psp' / '001.png').write_bytes(b'page')
+''')
+        tool.chmod(0o755)
+        return tool
+
+    def test_paired_manual_accepts_only_304_and_320_byte_companions(self):
+        document = bytes.fromhex('00504744010000000100000000000000') + bytes(144)
+        for size in (303, 304, 320, 321):
+            with self.subTest(size=size), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp); inputs = base/'inputs'; inputs.mkdir(); catalog = base/'catalog'
+                source, _ = pkg_bytes(files_override=[
+                    ('PARAM.SFO', sfo({'TITLE': 'Companion sizes'}), False),
+                    ('MANUAL', None, False), ('MANUAL/DOCUMENT.DAT', document, True),
+                    ('MANUAL/DOCINFO.EDAT', bytes(size), True)])
+                (inputs/'manual.pkg').write_bytes(source)
+                with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(self._document_helper(base))}):
+                    run = self.run_ingest(inputs, '--catalog', catalog, '--store', base/'store')
+                self.assertEqual(run.returncode, 0, run.stderr)
+                tree = json.loads(tree_path(catalog, hashlib.sha256(source).hexdigest()).read_text())
+                extraction = next(e for e in tree['entries'] if e['path'].endswith('/DOCUMENT.DAT'))['extraction']
+                if size in (304, 320):
+                    self.assertNotIn('error', extraction)
+                    self.assertEqual({e['path'] for e in extraction['entries'] if e['type'] == 'file'}, {'psp/001.png'})
+                    self.assertEqual(extraction['dependencies'][0]['size_bytes'], size)
+                else:
+                    self.assertEqual(extraction['error'], 'InvalidDocinfo')
+                    self.assertEqual(extraction['entries'], [])
+
+    def test_manual_with_zero_pages_is_a_successful_empty_extraction(self):
+        document = bytes.fromhex('00504744010000000100000000000000') + bytes(144)
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); inputs = base/'inputs'; inputs.mkdir(); catalog = base/'catalog'
+            source, _ = pkg_bytes(files_override=[
+                ('PARAM.SFO', sfo({'TITLE': 'Empty manual'}), False),
+                ('MANUAL', None, False), ('MANUAL/DOCUMENT.DAT', document, True),
+                ('MANUAL/DOCINFO.EDAT', bytes(320), True)])
+            (inputs/'manual.pkg').write_bytes(source)
+            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(self._document_helper(base, pages=0))}):
+                run = self.run_ingest(inputs, '--catalog', catalog, '--store', base/'store')
+            self.assertEqual(run.returncode, 0, run.stderr)
+            tree = json.loads(tree_path(catalog, hashlib.sha256(source).hexdigest()).read_text())
+            extraction = next(e for e in tree['entries'] if e['path'].endswith('/DOCUMENT.DAT'))['extraction']
+            self.assertNotIn('error', extraction)
+            self.assertEqual(extraction['entries'], [])
+            self.assertEqual(extraction['extractor']['name'], 'PSP-DOCUMENT.DAT')
+
     def test_same_iso_bytes_keep_root_and_nested_cache_roles_separate(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); inputs = base/'inputs'; inputs.mkdir()

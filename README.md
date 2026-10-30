@@ -1097,8 +1097,11 @@ snapshots, reconstruct unused DAT buffers or write intermediate PNG trees.
 DOCUMENT remains an external Python helper: the ingestion adapter still stages
 its explicit inputs and consumes the published page files.
 
-DOCUMENT revision 3 records this byte-input/callback implementation separately
-from earlier revision 2 helper provenance. ISO/PKG revision 4 and nested ISO9660
+DOCUMENT revision 3 recorded the byte-input/callback implementation separately
+from earlier revision 2 helper provenance; revision 4 adds 999-slot tables, distinct
+PS1 PS3-only frames, 320-byte companions, zero-page manuals and the 128 MiB cap
+described below, so earlier DOCUMENT results (including their errors) are
+regenerated into new `v4` pairs and containers embedding them become stale. ISO/PKG revision 4 and nested ISO9660
 revision 3 provide new namespaces for inventories embedding paired manual results.
 Keep historical records intact: different helper hashes/options must not overwrite
 successful results at the same revision. Rebuild the ingester after updating
@@ -1118,19 +1121,30 @@ extracted file; the output directory and DOCUMENT inventory contain only page PN
 All expected pages must pass PNG CRC, end-boundary and pixel decoding checks before
 atomic publication. Late-page failure leaves the caller's output empty and records
 an extraction error in the parent inventory. No whole-disc reconstruction or inferred PBP key is used.
-Support is limited to the exercised 99-slot families with PS3 frames referencing
-PSP frames. Generic PGD, 999-slot tables and unique PS3-only frames remain unsupported.
-Resource limits are 64 MiB input, 256 MiB total page frames, 4096 encrypted-range
-descriptors per page and 16 Mi pixels per image.
+Support covers the 99-slot (header code 0) and 999-slot (code 1) families. PSP
+manuals require PS3 frames identical to the PSP frames; PS1 manuals may also carry
+PS3 frames distinct from the PSP ones, which are decoded, authenticated and
+published as their own `ps3/NNN.png` files (shared frames stay one decode with a
+link). Generic PGD remains unsupported. A structurally valid, fully authenticated
+manual with zero pages succeeds with an empty extraction (no page files, no error).
+A frame whose authenticated PNG is itself truncated (an authoring defect) stays an
+error and publishes nothing.
+Resource limits are 128 MiB input (`MAX_SOURCE` in the helper, `max_document_size`
+in the ingester), 256 MiB total page frames, 4096 encrypted-range descriptors per
+page and 16 Mi pixels per image.
 
 For non-default PSP manuals, PKG, ISO and nested ISO9660 inventories bind an
 unrecognized legacy-PGD `DOCUMENT.DAT` to its exact same-directory `DOCINFO.EDAT`.
 The companion must match the exercised 304-byte/eight-byte-key layout and pass
 outer signature, inner header, MAC-table and complete ciphertext-block checks,
-including padding. Unsupported or damaged present companions fail the root;
-without a companion the unrecognized wrapper remains opaque. The 320-byte
-companion variant and other generic PSPEDAT/PGD extraction remain unsupported;
-the separate NPD EDAT extractor above does not handle those wrappers.
+including padding. Like upstream, a 320-byte companion is also accepted: its final
+16 bytes are unauthenticated trailing data that never feed the signature, MACs or
+key, and only the first 304 bytes must verify. Any other length, or an unsupported
+or damaged present companion, fails the root (`InvalidDocinfo` for a bad length);
+without a companion the unrecognized wrapper remains opaque. Other generic
+PSPEDAT/PGD extraction remains unsupported except the fixed-key `PSP-KEY.EDAT` described
+below; the separate NPD EDAT extractor above does not handle those wrappers. The recorded dependency size is the companion's
+actual size (304 or 320).
 
 Paired results are inline on the original DOCUMENT occurrence, never globally
 cached by its hash alone. `dependencies` records the companion's path relative to

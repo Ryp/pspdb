@@ -1,24 +1,24 @@
 --- a/decrypt_document_ps1.py
 +++ b/decrypt_document_ps1.py
-@@ -1,282 +1,141 @@
+@@ -1,282 +1,152 @@
  #!/usr/bin/env python
  # coding: utf-8
  
 -import os
-+import hashlib
- 
--import hashlib
+-
+ import hashlib
 -from io import BytesIO
 -from pathlib import Path
++
  from Crypto.Cipher import DES
 -from pspdoclib.hexdump import hexdump
-+from pspdoclib.bbox import pops_get_secure_install_id, bbox_mac_gen_enc
- 
+-
 -from pspdoclib.bbox import (
 -    pops_get_secure_install_id,
 -    bbox_mac_gen_enc
 -)
--
++from pspdoclib.bbox import pops_get_secure_install_id, bbox_mac_gen_enc
+ 
 -###################
  
  DES_KEY = bytes.fromhex('39F7EFA16CCE5F4C')
@@ -59,6 +59,41 @@
 -###################
 +def b2i(input_data):
 +    return int.from_bytes(input_data, byteorder='little')
++
++
++def authenticate(data, mac, digest, install_id, label):
++    # Each optional BB-MAC is independent; SHA1 is always mandatory.
++    if mac != bytes(0x10) and mac != bbox_mac_gen_enc(data, install_id):
++        raise ValueError(f'{label}: BB MAC hash mismatch')
++    if digest != sha1_hash(data):
++        raise ValueError(f'{label}: SHA1 hash mismatch')
++
++
++def decode_page(source, info, install_id, ordinal):
++    frame = slice_buf(source, info.offset, info.size)
++    encrypted = frame[:-0x20]
++    authenticate(encrypted, frame[-0x20:-0x10], frame[-0x10:],
++                 install_id, f'Page {ordinal}')
++
++    page_header = des_decrypt(slice_buf(encrypted, 0, 0x20))
++    page_size = b2i(slice_buf(page_header, 0, 4))
++    enc_chunks = b2i(slice_buf(page_header, 8, 4))
++    if enc_chunks > 4096:
++        raise ValueError('Document encryption descriptor budget exceeded')
++    if page_size != info.size:
++        raise ValueError(f'Page {ordinal}: size mismatch')
++
++    descriptor_size = enc_chunks * 8
++    descriptors = des_decrypt(slice_buf(encrypted, 0x20, descriptor_size))
++    payload = bytearray(encrypted[0x20 + descriptor_size:])
++    payload_view = memoryview(payload)
++    # Descriptors can overlap: decrypt each against the current payload, in order.
++    for index in range(enc_chunks):
++        descriptor_offset = index * 8
++        chunk_offset = b2i(slice_buf(descriptors, descriptor_offset, 4))
++        chunk_size = b2i(slice_buf(descriptors, descriptor_offset + 4, 4))
++        chunk = slice_buf(payload_view, chunk_offset, chunk_size)
++        payload_view[chunk_offset:chunk_offset + chunk_size] = des_decrypt(chunk)
  
 -class PS1Doc(object):
 -    def __init__(self, file):
@@ -105,6 +140,40 @@
 -        header_mac  = sliceBuf(in_buf, 0x60, 0x10)
 -        header_hash = sliceBuf(in_buf, 0x70, 0x10)
 -        install_id  = pops_get_secure_install_id(header_out + header_mac)
++    marker = b'IEND\xAE\x42\x60\x82'
++    marker_offset = payload.rfind(marker)
++    if marker_offset == -1:
++        raise ValueError(f'Page {ordinal}: PNG trailer not found')
++    png_size = marker_offset + len(marker)
++    if png_size < 0x43:
++        raise ValueError(f'Page {ordinal}: PNG too small or trailer found too early')
++    # Only the cropped immutable PNG escapes this helper's mutable scratch scope.
++    return bytes(payload_view[:png_size])
++
++
++class PS1Doc:
++    def __init__(self, source_bytes):
++        self._source = memoryview(source_bytes)
++
++    def read_doc_data(self, emit, emit_ps3=None):
++        source = self._source
++        if slice_buf(source, 0, 0x10) != b'\0PGD\1\0\0\0\1\0\0\0\0\0\0\0':
++            raise ValueError('Invalid encrypted PS1 document prefix')
++
++        encrypted_header = slice_buf(source, 0x10, 0x60)
++        header_mac = slice_buf(source, 0x70, 0x10)
++        header_hash = slice_buf(source, 0x80, 0x10)
++        install_id = pops_get_secure_install_id(slice_buf(source, 0x10, 0x70))
++        authenticate(encrypted_header, header_mac, header_hash, install_id, 'DOC header')
++        header = des_decrypt(encrypted_header)
++        if slice_buf(header, 0, 4) != b'DOC ':
++            raise ValueError('Invalid DOC header magic')
++        if slice_buf(header, 4, 8) != b'\0\0\1\0\0\0\1\0':
++            raise ValueError('Invalid DOC version')
++        slot_code = b2i(slice_buf(header, 0x1c, 4))
++        if slot_code not in (0, 1):
++            raise ValueError('Only the verified 99- and 999-slot document tables are supported')
++        slots = 99 if slot_code == 0 else 999
  
 -        if is_enc == 1:
 -            print(f'  > SECURE INSTALL ID: {" ".join(f"{v:02X}" for v in install_id)}')
@@ -285,84 +354,11 @@
 -            ofile.close()
 -        
 -        return self.data
-+def authenticate(data, mac, digest, install_id, label):
-+    # Each optional BB-MAC is independent; SHA1 is always mandatory.
-+    if mac != bytes(0x10) and mac != bbox_mac_gen_enc(data, install_id):
-+        raise ValueError(f'{label}: BB MAC hash mismatch')
-+    if digest != sha1_hash(data):
-+        raise ValueError(f'{label}: SHA1 hash mismatch')
- 
--###################
- 
--def readDocs():
--    docs = [p.as_posix() for p in Path('./in_ps1docs').glob('*.dat')]
--    
--    for di in range(len(docs)):
--        PS1Doc(f'{docs[di]}').readDocData()
-+def decode_page(source, info, install_id, ordinal):
-+    frame = slice_buf(source, info.offset, info.size)
-+    encrypted = frame[:-0x20]
-+    authenticate(encrypted, frame[-0x20:-0x10], frame[-0x10:],
-+                 install_id, f'Page {ordinal}')
- 
--readDocs()
-+    page_header = des_decrypt(slice_buf(encrypted, 0, 0x20))
-+    page_size = b2i(slice_buf(page_header, 0, 4))
-+    enc_chunks = b2i(slice_buf(page_header, 8, 4))
-+    if enc_chunks > 4096:
-+        raise ValueError('Document encryption descriptor budget exceeded')
-+    if page_size != info.size:
-+        raise ValueError(f'Page {ordinal}: size mismatch')
-+
-+    descriptor_size = enc_chunks * 8
-+    descriptors = des_decrypt(slice_buf(encrypted, 0x20, descriptor_size))
-+    payload = bytearray(encrypted[0x20 + descriptor_size:])
-+    payload_view = memoryview(payload)
-+    # Descriptors can overlap: decrypt each against the current payload, in order.
-+    for index in range(enc_chunks):
-+        descriptor_offset = index * 8
-+        chunk_offset = b2i(slice_buf(descriptors, descriptor_offset, 4))
-+        chunk_size = b2i(slice_buf(descriptors, descriptor_offset + 4, 4))
-+        chunk = slice_buf(payload_view, chunk_offset, chunk_size)
-+        payload_view[chunk_offset:chunk_offset + chunk_size] = des_decrypt(chunk)
-+
-+    marker = b'IEND\xAE\x42\x60\x82'
-+    marker_offset = payload.rfind(marker)
-+    if marker_offset == -1:
-+        raise ValueError(f'Page {ordinal}: PNG trailer not found')
-+    png_size = marker_offset + len(marker)
-+    if png_size < 0x43:
-+        raise ValueError(f'Page {ordinal}: PNG too small or trailer found too early')
-+    # Only the cropped immutable PNG escapes this helper's mutable scratch scope.
-+    return bytes(payload_view[:png_size])
-+
-+
-+class PS1Doc:
-+    def __init__(self, source_bytes):
-+        self._source = memoryview(source_bytes)
-+
-+    def read_doc_data(self, emit):
-+        source = self._source
-+        if slice_buf(source, 0, 0x10) != b'\0PGD\1\0\0\0\1\0\0\0\0\0\0\0':
-+            raise ValueError('Invalid encrypted PS1 document prefix')
-+
-+        encrypted_header = slice_buf(source, 0x10, 0x60)
-+        header_mac = slice_buf(source, 0x70, 0x10)
-+        header_hash = slice_buf(source, 0x80, 0x10)
-+        install_id = pops_get_secure_install_id(slice_buf(source, 0x10, 0x70))
-+        authenticate(encrypted_header, header_mac, header_hash, install_id, 'DOC header')
-+        header = des_decrypt(encrypted_header)
-+        if slice_buf(header, 0, 4) != b'DOC ':
-+            raise ValueError('Invalid DOC header magic')
-+        if slice_buf(header, 4, 8) != b'\0\0\1\0\0\0\1\0':
-+            raise ValueError('Invalid DOC version')
-+        if b2i(slice_buf(header, 0x1c, 4)) != 0:
-+            raise ValueError('Only the verified 99-slot document table is supported')
-+
 +        result = attrdict(header=attrdict(), pages=attrdict(info=[]))
 +        result.header.code = slice_buf(header, 0x0c, 0x10).decode('utf-8').rstrip('\0')
-+
-+        info_block_size = 0x31e8
+ 
+-###################
++        info_block_size = 0x31e8 if slots == 99 else 0x1f3e8
 +        encrypted_info = slice_buf(source, 0x90, info_block_size)
 +        info_mac = slice_buf(source, 0x90 + info_block_size, 0x10)
 +        info_hash = slice_buf(source, 0xa0 + info_block_size, 0x10)
@@ -371,10 +367,15 @@
 +        if slice_buf(info_block, 0, 4) != b'\xff\xff\xff\xff':
 +            raise ValueError('Document metadata marker mismatch')
 +        result.header.pages_total = b2i(slice_buf(info_block, 4, 4))
-+        if not 1 <= result.header.pages_total <= 99:
++        if not 0 <= result.header.pages_total <= slots:
 +            raise ValueError('Invalid DOC page count')
-+        result.header.pages_total_ps3 = b2i(slice_buf(info_block, 0x3188, 4))
-+
++        result.header.pages_total_ps3 = b2i(slice_buf(info_block, 8 + 0x80 * slots, 4))
+ 
+-def readDocs():
+-    docs = [p.as_posix() for p in Path('./in_ps1docs').glob('*.dat')]
+-    
+-    for di in range(len(docs)):
+-        PS1Doc(f'{docs[di]}').readDocData()
 +        # Validate the complete table and aggregate budget before emitting any page.
 +        total_frame_bytes = 0
 +        for index in range(result.header.pages_total):
@@ -385,15 +386,25 @@
 +                offset_ps3=b2i(slice_buf(entry, 0x10, 4)),
 +                size_ps3=b2i(slice_buf(entry, 0x1c, 4)),
 +            )
-+            if info.offset < 0x3298 or info.size < 0x40 or info.offset + info.size > len(source):
++            if info.offset < 0xb0 + info_block_size or info.size < 0x40 or info.offset + info.size > len(source):
 +                raise ValueError('Document page frame exceeds its source')
 +            total_frame_bytes += info.size
 +            if total_frame_bytes > 256 * 1024 * 1024:
 +                raise ValueError('Document page expansion budget exceeded')
 +            result.pages.info.append(info)
-+
+ 
+-readDocs()
 +        for ordinal, info in enumerate(result.pages.info, 1):
 +            emit(ordinal, info, decode_page(source, info, install_id, ordinal))
++        if emit_ps3 is not None:
++            for info in result.pages.info[:result.header.pages_total_ps3]:
++                if info.offset_ps3 < 0xb0 + info_block_size or info.size_ps3 < 0x40 or info.offset_ps3 + info.size_ps3 > len(source):
++                    raise ValueError('Document PS3 page frame exceeds its source')
++            shared = {(info.offset, info.size) for info in result.pages.info}
++            for ordinal, info in enumerate(result.pages.info[:result.header.pages_total_ps3], 1):
++                if (info.offset_ps3, info.size_ps3) not in shared:
++                    ps3 = attrdict(offset=info.offset_ps3, size=info.size_ps3)
++                    emit_ps3(ordinal, ps3, decode_page(source, ps3, install_id, ordinal))
 +        return result
 --- a/decrypt_document_psp.py
 +++ b/decrypt_document_psp.py
@@ -422,7 +433,7 @@
  
  ###################
  
-@@ -26,282 +21,157 @@
+@@ -26,282 +21,159 @@
          dict.__init__(self, *args, **kwargs)
          self.__dict__ = self
  
@@ -461,8 +472,29 @@
 -    return value.to_bytes(size, byteorder='little')
 +def b2i(input_data) -> int:
 +    return int.from_bytes(input_data, byteorder='little')
++
++
++def decode_page(source, info, dec_key):
++    frame = slice_buf(source, info.offset, info.size)
++    page_buf = frame[:-0x30]
++    page_hash = frame[-0x30:]
++
++    if page_hash[0x00:0x10] != bytes(0x10):
++        raise ValueError('Document page padding is missing')
  
 -###################
++    check_page_psp = sha1hmac(HMAC_KEY_PSP, page_buf)
++    check_page_ps3 = sha1hmac(HMAC_KEY_PS3, page_buf)
++    if check_page_psp != page_hash[0x10:0x20] or check_page_ps3 != page_hash[0x20:0x30]:
++        raise ValueError('Document page SHA1-HMAC mismatch')
++
++    page_info_head = des_decrypt(dec_key, slice_buf(page_buf, 0x00, 0x20))
++    page_size = b2i(slice_buf(page_info_head, 0x00, 0x04))
++    enc_chunks = b2i(slice_buf(page_info_head, 0x08, 0x04))
++    if enc_chunks > 4096:
++        raise ValueError('Document encryption descriptor budget exceeded')
++    if page_size != info.size:
++        raise ValueError('Document page size mismatch')
  
 -class PSPDoc(object):
 -    def __init__(self, file):
@@ -503,27 +535,6 @@
 -        print(f'\n[:INFO:] Reading: {self.data.file_info.name}_DOCUMENT.DAT')
 -        is_default_key = 1
 -        is_proper_doc = 1
-+def decode_page(source, info, dec_key):
-+    frame = slice_buf(source, info.offset, info.size)
-+    page_buf = frame[:-0x30]
-+    page_hash = frame[-0x30:]
-+
-+    if page_hash[0x00:0x10] != bytes(0x10):
-+        raise ValueError('Document page padding is missing')
-+
-+    check_page_psp = sha1hmac(HMAC_KEY_PSP, page_buf)
-+    check_page_ps3 = sha1hmac(HMAC_KEY_PS3, page_buf)
-+    if check_page_psp != page_hash[0x10:0x20] or check_page_ps3 != page_hash[0x20:0x30]:
-+        raise ValueError('Document page SHA1-HMAC mismatch')
-+
-+    page_info_head = des_decrypt(dec_key, slice_buf(page_buf, 0x00, 0x20))
-+    page_size = b2i(slice_buf(page_info_head, 0x00, 0x04))
-+    enc_chunks = b2i(slice_buf(page_info_head, 0x08, 0x04))
-+    if enc_chunks > 4096:
-+        raise ValueError('Document encryption descriptor budget exceeded')
-+    if page_size != info.size:
-+        raise ValueError('Document page size mismatch')
-+
 +    payload_offset = 0x20 + enc_chunks * 0x08
 +    subheader_out = des_decrypt(dec_key, slice_buf(page_buf, 0x20, enc_chunks * 0x08))
 +    payload = bytearray(slice_buf(page_buf, payload_offset, len(page_buf) - payload_offset))
@@ -651,10 +662,12 @@
 +
 +        data = attrdict(header=attrdict(), pages=attrdict(info=[]))
 +        data.header.code = slice_buf(header_out, 0x0c, 0x10).decode('utf-8').rstrip('\0')
-+        if b2i(slice_buf(header_out, 0x1c, 0x04)) != 0:
-+            raise ValueError('Only the verified 99-slot document table is supported')
++        slot_code = b2i(slice_buf(header_out, 0x1c, 0x04))
++        if slot_code not in (0, 1):
++            raise ValueError('Only the verified 99- and 999-slot document tables are supported')
++        slots = 99 if slot_code == 0 else 999
 +
-+        metadata_size = 0x31e8
++        metadata_size = 0x31e8 if slots == 99 else 0x1f3e8
          sum_metadata_offset = 0x00a0 + metadata_size
 -        check_metadata_psp = sha1hmac(HMAC_KEY_PSP, self.f_dat[0x00a0:sum_metadata_offset])
 -        check_metadata_ps3 = sha1hmac(HMAC_KEY_PS3, self.f_dat[0x00a0:sum_metadata_offset])
@@ -707,27 +720,7 @@
 -            page_info.offset_ps3 = b2i(sliceBuf(entry_data, 0x0010, 0x0004))
 -            page_info.size_ps3   = b2i(sliceBuf(entry_data, 0x001c, 0x0004))
 -            
-+            raise ValueError('Document metadata SHA1-HMAC mismatch')
-+
-+        pages_metadata = des_decrypt(dec_key, metadata_buf)
-+        if slice_buf(pages_metadata, 0x00, 0x04) != b'\xff\xff\xff\xff':
-+            raise ValueError('Document metadata marker mismatch')
-+        data.header.pages_total = b2i(slice_buf(pages_metadata, 0x04, 0x04))
-+        data.header.pages_total_ps3 = b2i(slice_buf(pages_metadata, 0x3188, 0x04))
-+        if not 1 <= data.header.pages_total <= 99:
-+            raise ValueError('Invalid document page count')
-+
-+        # Validate the complete table before exposing any page to the callback.
-+        total_frame_bytes = 0
-+        for index in range(data.header.pages_total):
-+            entry_data = slice_buf(pages_metadata, 0x08 + index * 0x80, 0x80)
-+            page_info = attrdict(
-+                offset=b2i(slice_buf(entry_data, 0x00, 0x04)),
-+                size=b2i(slice_buf(entry_data, 0x0c, 0x04)),
-+                offset_ps3=b2i(slice_buf(entry_data, 0x10, 0x04)),
-+                size_ps3=b2i(slice_buf(entry_data, 0x1c, 0x04)),
-+            )
-             if page_info.offset != page_info.offset_ps3 or page_info.size != page_info.size_ps3:
+-            if page_info.offset != page_info.offset_ps3 or page_info.size != page_info.size_ps3:
 -                print(f'  > PAGE {i+1:03d} DATA MISMATCH!')
 -                return None
 -            
@@ -818,22 +811,41 @@
 -            ofile.close()
 -        
 -        return self.data
++            raise ValueError('Document metadata SHA1-HMAC mismatch')
+ 
+-###################
++        pages_metadata = des_decrypt(dec_key, metadata_buf)
++        if slice_buf(pages_metadata, 0x00, 0x04) != b'\xff\xff\xff\xff':
++            raise ValueError('Document metadata marker mismatch')
++        data.header.pages_total = b2i(slice_buf(pages_metadata, 0x04, 0x04))
++        data.header.pages_total_ps3 = b2i(slice_buf(pages_metadata, 8 + 0x80 * slots, 0x04))
++        if not 0 <= data.header.pages_total <= slots:
++            raise ValueError('Invalid document page count')
+ 
+-def readDocs():
+-    docs = [p.as_posix() for p in Path('./in_pspdocs').glob('*.dat')]
+-    
+-    for di in range(len(docs)):
+-        PSPDoc(f'{docs[di]}').readDocData()
++        # Validate the complete table before exposing any page to the callback.
++        total_frame_bytes = 0
++        for index in range(data.header.pages_total):
++            entry_data = slice_buf(pages_metadata, 0x08 + index * 0x80, 0x80)
++            page_info = attrdict(
++                offset=b2i(slice_buf(entry_data, 0x00, 0x04)),
++                size=b2i(slice_buf(entry_data, 0x0c, 0x04)),
++                offset_ps3=b2i(slice_buf(entry_data, 0x10, 0x04)),
++                size_ps3=b2i(slice_buf(entry_data, 0x1c, 0x04)),
++            )
++            if page_info.offset != page_info.offset_ps3 or page_info.size != page_info.size_ps3:
 +                raise ValueError('Document PSP and PS3 page data mismatch')
-+            if page_info.offset < 0x32b8 or page_info.size < 0x50 or page_info.offset + page_info.size > len(source):
++            if page_info.offset < 0xd0 + metadata_size or page_info.size < 0x50 or page_info.offset + page_info.size > len(source):
 +                raise ValueError('Document page frame exceeds its source')
 +            total_frame_bytes += page_info.size
 +            if total_frame_bytes > 256 * 1024 * 1024:
 +                raise ValueError('Document page expansion budget exceeded')
 +            data.pages.info.append(page_info)
  
--###################
--
--def readDocs():
--    docs = [p.as_posix() for p in Path('./in_pspdocs').glob('*.dat')]
--    
--    for di in range(len(docs)):
--        PSPDoc(f'{docs[di]}').readDocData()
--
 -readDocs()
 +        for ordinal, info in enumerate(data.pages.info, 1):
 +            emit(ordinal, info, decode_page(source, info, dec_key))
@@ -917,7 +929,7 @@
      outbuf[:data_size] = payload
 --- a/pspdoclib/free_edata.py
 +++ b/pspdoclib/free_edata.py
-@@ -1,87 +1,23 @@
+@@ -1,87 +1,25 @@
 -import os
 -
 -import struct
@@ -973,8 +985,10 @@
 -    
 -    # Init PSP ECDSA
 +    # Admit only the observed signed 0x80-byte EDAT header and 0xb0-byte PGD.
++    # Upstream also allows 0x140 bytes: the final 16 bytes are unauthenticated
++    # trailing data and are never an input to signature, MAC or key recovery.
 +    # The name is deliberately not a cryptographic input or a lookup hint.
-+    if len(buf) != 0x130 or buf[:0x10] != b'\x00PSPEDAT\x02\0\0\0\x80\0\0\0':
++    if len(buf) not in (0x130, 0x140) or buf[:0x10] != b'\x00PSPEDAT\x02\0\0\0\x80\0\0\0':
 +        raise ValueError('Unsupported DOCINFO.EDAT layout')
 +
      ecdsa = PSPECDSA()
@@ -1012,7 +1026,7 @@
 -    print(f'  > SECURE INSTALL ID: {" ".join(f"{v:02X}" for v in install_id)}')
 -    print(f'  > EXTRACTED DOC KEY: {" ".join(f"{v:02X}" for v in binkey)}')
 -    
-+        binkey, _ = bbox_decrypt_blob(buf[0x80:])
++        binkey, _ = bbox_decrypt_blob(buf[0x80:0x130])
 +    except BBoxException:
 +        raise ValueError('DOCINFO.EDAT authentication or layout validation failed') from None
 +    if len(binkey) != 8:

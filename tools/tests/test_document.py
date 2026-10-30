@@ -50,14 +50,17 @@ def _protect(data, variant):
     )
 
 
-def _document(variant, pages, document_key=None, encrypted_ranges=()):
+def _document(variant, pages, document_key=None, encrypted_ranges=(), slots=99, ps3_only=()):
     header = bytearray(0x60)
     header[:0x0c] = b'DOC \0\0\1\0\0\0\1\0'
     code = b'../../escape'
     header[0x0c:0x0c + len(code)] = code
-    # The zero size flag at 0x1c selects all 99 metadata slots.
+    # Size flag 0x1c: 0 selects 99 metadata slots, 1 selects 999.
+    struct.pack_into('<I', header, 0x1c, 0 if slots == 99 else 1)
+    metadata_size = 0x31e8 if slots == 99 else 0x1f3e8
+    # PS1 only: PS3 pages whose frames differ from the PSP frames.
     frames = []
-    for png in pages:
+    for png in (*pages, *ps3_only):
         payload = png + bytes(-len(png) % 8)
         for start, size in reversed(encrypted_ranges):
             payload = (payload[:start] + _encrypt(payload[start:start + size], variant, document_key)
@@ -70,18 +73,20 @@ def _document(variant, pages, document_key=None, encrypted_ranges=()):
         frames.append(_protect(_encrypt(frame_header, variant, document_key)
                                + _encrypt(descriptors, variant, document_key) + payload, variant))
 
-    offset = 0x3298 if variant == 'ps1' else 0x32b8
+    offset = (0xb0 if variant == 'ps1' else 0xd0) + metadata_size
     offsets = []
     for frame in frames:
         offsets.append(offset)
         offset += len(frame)
 
-    metadata = bytearray(0x31e8)
+    metadata = bytearray(metadata_size)
     struct.pack_into('<II', metadata, 0, 0xffffffff, len(pages))
-    struct.pack_into('<I', metadata, 0x3188, len(pages))
-    for index, frame in enumerate(frames):
+    struct.pack_into('<I', metadata, 8 + 0x80 * slots, len(pages))
+    for index, frame in enumerate(frames[:len(pages)]):
         entry = 8 + index * 0x80
         ps3_index = len(pages) - index - 1 if variant == 'ps1' else index
+        if ps3_only:
+            ps3_index = len(pages) + index
         struct.pack_into('<I', metadata, entry, offsets[index])
         struct.pack_into('<I', metadata, entry + 0x0c, len(frame))
         struct.pack_into('<I', metadata, entry + 0x10, offsets[ps3_index])
@@ -95,7 +100,7 @@ def _document(variant, pages, document_key=None, encrypted_ranges=()):
     )
 
 
-def _docinfo(executable, document_key, descriptor=(8, 0x400, 0x90)):
+def _docinfo(executable, document_key, descriptor=(8, 0x400, 0x90), trailing=b''):
     # Use the crypto shipped inside the configured pinned zipapp, not a new
     # implementation. All keys and signatures here are deterministic test data.
     sys.path.insert(0, shutil.which(executable) or executable)
@@ -129,7 +134,7 @@ def _docinfo(executable, document_key, descriptor=(8, 0x400, 0x90)):
     signature = PSPECDSA().sign(
         hashlib.sha1(outer[:0x58]).digest(), PSP_KEYS['EDATA_PRIVKEY'], k=1)
     outer[0x58:0x80] = b''.join(signature)
-    return bytes(outer + inner)
+    return bytes(outer + inner) + trailing
 
 
 class DocumentIntegrationTests(unittest.TestCase):
@@ -277,6 +282,105 @@ class DocumentIntegrationTests(unittest.TestCase):
                 result, _, output = self._extract(Path(directory), document, companion)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(list(output.iterdir()), [])
+
+    def test_320_byte_companion_accepts_only_unauthenticated_trailing_data(self):
+        key = bytes(range(8))
+        document = _document('psp', self.pages, key)
+        for trailing in (bytes(16), bytes(range(200, 216))):
+            with self.subTest(trailing=trailing.hex()), tempfile.TemporaryDirectory() as directory:
+                companion = _docinfo(self.executable, key, trailing=trailing)
+                self.assertEqual(len(companion), 320)
+                result, _, output = self._extract(Path(directory), document, companion)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                manifest = json.loads(result.stdout)
+                self.assertEqual(manifest['docinfo'], {
+                    'sha256': hashlib.sha256(companion).hexdigest(), 'size_bytes': 320})
+                self.assertEqual((output / 'psp/002.png').read_bytes(), self.pages[1])
+        # The authenticated part is still checked in a 320-byte file, and other
+        # lengths stay unsupported.
+        base = _docinfo(self.executable, key)
+        for name, companion in (
+                ('tampered-mac-table', base[:0x120] + bytes([base[0x120] ^ 1]) + base[0x121:] + bytes(16)),
+                ('tampered-signature', bytes([base[0] ^ 1]) + base[1:] + bytes(16)),
+                ('tampered-signature-digest', base[:0x58] + bytes([base[0x58] ^ 1]) + base[0x59:] + bytes(16)),
+                ('short-by-one', base[:-1]), ('long-by-one', base + bytes(17)), ('304-plus-15', base + bytes(15))):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                result, _, output = self._extract(Path(directory), document, companion)
+                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(list(output.iterdir()), [])
+
+    def test_999_slot_tables_decode_for_both_variants_and_with_companion(self):
+        key = bytes(range(8))
+        for variant, document_key, companion in (
+                ('ps1', None, None), ('psp', None, None),
+                ('psp', key, _docinfo(self.executable, key, trailing=bytes(16)))):
+            with self.subTest(variant=variant, paired=companion is not None), tempfile.TemporaryDirectory() as directory:
+                document = _document(variant, self.pages, document_key, slots=999)
+                result, _, output = self._extract(Path(directory), document, companion)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual((output / 'psp/001.png').read_bytes(), self.pages[0])
+                self.assertEqual((output / 'psp/002.png').read_bytes(), self.pages[1])
+                self.assertEqual(len(json.loads(result.stdout)['pages']), 4)
+        with tempfile.TemporaryDirectory() as directory:
+            document = bytearray(_document('psp', self.pages, slots=999))
+            document[0xa0 + 5] ^= 1  # authenticated 999-slot metadata
+            result, _, output = self._extract(Path(directory), bytes(document))
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(list(output.iterdir()), [])
+
+    def test_ps1_ps3_only_frames_are_published_beside_shared_frames(self):
+        extra = (_png((1, 2, 3)), _png((200, 100, 50)))
+        for slots in (99, 999):
+            with self.subTest(slots=slots), tempfile.TemporaryDirectory() as directory:
+                document = _document('ps1', self.pages, slots=slots, ps3_only=extra)
+                result, _, output = self._extract(Path(directory), document)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                for name, png in (('psp/001.png', self.pages[0]), ('psp/002.png', self.pages[1]),
+                                  ('ps3/001.png', extra[0]), ('ps3/002.png', extra[1])):
+                    self.assertEqual((output / name).read_bytes(), png, name)
+                pages = {page['path']: page for page in json.loads(result.stdout)['pages']}
+                self.assertEqual(set(pages), {'psp/001.png', 'psp/002.png', 'ps3/001.png', 'ps3/002.png'})
+                frame = pages['ps3/002.png']['source_frame']
+                self.assertEqual(hashlib.sha256(document[frame['offset']:frame['offset'] + frame['size_bytes']]).hexdigest(),
+                                 frame['sha256'])
+        with tempfile.TemporaryDirectory() as directory:
+            document = bytearray(_document('ps1', self.pages, ps3_only=extra))
+            document[-1] ^= 1  # damaged final PS3-only frame publishes nothing
+            result, _, output = self._extract(Path(directory), bytes(document))
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(list(output.iterdir()), [])
+
+    def test_valid_document_without_pages_publishes_nothing_successfully(self):
+        for variant, slots in (('ps1', 99), ('psp', 99), ('ps1', 999)):
+            with self.subTest(variant=variant, slots=slots), tempfile.TemporaryDirectory() as directory:
+                document = _document(variant, (), slots=slots)
+                result, _, output = self._extract(Path(directory), document)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                manifest = json.loads(result.stdout)
+                self.assertEqual(manifest['pages'], [])
+                self.assertEqual(manifest['source']['size_bytes'], len(document))
+                self.assertEqual(list(output.iterdir()), [])
+        with tempfile.TemporaryDirectory() as directory:  # truncated header stays invalid
+            result, _, output = self._extract(Path(directory), _document('ps1', ())[:0x3000])
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_source_cap_is_128_mib(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Only the size gate is under test; the oversized source fails there
+            # while one byte less passes it and is rejected as a bad wrapper.
+            limit = 128 * 1024 * 1024
+            for size, message in ((limit + 1, 'byte budget'), (limit, 'Not a supported')):
+                work = root / str(size); work.mkdir()
+                source = work / 'DOCUMENT.DAT'
+                with source.open('wb') as stream:
+                    stream.truncate(size)
+                output = work / 'output'; output.mkdir()
+                result = subprocess.run([self.executable, str(source), '--output', str(output)],
+                                        capture_output=True, text=True, timeout=60)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                source.unlink()
 
     def test_adjacent_companion_is_never_inferred(self):
         with tempfile.TemporaryDirectory() as directory:

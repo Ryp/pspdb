@@ -21,7 +21,8 @@ pub const Output = struct {
         return provenance;
     }
 
-    pub fn walk(self: Output, allocator: std.mem.Allocator, io: std.Io, context: anytype, comptime emit: anytype) !void {
+    /// `allow_empty` admits a valid extraction that produced no files (a zero-page manual).
+    pub fn walk(self: Output, allocator: std.mem.Allocator, io: std.Io, allow_empty: bool, context: anytype, comptime emit: anytype) !void {
         var work = try std.Io.Dir.cwd().openDir(io, self.path, .{});
         defer work.close(io);
         var directory = try work.openDir(io, "output", .{ .iterate = true });
@@ -42,7 +43,7 @@ pub const Output = struct {
                 else => return error.UnsupportedExtractedEntry,
             }
         }
-        if (files == 0) return error.EmptyExtraction;
+        if (files == 0 and !allow_empty) return error.EmptyExtraction;
     }
 };
 

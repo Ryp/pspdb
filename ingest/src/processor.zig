@@ -29,6 +29,13 @@ const Store = store_objects.Store;
 const umd = @import("umd_data.zig");
 const sfo = @import("sfo.zig");
 const model = @import("inventory.zig");
+
+/// DOCUMENT input cap (helper `MAX_SOURCE` must match) and the authenticated
+/// DOCINFO.EDAT size; 320-byte companions carry 16 unauthenticated trailing bytes.
+const max_document_size = 128 * 1024 * 1024;
+const document_docinfo_size = 304;
+const document_docinfo_padded_size = 320;
+const pce_key_name = "PSP-KEY.EDAT";
 const Entry = model.Entry;
 const Result = model.Result;
 const Dependency = model.Dependency;
@@ -673,8 +680,8 @@ const Inventory = struct {
         };
     }
 
-    fn walk_external(self: *Inventory, output: external_extractor.Output) !void {
-        output.walk(self.allocator, self.io, self, Inventory.emit_view) catch |err| {
+    fn walk_external(self: *Inventory, kind: extractor.Kind, output: external_extractor.Output) !void {
+        output.walk(self.allocator, self.io, kind == .document, self, Inventory.emit_view) catch |err| {
             switch (err) {
                 error.EmptyExtraction, error.UnsupportedExtractedEntry, error.InvalidIsoPath, error.DuplicateIsoPath => {},
                 else => self.fatal = true,
@@ -693,11 +700,11 @@ const Inventory = struct {
             return .{ .name = "pspdb-pops", .version = revisions.pops, .options = &.{"in-memory"} };
         }
         if (kind == .document) {
-            if (companion.len != 304) return error.InvalidDocinfo;
-            if (input.len > 64 * 1024 * 1024) return error.InvalidDocument;
+            if (companion.len != document_docinfo_size and companion.len != document_docinfo_padded_size) return error.InvalidDocinfo;
+            if (input.len > max_document_size) return error.InvalidDocument;
         }
         output.* = try self.extract_external(hash, input, kind, if (kind == .document) companion else null);
-        try self.walk_external(output.*.?);
+        try self.walk_external(kind, output.*.?);
         return output.*.?.provenance.?.value;
     }
 
@@ -999,7 +1006,7 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
         },
         else => blk: {
             output.* = try inventory.extract_external(task.hash, task.input.bytes, task.kind, null);
-            try inventory.walk_external(output.*.?);
+            try inventory.walk_external(task.kind, output.*.?);
             break :blk output.*.?.provenance.?.value;
         },
     };
@@ -1042,11 +1049,11 @@ fn reuse_entries(allocator: std.mem.Allocator, io: std.Io, entries: []SavedEntry
             const size = entry.size_bytes orelse return error.CatalogConflict;
             if (!std.mem.eql(u8, tree.sha256, hash) or tree.size_bytes != size) return error.CatalogConflict;
             const document = std.mem.eql(u8, std.Io.Dir.path.basename(entry.path), "DOCUMENT.DAT");
-            if (document and size > 64 * 1024 * 1024) return error.CatalogConflict;
+            if (document and size > max_document_size) return error.CatalogConflict;
             var prefix: [24]u8 = undefined;
             if (!try verify_stored_input(allocator, io, store, hash, size, &prefix)) return null;
             if (document and extractor.paired_document_candidate(prefix[0..@intCast(@min(size, prefix.len))])) {
-                if (tree.dependencies.len != 1 or tree.dependencies[0].size_bytes != 304 or
+                if (tree.dependencies.len != 1 or (tree.dependencies[0].size_bytes != document_docinfo_size and tree.dependencies[0].size_bytes != document_docinfo_padded_size) or
                     !std.mem.eql(u8, std.Io.Dir.path.basename(tree.dependencies[0].path), "DOCINFO.EDAT"))
                     return error.CatalogConflict;
                 const parent = std.Io.Dir.path.dirname(entry.path) orelse "";
