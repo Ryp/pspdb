@@ -113,6 +113,18 @@ fn source_error(allocator: std.mem.Allocator, bytes: []const u8, hashes: SourceH
     return .{ .kind = kind, .size_bytes = bytes.len, .sha256 = hashes.sha256, .sha1 = hashes.sha1, .has_metadata = false, .@"error" = try allocator.dupe(u8, @errorName(err)), .extraction_errors = 1 };
 }
 
+/// A failed package still records its unencrypted header identity (content
+/// ID, content type, flags) so it stays findable; nothing decrypted is kept.
+fn pkg_source_error(allocator: std.mem.Allocator, bytes: []const u8, hashes: SourceHashes, err: anyerror) !Result {
+    var result = try source_error(allocator, bytes, hashes, .pkg, err);
+    errdefer result.deinit(allocator);
+    const header = pkg.read_header(bytes) catch return result;
+    result.content_id = try allocator.dupe(u8, header.content_id);
+    result.content_type = header.content_type orelse 0;
+    result.package_flags = header.package_flags;
+    return result;
+}
+
 fn hash_source(bytes: []const u8) SourceHashes {
     var sha256 = std.crypto.hash.sha2.Sha256.init(.{});
     var sha1 = std.crypto.hash.Sha1.init(.{});
@@ -200,8 +212,8 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
         if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, .pkg)) return null;
     }
     if (bytes.len == 0) return try source_error(allocator, bytes, hashes, .pkg, error.EmptyFile);
-    const package = pkg.Package.init(bytes) catch |err| return try source_error(allocator, bytes, hashes, .pkg, err);
-    var result = read_pkg_metadata(allocator, package) catch |err| return try source_error(allocator, bytes, hashes, .pkg, err);
+    const package = pkg.Package.init(bytes) catch |err| return try pkg_source_error(allocator, bytes, hashes, err);
+    var result = read_pkg_metadata(allocator, package) catch |err| return try pkg_source_error(allocator, bytes, hashes, err);
     errdefer result.deinit(allocator);
     result.sha256 = hashes.sha256;
     result.sha1 = hashes.sha1;

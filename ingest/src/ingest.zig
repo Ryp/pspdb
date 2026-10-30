@@ -454,10 +454,11 @@ const Pool = struct {
             const line = std.json.Stringify.valueAlloc(self.allocator, .{
                 .source = path,
                 .kind = result.kind,
+                .content_id = if (result.content_id.len != 0) @as(?[]const u8, result.content_id) else null,
                 .sha256 = @as([]const u8, &result.sha256),
                 .size_bytes = result.size_bytes,
                 .@"error" = result.@"error",
-            }, .{}) catch return;
+            }, .{ .emit_null_optional_fields = false }) catch return;
             defer self.allocator.free(line);
             log(self.io, "{s}\n", .{line});
             return;

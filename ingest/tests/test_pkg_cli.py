@@ -165,7 +165,9 @@ class PkgCliTests(unittest.TestCase):
                 digest = hashlib.sha256(source).hexdigest()
                 record = json.loads(result_path(catalog, 'pkg', digest).read_text())
                 self.assertEqual(record['sha1'], hashlib.sha1(source).hexdigest())
-                self.assertNotIn('metadata', record)
+                # Only the unencrypted header identity survives; nothing from the SFO.
+                self.assertEqual(record['metadata'], {'content_id': 'UP9000-NPUG00001_00-FIXTURE000000000',
+                                                      'content_type': content_type, 'title_id': 'NPUG00001'})
                 tree = json.loads(tree_path(catalog, digest).read_text())
                 self.assertEqual(tree['error'], error)
                 self.assertEqual(tree['entries'], [])
@@ -314,7 +316,9 @@ class PkgCliTests(unittest.TestCase):
                 self.assertEqual(record['sha1'], hashlib.sha1(data).hexdigest())
                 tree = json.loads(tree_path(catalog, digest).read_text())
                 if mode in ('truncated', 'unsupported', 'offset'):
-                    self.assertNotIn('metadata', record)
+                    self.assertEqual(record['metadata'], {'content_id': 'UP9000-NPUG00001_00-FIXTURE000000000',
+                                                          'content_type': 0x15 if mode == 'unsupported' else 7,
+                                                          'title_id': 'NPUG00001'})
                     self.assertTrue(tree['error'])
                     self.assertEqual(tree['entries'], [])
                 elif mode != 'nested_failure':

@@ -109,24 +109,31 @@ fn publish_pkg(allocator: std.mem.Allocator, io: std.Io, root: []const u8, resul
     const fields = result.metadata;
     const Metadata = struct {
         content_id: []const u8,
-        content_type: u32,
+        content_type: ?u32,
         package_flags: ?u32,
         title_id: []const u8,
-        category: ?[]const u8,
-        boot_category: ?[]const u8,
-        boot_file: ?[]const u8,
-        disc_id: ?[]const u8,
-        disc_version: ?[]const u8,
-        title: ?[]const u8,
-        required_firmware: ?[]const u8,
+        category: ?[]const u8 = null,
+        boot_category: ?[]const u8 = null,
+        boot_file: ?[]const u8 = null,
+        disc_id: ?[]const u8 = null,
+        disc_version: ?[]const u8 = null,
+        title: ?[]const u8 = null,
+        required_firmware: ?[]const u8 = null,
     };
+    const metadata: ?Metadata = if (result.has_metadata)
+        .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .category = fields.category, .boot_category = result.boot_category, .boot_file = result.boot_file, .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware }
+    else if (result.content_id.len != 0)
+        // A failed package keeps only its unencrypted header identity.
+        .{ .content_id = result.content_id, .content_type = if (result.content_type != 0) result.content_type else null, .package_flags = result.package_flags, .title_id = result.content_id[7..16] }
+    else
+        null;
     const record = .{
         .kind = "pkg",
         .schema_version = @as(u32, 1),
         .sha256 = @as([]const u8, &result.sha256),
         .sha1 = @as([]const u8, &result.sha1),
         .size_bytes = result.size_bytes,
-        .metadata = if (result.has_metadata) @as(?Metadata, .{ .content_id = result.content_id, .content_type = result.content_type, .package_flags = result.package_flags, .title_id = result.content_id[7..16], .category = fields.category, .boot_category = result.boot_category, .boot_file = result.boot_file, .disc_id = fields.disc_id, .disc_version = fields.disc_version, .title = fields.title, .required_firmware = fields.required_firmware }) else null,
+        .metadata = metadata,
     };
     const tree = .{ .kind = "tree", .schema_version = @as(u32, 1), .sha256 = record.sha256, .size_bytes = record.size_bytes, .extractor = .{ .name = "pspdb-ingest", .version = revisions.pkg, .options = [0][]const u8{} }, .entries = result.entries, .@"error" = result.@"error" };
     try write_record(allocator, io, root, "pkg", revisions.pkg, &result.sha256, "tree", tree);

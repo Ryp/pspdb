@@ -9,6 +9,42 @@ fn integer(comptime T: type, bytes: []const u8, offset: usize) !T {
     return std.mem.readInt(T, bytes[offset..][0..@sizeOf(T)], .big);
 }
 
+/// Identity fields from the unencrypted header. They are readable even when
+/// the platform, content type or payload is unsupported, so a failed package
+/// can still be catalogued under its content ID.
+pub const Header = struct {
+    content_id: []const u8,
+    content_type: ?u32 = null,
+    package_flags: ?u32 = null,
+    table: ?u32 = null,
+};
+
+pub fn read_header(bytes: []const u8) !Header {
+    if (bytes.len < 192 or !std.mem.eql(u8, bytes[0..4], "\x7fPKG")) return error.InvalidPkg;
+    const cid = std.mem.sliceTo(bytes[48..96], 0);
+    if (cid.len != 36 or cid[6] != '-' or cid[16] != '_' or cid[19] != '-' or !std.unicode.utf8ValidateSlice(cid)) return error.InvalidPkg;
+    for (cid) |c| if (c < 32 or c > 126) return error.InvalidPkg;
+    var header: Header = .{ .content_id = cid };
+    var pos: usize = try integer(u32, bytes, 8);
+    const count = try integer(u32, bytes, 12);
+    const meta_size: usize = try integer(u32, bytes, 16);
+    if (pos < 192 or pos > bytes.len or meta_size > bytes.len - pos) return error.InvalidPkg;
+    const end = pos + meta_size;
+    for (0..count) |_| {
+        if (pos > end or end - pos < 8) return error.InvalidPkg;
+        const kind = try integer(u32, bytes, pos);
+        const length: usize = try integer(u32, bytes, pos + 4);
+        pos += 8;
+        if (length > end - pos) return error.InvalidPkg;
+        const value = bytes[pos..][0..length];
+        if (kind == 2) header.content_type = try integer(u32, value, 0);
+        if (kind == 3) header.package_flags = try integer(u32, value, 0);
+        if (kind == 13) header.table = try integer(u32, value, 0);
+        pos += length;
+    }
+    return header;
+}
+
 pub const Package = struct {
     bytes: []const u8,
     encrypted: []const u8,
@@ -26,27 +62,11 @@ pub const Package = struct {
         const offset = std.math.cast(usize, try integer(u64, bytes, 32)) orelse return error.InvalidPkg;
         const size = std.math.cast(usize, try integer(u64, bytes, 40)) orelse return error.InvalidPkg;
         if (offset < 192 or offset > bytes.len or size > bytes.len - offset) return error.InvalidPkg;
-        const cid = std.mem.sliceTo(bytes[48..96], 0);
-        if (cid.len != 36 or cid[6] != '-' or cid[16] != '_' or cid[19] != '-' or !std.unicode.utf8ValidateSlice(cid)) return error.InvalidPkg;
-        for (cid) |c| if (c < 32 or c > 126) return error.InvalidPkg;
-        var result: Package = .{ .bytes = bytes, .encrypted = bytes[offset..][0..size], .iv = bytes[112..128].*, .count = try integer(u32, bytes, 20), .table = 0, .content_id = cid, .content_type = 0 };
-        var pos: usize = try integer(u32, bytes, 8);
-        const count = try integer(u32, bytes, 12);
-        const meta_size: usize = try integer(u32, bytes, 16);
-        if (pos < 192 or pos > offset or meta_size > offset - pos) return error.InvalidPkg;
-        const end = pos + meta_size;
-        for (0..count) |_| {
-            if (pos > end or end - pos < 8) return error.InvalidPkg;
-            const kind = try integer(u32, bytes, pos);
-            const length: usize = try integer(u32, bytes, pos + 4);
-            pos += 8;
-            if (length > end - pos) return error.InvalidPkg;
-            const value = bytes[pos..][0..length];
-            if (kind == 2) result.content_type = try integer(u32, value, 0);
-            if (kind == 3) result.package_flags = try integer(u32, value, 0);
-            if (kind == 13) result.table = try integer(u32, value, 0);
-            pos += length;
-        }
+        const header = try read_header(bytes);
+        // The metadata table must also end before the encrypted payload.
+        const meta_pos: usize = try integer(u32, bytes, 8);
+        if (meta_pos > offset or try integer(u32, bytes, 16) > offset - meta_pos) return error.InvalidPkg;
+        const result: Package = .{ .bytes = bytes, .encrypted = bytes[offset..][0..size], .iv = bytes[112..128].*, .count = try integer(u32, bytes, 20), .table = header.table orelse 0, .content_id = header.content_id, .content_type = header.content_type orelse 0, .package_flags = header.package_flags };
         // Type 9 includes PSP themes; PS3 themes remain excluded by the platform check.
         switch (result.content_type) {
             6, 7, 9, 0xe, 0xf, 0x10 => {},
@@ -121,4 +141,26 @@ test "invalid and unsupported PKG headers" {
     var bytes: [192]u8 = @splat(0);
     @memcpy(bytes[0..4], "\x7fPKG");
     try std.testing.expectError(error.UnsupportedPkg, Package.init(&bytes));
+}
+
+test "header identity survives an unsupported platform" {
+    var bytes: [256]u8 = @splat(0);
+    @memcpy(bytes[0..4], "\x7fPKG");
+    std.mem.writeInt(u16, bytes[4..6], 0x8000, .big);
+    std.mem.writeInt(u16, bytes[6..8], 1, .big); // PS3 platform
+    @memcpy(bytes[48..84], "EP0082-NPEB00173_00-THEXDERNEO000000");
+    std.mem.writeInt(u32, bytes[8..12], 192, .big);
+    std.mem.writeInt(u32, bytes[12..16], 1, .big);
+    std.mem.writeInt(u32, bytes[16..20], 12, .big);
+    std.mem.writeInt(u32, bytes[192..196], 2, .big);
+    std.mem.writeInt(u32, bytes[196..200], 4, .big);
+    std.mem.writeInt(u32, bytes[200..204], 5, .big);
+    try std.testing.expectError(error.UnsupportedPkg, Package.init(&bytes));
+    const header = try read_header(&bytes);
+    try std.testing.expectEqualStrings("EP0082-NPEB00173_00-THEXDERNEO000000", header.content_id);
+    try std.testing.expectEqual(@as(?u32, 5), header.content_type);
+    try std.testing.expectEqual(@as(?u32, null), header.package_flags);
+    // A malformed content ID gives no identity at all.
+    bytes[54] = 'X';
+    try std.testing.expectError(error.InvalidPkg, read_header(&bytes));
 }

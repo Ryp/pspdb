@@ -110,6 +110,12 @@ SFO bytes remain unchanged; other invalid high bytes are rejected. Nested PBP
 `PARAM.SFO` validation applies the same title rule since PBP revision 5;
 standalone updater validation retains strict UTF-8.
 
+A PKG that fails extraction (unsupported platform, invalid or missing
+`PARAM.SFO`, …) still records its unencrypted header identity when the header
+is readable: `metadata` then holds only `content_id`, `title_id`, and
+`content_type`/`package_flags` when declared. Successful packages are unchanged,
+so this needs no revision bump either.
+
 ISO revision 6 and nested ISO9660 revision 4 preserve valid UTF-8 filenames
 verbatim. Invalid-UTF-8 Rock Ridge names are converted strictly from CP932;
 undecodable input and unsafe paths remain errors. Shared-extent aliases retain
