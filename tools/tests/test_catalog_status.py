@@ -425,7 +425,7 @@ class CatalogStatusTests(unittest.TestCase):
         root, source = '1'*64, 'b'*64
         path = self.write('pbp', '1', root, [source])
         tree = json.loads(path.read_text())
-        for name, kind in [('pops', 'pops'), ('pspdb-pops', 'pops'), ('PSXtract-2', 'psx')]:
+        for name, kind in [('pops', 'pops'), ('pspdb-pops', 'pops'), ('pspdb-psx', 'psx')]:
             with self.subTest(name=name):
                 decoder = dict(name=name, version='1', sha256='c'*64, options=[])
                 self.current[kind] = decoder

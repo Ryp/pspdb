@@ -1,0 +1,38 @@
+PSPDB native PSX ATRAC3 decoder - licensing notice
+==================================================
+
+Files in this directory:
+
+  atrac3data.h            FFmpeg libavcodec/atrac3data.h (tables removed that the
+                          PSX transport does not use). LGPL-2.1-or-later.
+  pspdb_atrac3.c          Derived from FFmpeg libavcodec/atrac3.c and atrac.c
+  pspdb_atrac3.h          (commit 59dd21047e86badeb1b142dff03f18acbbd074fa),
+                          trimmed to the 2-channel "SINGLE" coding mode the PSX
+                          transport selects, with libavutil/libavcodec glue
+                          replaced by a small bit reader and VLC table builder.
+                          Copyright (c) 2006-2008 Maxim Poliakovski,
+                          Benjamin Larsson. LGPL-2.1-or-later.
+  pspdb_sony_imlt.c       PSPDB arithmetic translating the original PSX ATRAC3
+  pspdb_sony_gain.c       decoder (formerly tools/patches/ffmpeg-atrac3-exact.patch),
+  pspdb_sony_tables.h     GPL-3.0-or-later; combined with the LGPL code above in
+  pspdb_qmf_coefficients.h one work distributed under GPL-3.0-or-later (LGPL-2.1
+                          section 3 permits relicensing LGPL code under the GPL).
+  pspdb_atrac3_tables.h   FFmpeg init_imdct_window()/atrac_generate_tables()
+                          results (window and scale-factor tables) as binary32
+                          bit patterns.
+  fragment.at3            First 60 frames (23,040 bytes) of an unscrambled PSX
+                          ATRAC3 CDDA payload, used only by the unit tests.
+  COPYING.LGPLv2.1        FFmpeg's copy of the GNU LGPL version 2.1.
+
+FFmpeg is free software; you can redistribute it and/or modify it under the
+terms of the GNU Lesser General Public License as published by the Free
+Software Foundation; either version 2.1 of the License, or (at your option) any
+later version. FFmpeg is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for
+more details. FFmpeg source: https://ffmpeg.org/ (pinned commit above).
+
+Exactness contract: pspdb_atrac3.c relies on x87 `long double` (80-bit) and
+volatile binary32 stores. Compile it without fast-math or FP contraction. The
+build verified the decoder byte-identical to the Sony ACM oracle for a whole
+PS1 Classics track (Vib-Ribbon track 02, 28,052,940 PCM bytes).

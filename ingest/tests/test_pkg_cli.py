@@ -194,15 +194,7 @@ class PkgCliTests(unittest.TestCase):
                 + 'assert source == ' + repr(pbp) + '\n'
                 + 'pathlib.Path(sys.argv[2]).write_bytes(' + repr(compressed) + ')\n')
             helper.chmod(0o755)
-            psxtract = base/'psxtract'
-            disc = bytearray(20 * 2352)
-            disc[16*2352+24:16*2352+31] = b'\x01CD001\x01'
-            psxtract.write_text('#!' + sys.executable + '\nimport pathlib,sys\n'
-                + 'assert pathlib.Path(sys.argv[1]).read_bytes() == ' + repr(pbp) + '\n'
-                + 'pathlib.Path("fixture.bin").write_bytes(' + repr(bytes(disc)) + ')\n'
-                + 'print("Disc successfully converted using prebaked CUE file!")\n')
-            psxtract.chmod(0o755)
-            with patch.dict(os.environ, {'PSPDB_POPS': str(helper), 'PSPDB_PSXTRACT': str(psxtract)}):
+            with patch.dict(os.environ, {'PSPDB_POPS': str(helper)}):
                 run = self.run_ingest(inputs, '--catalog', catalog)
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertTrue(result_path(catalog, 'pkg', hashlib.sha256(package).hexdigest()).exists())
@@ -210,20 +202,11 @@ class PkgCliTests(unittest.TestCase):
                 executable_tree = next(e['extraction'] for e in tree['entries'] if e['path'] == 'DATA.PSP')
                 self.assertEqual(executable_tree['error'], 'InvalidPopsSize')
                 self.assertEqual(executable_tree['entries'], [])
+                # The native PSX reader rejects this truncated container itself; no helper is involved.
                 disc_tree = next(e['extraction'] for e in tree['entries'] if e['path'] == 'DATA.BIN')
-                self.assertNotIn('error', disc_tree)
-                self.assertEqual({e['path'] for e in disc_tree['entries']}, {'disc.bin'})
-            unavailable = base/'unavailable'
-            with patch.dict(os.environ, {'PSPDB_PSXTRACT': str(base/'missing-psxtract')}):
-                run = self.run_ingest(inputs, '--catalog', unavailable)
-            self.assertEqual(run.returncode, 0, run.stderr)
-            tree = json.loads(tree_path(unavailable, hashlib.sha256(pbp).hexdigest()).read_text())
-            sections = {e['path']: e for e in tree['entries']}
-            self.assertEqual(sections['DATA.PSP']['extraction']['entries'], [])
-            self.assertEqual(sections['DATA.BIN']['extraction']['entries'], [])
-            self.assertTrue(sections['DATA.BIN']['extraction']['error'])
-            self.assertEqual(sections['DATA.BIN']['extraction']['extractor']['name'], 'pspdb-ingest')
-            self.assertIn('PARAM.SFO', sections)
+                self.assertEqual(disc_tree['error'], 'TruncatedPsar')
+                self.assertEqual(disc_tree['entries'], [])
+                self.assertEqual(disc_tree['extractor']['name'], 'pspdb-ingest')
 
     def test_paired_manual_cannot_silently_accept_an_invalid_companion(self):
         document = bytes.fromhex('00504744010000000100000000000000') + bytes(144)

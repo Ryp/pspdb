@@ -887,9 +887,7 @@ Zig hashes their outputs and queues
 nested extraction using retained buffers; `--store` additionally persists those bytes.
 Temporary input/output directories are removed after the immediate walk. They
 are created under an absolute `TMPDIR` when set, otherwise `/tmp`; the helpers
-inherit it. PS1 reconstruction needs roughly three times each PBP in scratch per
-concurrent job, so a small `/tmp` tmpfs can fill up under many threads. A larger
-RAM-backed root such as `TMPDIR=/dev/shm/pspdb` avoids that.
+inherit it. Only the DOCUMENT helper still uses scratch space.
 Retail PKG keys and offset AES-CTR, plus NPUMDIMG metadata hashing/signature
 verification, live in Zig-PSP's `tools/prxencrypt/pkg_crypto.zig` and
 `npumdimg_crypto.zig`. PSPDB retains container parsing and catalog policy.
@@ -944,8 +942,8 @@ trees can expand substantially when serialized; no new XML output-budget policy
 is imposed.
 
 PSAR/RCO no longer use `pspdecrypt`, `rcomage`, their environment overrides or
-temporary extraction directories. Only PSX and DOCUMENT retain external
-Python adapters, embedded in the binary and run through uv.
+temporary extraction directories. Only DOCUMENT retains an external Python
+adapter, embedded in the binary and run through uv.
 
 PRX and KL3E/KL4E decode in memory through a pinned, patched pspdecrypt library
 linked by the Zig build. They need no external helper, NAS input reread, or
@@ -1044,8 +1042,8 @@ inventories that ISO under `iso9660`. Executable files recurse normally.
 Derived ISOs stay beneath their PSN package rather than becoming UMD roots;
 successful decoding and the ISO sanity check do not establish authenticity.
 This disc decoder handles NPUMDIMG, not PS1 disc payloads or EDAT. PS1 executable
-decryption uses the native contextual decoder; PS1 disc reconstruction still
-uses the whole-PBP external path described below.
+decryption and disc reconstruction use the native contextual decoders (see
+[PS1 Classics (PSX)](#ps1-classics-psx)).
 
 NPD EDAT files are authenticated and decrypted in memory by the native ingester.
 The Zig build links pinned make-npdata commit
@@ -1124,17 +1122,62 @@ suffix that expands as needed. Full content IDs remain searchable. Hash-based
 catalog identity and links remain stable when a display title changes.
 
 
-PS1 PKG ingest uses Zig-PSP for PBP/SFO parsing and native Linux PSXtract-2 for
-full disc reconstruction, attached beneath the original `DATA.BIN` occurrence.
-Set `PSPDB_PSXTRACT` or put `pspdb-psxtract` on PATH. The native helper includes
-the exact ATRAC3 decoder; Wine and external audio-converter executables are not used.
-PSX remains a file-based helper. See [PS1 extraction setup and validation](tools/psxtract/README.md).
+### PS1 Classics (PSX)
 
-External helper execution requires Linux `/proc/self/fd`. Ingestion holds an open
-executable descriptor across provenance queries, hashing and launch for both PSX
-and DOCUMENT, so atomic helper replacement cannot mix versions within one
-extraction. Publish helper updates atomically; modifying an executable in place
-is not protected by this descriptor pinning.
+PS1 PKG ingest uses Zig-PSP for PBP/SFO parsing and a native, in-memory Zig
+pipeline (`ingest/src/psx/`, provenance `pspdb-psx` revision 4, options
+`in-memory`) to rebuild the discs, attached beneath the original `DATA.BIN`
+occurrence. There is no helper, scratch directory or environment variable. The
+pipeline reproduces the former PSXtract-2 revision 3 output byte for byte:
+`DATA.PSAR` (`PSISOIMG0000` single or `PSTITLEIMG0000` multi disc) is parsed, each
+disc's data blocks are LZ-decoded into the data track, its sectors are regenerated
+(sync, BCD MSF from 00:02:00, EDC/ECC; form 2 EDC inferred from the boot sectors),
+and the ATRAC3 CDDA tracks are unscrambled, decoded and laid out after the data
+track with their pregaps. Each disc is one raw 2352-byte-sector image. Children of
+`DATA.BIN`: `disc.bin` (or `disc-1.bin`…`disc-N.bin` in disc-index order) plus the
+non-empty `ISO_HEADER.BIN` (`ISO_HEADER_<n>.BIN` for multi-disc), `ISO_MAP.BIN`,
+`STARTDAT.BIN`, `SPECIAL_DATA.BIN`, `TRASH.BIN` and `OVERDUMP.BIN`. As before,
+`TRASH.BIN` keeps the last non-empty trash prefix seen and `OVERDUMP.BIN` is the
+last disc's. CUE files are not produced. A disc must be a non-zero multiple of 2352
+bytes with an ISO9660 descriptor in sector 16, or the whole `DATA.BIN` extraction
+fails.
+
+Deliberate differences from PSXtract-2 revision 3:
+
+1. An ambiguous prebaked CUE (several `-N` variants for one serial) is resolved by
+   the unique candidate whose `REM MD5` equals the rebuilt data track; otherwise the
+   extraction fails with `AmbiguousPsxCue` (fixes Jet Moto 2 without guessing).
+2. Output names never depend on CUE titles (fixes the Osaka disc-name collision).
+3. An auxiliary block without an in-block zero terminator is entirely `TRASH.BIN`
+   and adds nothing to `OVERDUMP.BIN` (fixes Constructor and Space Griffon); the
+   data track is unaffected.
+4. Every PGD verifies its header MAC, table MAC and every block MAC before any
+   plaintext is used (PSXtract skipped block MACs).
+
+The CUE database (`ingest/src/psx/cue_db.bin`, 10,345 serials) is generated from the
+prebaked `cue/` directory of PSXtract-2 commit
+`4691fc405698d53927df6e4f59c3e9b113c13706` by `tools/psx_cue_db.py`; it supplies
+only the single-disc pregap/length overrides and the MD5 for change 1. Regenerate
+with `python3 tools/psx_cue_db.py` and verify the committed blob with
+`python3 tools/psx_cue_db.py --check`. The Redump MD5 is not computed or recorded;
+mismatches were never an error.
+
+ATRAC3 audio is decoded by a trimmed FFmpeg ATRAC3 derivative
+(`ingest/src/psx/atrac3/`, see its `NOTICE`) whose arithmetic reproduces the Sony
+ACM decoder bit for bit (verified over a whole Vib-Ribbon track), including the
+WAV offset-44 quirk of PSXtract's WAV-to-BIN step. That exactness depends on x87
+80-bit `long double` and volatile binary32 stores, so PSX extraction is x86-64
+only and the C file must never be built with fast-math or FP contraction.
+
+Each conversion holds the decrypted PSAR views, the data track and every decoded
+audio track in memory (hundreds of MB per disc); at most two PSX conversions run
+at once process-wide, whatever `--threads` is.
+
+External helper execution (DOCUMENT) requires Linux `/proc/self/fd`. Ingestion holds
+an open executable descriptor across provenance queries, hashing and launch, so
+atomic helper replacement cannot mix versions within one extraction. Publish helper
+updates atomically; modifying an executable in place is not protected by this
+descriptor pinning.
 
 Standard VMP memory-card wrappers expose their unchanged 131072-byte raw card as
 an `.mcr` child. This follows the

@@ -173,4 +173,5 @@ test {
     _ = ingest;
     _ = @import("catalog.zig");
     _ = nand_fuses;
+    _ = @import("psx.zig");
 }

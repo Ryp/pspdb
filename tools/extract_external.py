@@ -7,7 +7,6 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import tempfile
 
 
 
@@ -42,7 +41,9 @@ def tool_provenance(kind, tool=None):
             'in-memory', 'xor-table:b2d7084c', 'content-dat:structure-checked', 'content1-sdat:mac-verified'])
     if kind == 'pcecd':
         return dict(result, name='pspdb-pcecd', options=['in-memory', 'toc-bound', 'sector-image-2048'])
-    if kind not in ('document', 'psx'):
+    if kind == 'psx':
+        return dict(result, name='pspdb-psx', options=['in-memory'])
+    if kind != 'document':
         raise ValueError(f'Unknown extractor kind: {kind}')
     with tool.open('rb') as stream:
         if kind == 'document':
@@ -56,9 +57,6 @@ def tool_provenance(kind, tool=None):
                     or 'page-files-only:1' not in reported['options']):
                 raise ValueError('Invalid DOCUMENT helper provenance: page-only output required')
             result.update(reported)
-        else:
-            result.update(name='PSXtract-2',
-                          options=['<parent.pbp>', 'reconstructed-disc', 'native-linux'])
         result['sha256'] = hashlib.file_digest(stream, 'sha256').hexdigest()
     return result
 
@@ -68,49 +66,12 @@ def current_provenance():
     for kind in versions():
         try:
             tool = None
-            if kind == 'psx':
-                tool = executable('PSPDB_PSXTRACT', 'pspdb-psxtract')
-            elif kind == 'document':
+            if kind == 'document':
                 tool = executable('PSPDB_DOCUMENT', 'pspdb-document')
             current[kind] = tool_provenance(kind, tool)
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             unavailable[kind] = str(exc)
     return current, unavailable
-
-
-def extract_psx(source, output, tool):
-    # Whole-PBP context belongs under DATA.BIN in the parent inventory.
-    tool = tool.resolve(strict=True)
-    with tool.open('rb') as binary, tempfile.TemporaryDirectory(prefix='pspdb-psxtract-') as tmp:
-        # Pin the inode across hashing and exec, including atomic helper rebuilds.
-        command = Path(f'/proc/self/fd/{binary.fileno()}')
-        provenance = tool_provenance('psx', command)
-        work = Path(tmp)
-        result = subprocess.run([str(command), str(source.resolve())], cwd=work,
-                                pass_fds=(binary.fileno(),), capture_output=True,
-                                text=True, errors='replace', timeout=900)
-        log = result.stdout + result.stderr
-        discs = sorted(work.glob('*.bin'))
-        # A Redump MD5 mismatch is a known cosmetic limitation for some titles.
-        if result.returncode or not discs or re.search(r'ERROR:|audio conversion.*failed|cannot be opened', log, re.I):
-            raise ValueError('PSXtract-2 failed: ' + log[-6000:])
-        for disc in discs:
-            size = disc.stat().st_size
-            if not size or size % 2352:
-                raise ValueError('Invalid reconstructed CD sector count')
-            with disc.open('rb') as stream:
-                stream.seek(16 * 2352 + 24)
-                if stream.read(7) != b'\x01CD001\x01':
-                    raise ValueError('Reconstructed disc lacks ISO9660 descriptor')
-        for i, disc in enumerate(discs, 1):
-            shutil.move(disc, output / ('disc.bin' if len(discs) == 1 else f'disc-{i}.bin'))
-        # Keep decoded source-backed auxiliary containers; CUE/logs stay tool outputs.
-        for name in ('ISO_HEADER.BIN', *(f'ISO_HEADER_{i}.BIN' for i in range(1, 6)),
-                     'ISO_MAP.BIN', 'STARTDAT.BIN', 'SPECIAL_DATA.BIN', 'TRASH.BIN', 'OVERDUMP.BIN'):
-            path = work / 'TEMP' / name
-            if path.is_file() and path.stat().st_size:
-                shutil.move(path, output / name)
-    return provenance
 
 
 def extract_document(source, output, tool, docinfo=None):
@@ -154,7 +115,7 @@ def executable(variable, name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=['psx', 'document'])
+    parser.add_argument('kind', choices=['document'])
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--docinfo', type=Path)
@@ -166,10 +127,7 @@ def main():
         global VERSIONS
         VERSIONS = json.loads(args.versions)
     try:
-        if args.kind == 'psx':
-            provenance = extract_psx(args.source, args.output, executable('PSPDB_PSXTRACT', 'pspdb-psxtract'))
-        else:
-            provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
+        provenance = extract_document(args.source, args.output, executable('PSPDB_DOCUMENT', 'pspdb-document'), args.docinfo)
     except (OSError, ValueError, EOFError, subprocess.SubprocessError) as exc:
         parser.exit(1, f'{exc}\n')
     print(json.dumps(provenance))

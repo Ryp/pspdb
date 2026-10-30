@@ -70,7 +70,15 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFile(.{ .file = b.path("src/pops_native.cpp"), .flags = &.{"-std=c++17"} });
     module.addCSourceFile(.{ .file = b.path("src/psar_native.cpp"), .flags = &.{ "-std=c++17", "-fno-strict-aliasing" } });
     module.addCSourceFile(.{ .file = b.path("src/pgd_native.c"), .flags = &.{"-std=c11"} });
+    module.addCSourceFile(.{ .file = b.path("src/psx/pgd_psx.c"), .flags = &.{"-std=c11"} });
     module.link_libcpp = true;
+    // PSX Classics ATRAC3 (src/psx/atrac3/NOTICE). Bit-exactness depends on x87
+    // `long double` arithmetic and volatile binary32 stores: never add fast-math,
+    // contraction or -ffast-* flags here.
+    module.addCSourceFile(.{
+        .file = b.path("src/psx/atrac3/pspdb_atrac3.c"),
+        .flags = &.{ "-std=c11", "-fno-strict-aliasing", "-fno-fast-math", "-ffp-contract=off" },
+    });
     module.addImport("zig_psp_prx_encrypt", b.createModule(.{
         .root_source_file = sdk.path("tools/prxencrypt/prx_encrypt.zig"),
         .target = target,

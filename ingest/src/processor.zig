@@ -25,6 +25,7 @@ const kirk = @import("kirk");
 const nand_fuses = @import("nand_fuses.zig");
 const extractor = @import("extractor.zig");
 const external_extractor = @import("external_extractor.zig");
+const psx = @import("psx.zig");
 const CatalogState = @import("catalog_state.zig").State;
 const store_objects = @import("store.zig");
 const Store = store_objects.Store;
@@ -40,6 +41,9 @@ const document_docinfo_padded_size = 320;
 const pce_key_name = "PSP-KEY.EDAT";
 const pce_options: []const []const u8 = &.{ "in-memory", "xor-table:b2d7084c", "content-dat:structure-checked", "content1-sdat:mac-verified" };
 const pcecd_options: []const []const u8 = &.{ "in-memory", "toc-bound", "sector-image-2048" };
+const psx_options: []const []const u8 = &.{"in-memory"};
+/// Concurrent PS1 Classic conversions (see `Dispatch.psx_slots`).
+const max_psx_conversions = 2;
 const pcecd_output_name = "disc.iso";
 const Entry = model.Entry;
 const Result = model.Result;
@@ -68,8 +72,11 @@ pub const Dispatch = struct {
     catalog: []const u8,
     state: ?*const CatalogState = null,
     rap_directory: ?[]const u8 = null,
-    /// Absolute parent of external-helper work directories.
+    /// Absolute parent of external-helper (DOCUMENT) work directories.
     scratch_directory: []const u8 = "/tmp",
+    /// Bounds concurrent PS1 Classic conversions: each holds whole disc images
+    /// (hundreds of MB) plus its decrypted source in memory.
+    psx_slots: std.Io.Semaphore = .{ .permits = max_psx_conversions },
     // Initialized before the root queues descendants; immutable until the last
     // group job completes. Never copied into tasks or serialized as provenance.
     prx_key: ?kirk.Cmd8Key = null,
@@ -764,6 +771,7 @@ const Inventory = struct {
     }
 
     fn decode_context(self: *Inventory, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8, output: *?external_extractor.Output) !extractor.Provenance {
+        if (kind == .psx) return self.decode_psx(input);
         if (kind == .pops) {
             const output_value = try pops.extract(self.allocator, input, companion);
             const view = try memory.Owner.take_allocated(self.allocator, output_value.bytes);
@@ -791,6 +799,49 @@ const Inventory = struct {
         output.* = try self.extract_external(hash, input, kind, if (kind == .document) companion else null);
         try self.walk_external(kind, output.*.?);
         return output.*.?.provenance.?.value;
+    }
+
+    /// Whole-PBP context under DATA.BIN: every disc image and auxiliary container
+    /// of the PSAR, rebuilt in memory. Nothing is inventoried unless every disc
+    /// passes the acceptance checks.
+    fn decode_psx(self: *Inventory, input: []const u8) !extractor.Provenance {
+        const pbp = try containers.parse_pbp(input);
+        const data_psar = pbp.get("DATA.BIN") orelse return error.MissingPsar;
+        if (self.dispatch) |dispatch| dispatch.psx_slots.waitUncancelable(self.io);
+        defer if (self.dispatch) |dispatch| dispatch.psx_slots.post(self.io);
+        var converted = try psx.disc.convert(self.allocator, data_psar);
+        defer converted.deinit(self.allocator);
+        for (converted.discs) |disc| try accept_psx_disc(disc.bytes);
+
+        var name_buffer: [32]u8 = undefined;
+        for (converted.discs, 0..) |*disc, position| {
+            const name = if (converted.discs.len == 1) "disc.bin" else try std.fmt.bufPrint(&name_buffer, "disc-{d}.bin", .{position + 1});
+            try self.emit_owned(name, &disc.bytes);
+        }
+        for (converted.discs) |*disc| {
+            const name = switch (converted.kind) {
+                .single => "ISO_HEADER.BIN",
+                .multi => try std.fmt.bufPrint(&name_buffer, "ISO_HEADER_{d}.BIN", .{disc.index}),
+            };
+            try self.emit_owned(name, &disc.header);
+        }
+        if (converted.iso_map) |*bytes| try self.emit_owned("ISO_MAP.BIN", bytes);
+        if (converted.startdat) |*bytes| try self.emit_owned("STARTDAT.BIN", bytes);
+        if (converted.special_data) |*bytes| try self.emit_owned("SPECIAL_DATA.BIN", bytes);
+        try self.emit_owned("TRASH.BIN", &converted.trash);
+        try self.emit_owned("OVERDUMP.BIN", &converted.overdump);
+        return .{ .name = "pspdb-psx", .version = revisions.psx, .options = psx_options };
+    }
+
+    /// Emits a non-empty buffer, moving it into the catalog owner; empty buffers
+    /// are not catalogued. `bytes` is reset to empty once ownership is transferred.
+    fn emit_owned(self: *Inventory, name: []const u8, bytes: *[]u8) !void {
+        if (bytes.len == 0) return;
+        const taken = bytes.*;
+        bytes.* = &.{};
+        const view = try memory.Owner.take_allocated(self.allocator, taken);
+        defer view.release();
+        try self.emit_view(name, view);
     }
 
     /// CONTENT.DAT / CONTENT1.sdat: key from `companion` (PSP-KEY.EDAT), SDAT
@@ -940,6 +991,15 @@ const Inventory = struct {
         return self.entries.toOwnedSlice(self.allocator);
     }
 };
+
+/// A reconstructed disc is whole 2352-byte sectors with an ISO9660 primary
+/// volume descriptor in sector 16 (user data starts 24 bytes into the sector).
+fn accept_psx_disc(image: []const u8) !void {
+    const sector = 2352;
+    if (image.len == 0 or image.len % sector != 0) return error.InvalidReconstructedDisc;
+    const descriptor = 16 * sector + 24;
+    if (image.len < descriptor + 7 or !std.mem.eql(u8, image[descriptor..][0..7], "\x01CD001\x01")) return error.MissingIso9660Descriptor;
+}
 
 /// Hash-keyed trees must not depend on the filename of the first occurrence.
 /// The catalog's name_rule restores occurrence-specific names when rendered.
@@ -1160,11 +1220,13 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
             }
             break :blk .{ .name = "Zig-PSP zPBPTool", .version = revisions.pbp, .options = &.{"in-memory"} };
         },
-        else => blk: {
+        .document => blk: {
             output.* = try inventory.extract_external(task.hash, task.input.bytes, task.kind, null);
             try inventory.walk_external(task.kind, output.*.?);
             break :blk output.*.?.provenance.?.value;
         },
+        // Contextual kinds only exist as attachments of a parent inventory.
+        .pops, .psx => unreachable,
     };
 }
 
