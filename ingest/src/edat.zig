@@ -1,6 +1,7 @@
 const std = @import("std");
 
 extern fn pspdb_edat_decode(source: [*]const u8, output: [*]u8, length: usize, version: u32, flags: u32, license_type: u32, license: *const [16]u8) c_int;
+extern fn pspdb_edat_verify_marker(source: [*]const u8) c_int;
 
 const block_size = 16384;
 const max_plaintext = 64 << 20;
@@ -38,6 +39,16 @@ pub fn decode(allocator: std.mem.Allocator, bytes: []const u8, rap: ?[16]u8) ![]
     if (pspdb_edat_decode(bytes.ptr, output.ptr, output.len, header.version, header.flags, header.license_type, &license) != 1)
         return error.EdatAuthenticationFailed;
     return output;
+}
+
+/// A license-2 EDAT that declares an empty payload is a licence marker beside
+/// the package's EBOOT.PBP: it has no ciphertext, so nothing is lost without
+/// the buyer's RAP. Its RIF-keyed header MAC cannot be checked then; instead the
+/// header's dev_hash must authenticate under a public klicensee. Callers try a
+/// RAP-authenticated `decode` first and use this only when no RAP exists.
+pub fn unlicensed_marker(bytes: []const u8) !bool {
+    const header = try parse_header(bytes);
+    return header.license_type == 2 and header.length == 0 and pspdb_edat_verify_marker(bytes.ptr) == 1;
 }
 
 fn parse_header(bytes: []const u8) !Header {
@@ -115,6 +126,31 @@ test "EDAT never accepts an empty payload without its keyed MACs" {
     const bytes = empty_fixture();
     try std.testing.expectError(error.MissingEdatRap, decode(std.testing.allocator, &bytes, null));
     try std.testing.expectError(error.EdatAuthenticationFailed, decode(std.testing.allocator, &bytes, @splat(0)));
+}
+
+test "EDAT licence markers are recognized only by an authentic dev_hash on an empty license-2 header" {
+    const allocator = std.testing.allocator;
+    const omac_key_2 = @extern(*const [16]u8, .{ .name = "NPDRM_OMAC_KEY_2" });
+    const marker = try signed_fixture(allocator, "", 2, 0x0c, 2);
+    defer allocator.free(marker);
+    try std.testing.expect(!try unlicensed_marker(marker));
+    // Retail markers sign their header identity with the all-zero klicensee.
+    FixtureCrypto.cmac_hash_forge(omac_key_2, 16, marker.ptr, 0x60, marker[0x60..0x70]);
+    try std.testing.expect(try unlicensed_marker(marker));
+    // Any change to the identity it covers, such as the content ID, breaks it.
+    marker[0x12] ^= 1;
+    try std.testing.expect(!try unlicensed_marker(marker));
+    marker[0x12] ^= 1;
+
+    const payload = try signed_fixture(allocator, "data", 2, 0x0c, 2);
+    defer allocator.free(payload);
+    FixtureCrypto.cmac_hash_forge(omac_key_2, 16, payload.ptr, 0x60, payload[0x60..0x70]);
+    try std.testing.expect(!try unlicensed_marker(payload));
+
+    const free_marker = try signed_fixture(allocator, "", 2, 0x0c, 3);
+    defer allocator.free(free_marker);
+    FixtureCrypto.cmac_hash_forge(omac_key_2, 16, free_marker.ptr, 0x60, free_marker[0x60..0x70]);
+    try std.testing.expect(!try unlicensed_marker(free_marker));
 }
 
 // Synthetic licenses and data only. Reuse the pinned crypto to sign fixtures;

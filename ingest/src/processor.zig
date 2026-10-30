@@ -873,11 +873,22 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
 fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, inventory: *Inventory, output: *?external_extractor.Output) !extractor.Provenance {
     return switch (task.kind) {
         .edat => blk: {
+            // A licence marker without its RAP is published as an empty payload,
+            // marked in provenance because its RIF-keyed MAC was not checked.
+            var unlicensed_marker = false;
             const bytes = edat.decode(allocator, task.input.bytes, null) catch |err| switch (err) {
                 error.MissingEdatRap => retry: {
-                    const directory = dispatch.rap_directory orelse return error.MissingEdatRap;
+                    const directory = dispatch.rap_directory orelse {
+                        if (!try edat.unlicensed_marker(task.input.bytes)) return error.MissingEdatRap;
+                        unlicensed_marker = true;
+                        break :retry try allocator.alloc(u8, 0);
+                    };
                     const content_id = try edat.content_id(task.input.bytes);
                     var rap = licenses.read_rap(inventory.io, directory, content_id) catch |key_error| {
+                        if (key_error == error.MissingEdatRap and try edat.unlicensed_marker(task.input.bytes)) {
+                            unlicensed_marker = true;
+                            break :retry try allocator.alloc(u8, 0);
+                        }
                         switch (key_error) {
                             error.MissingEdatRap, error.InvalidEdatRap, error.InvalidEdatContentId => {},
                             else => inventory.fatal = true,
@@ -893,7 +904,11 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
             const view = try memory.Owner.take_allocated(allocator, bytes);
             defer view.release();
             try inventory.emit_view("payload.dat", view);
-            break :blk .{ .name = "pspdb-ingest", .version = revisions.edat };
+            break :blk .{
+                .name = "pspdb-ingest",
+                .version = revisions.edat,
+                .options = if (unlicensed_marker) &.{"unlicensed-marker"} else &.{},
+            };
         },
         .gzip, .prx, .kl3e, .kl4e, .pgd, .npumdimg => blk: {
             const output_value = try switch (task.kind) {

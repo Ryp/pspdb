@@ -989,6 +989,14 @@ files use an all-zero developer klicensee, require no RAP, and decrypt to an emp
 payload. Their keyed filename, content-ID, developer, metadata and header fields
 still authenticate; arbitrary license-3 payloads remain unsupported.
 
+EDAT revision 5 also accepts empty license-2 markers (`ISO.BIN.EDAT` and DLC
+`.EDAT` beside `EBOOT.PBP`) when their RAP is unavailable. They declare a zero-length
+payload, so no ciphertext is skipped. Their RIF-keyed header MAC cannot be checked
+without the buyer's license, so instead their header `dev_hash` must authenticate
+under a public klicensee (all-zero, PSX, or PSP key 1/2). They publish an empty
+`payload.dat`, with provenance option `unlicensed-marker`. A present RAP is still
+tried first and fully authenticates the marker; markers with a payload still require it.
+
 EDAT extraction otherwise supports license-2 NPD v1/flags-0 and
 v2/flags-0-or-0x0c files, with 16 KiB blocks and at most 64 MiB plaintext. Keyed
 header, metadata-table and every ciphertext-block MAC must pass before publication.

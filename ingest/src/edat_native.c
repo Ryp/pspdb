@@ -74,3 +74,21 @@ int pspdb_edat_decode(const unsigned char *source, unsigned char *output,
     }
     return 1;
 }
+
+/* NPD dev_hash: CMAC over header[0..0x60] keyed by klicensee XOR
+ * NPDRM_OMAC_KEY_2, stored at 0x60. Checked against the public klicensees
+ * that retail PSP licence markers use. This authenticates header identity only;
+ * the RIF-keyed header MAC at 0xa0 still needs the buyer's RAP. */
+int pspdb_edat_verify_marker(const unsigned char *source)
+{
+    static const unsigned char zero[16] = {0};
+    const unsigned char *klicensees[] = {zero, NPDRM_PSX_KEY, NPDRM_PSP_KEY_1, NPDRM_PSP_KEY_2};
+    for (size_t i = 0; i < sizeof(klicensees) / sizeof(klicensees[0]); ++i) {
+        unsigned char key[16];
+        for (size_t j = 0; j < sizeof(key); ++j)
+            key[j] = klicensees[i][j] ^ NPDRM_OMAC_KEY_2[j];
+        if (cmac_hash_compare(key, 16, (unsigned char *)source, 0x60, (unsigned char *)source + 0x60))
+            return 1;
+    }
+    return 0;
+}
