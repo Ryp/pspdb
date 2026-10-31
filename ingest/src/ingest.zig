@@ -111,6 +111,8 @@ const Pool = struct {
     rap_directory: ?[]const u8,
     scratch_directory: []const u8 = "/tmp",
     nand_fuse_directory: ?[]const u8,
+    /// Directory for RAP files derived from packages (`--rap-output`); null writes none.
+    rap_output: ?[]const u8 = null,
     mutex: std.Io.Mutex = .init,
     changed: std.Io.Condition = .init,
     jobs: std.ArrayList(Job) = .empty,
@@ -370,7 +372,7 @@ const Pool = struct {
         const dispatch = if (group.dispatch) |*value| value else null;
         group.result = (switch (job) {
             .member => |member| self.process_zip_member(member, dispatch),
-            .root => |root| processor.process_file(self.allocator, self.io, path, root.kind, self.store, self.skip_cache(), dispatch, self.nand_fuse_directory),
+            .root => |root| processor.process_file(self.allocator, self.io, path, root.kind, self.store, self.skip_cache(), dispatch, self.nand_fuse_directory, self.rap_output),
             else => unreachable,
         }) catch |err| {
             self.complete(group, .{}, err);
@@ -423,7 +425,7 @@ const Pool = struct {
         defer input.release();
         return switch (member.kind) {
             .iso => processor.process_iso_checked(self.allocator, self.io, input, self.store, self.skip_cache(), dispatch),
-            .pkg => processor.process_pkg_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch),
+            .pkg => processor.process_pkg_checked(self.allocator, self.io, input.bytes, self.store, self.skip_cache(), dispatch, self.rap_output),
         };
     }
 
@@ -547,7 +549,7 @@ pub fn log(io: std.Io, comptime format: []const u8, args: anytype) void {
     stderr.file_writer.interface.flush() catch {};
 }
 
-pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?*Store, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, scratch_directory: []const u8, nand_fuse_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
+pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8, worker_count: usize, max_threads: usize, root: std.Progress.Node, store: ?*Store, catalog: ?[]const u8, skip_existing: bool, rap_directory: ?[]const u8, rap_output: ?[]const u8, scratch_directory: []const u8, nand_fuse_directory: ?[]const u8, state: ?*const CatalogState) !Stats {
     std.debug.assert(worker_count >= 1);
     var pool: Pool = .{
         .allocator = allocator,
@@ -557,6 +559,7 @@ pub fn run(allocator: std.mem.Allocator, io: std.Io, folders: []const []const u8
         .skip_existing = skip_existing,
         .state = state,
         .rap_directory = rap_directory,
+        .rap_output = rap_output,
         .scratch_directory = scratch_directory,
         .nand_fuse_directory = nand_fuse_directory,
         .intake_limit = @max(1, max_threads / 4),

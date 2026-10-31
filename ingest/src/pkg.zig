@@ -119,6 +119,28 @@ pub const Package = struct {
         return null;
     }
 
+    /// Decrypt at most `len` bytes of one file starting at `offset`, without
+    /// decrypting the rest of it. The range is clipped to the file: a start past
+    /// the end yields an empty slice, a missing file `null`.
+    pub fn read_file_range(self: Package, allocator: std.mem.Allocator, path: []const u8, offset: usize, len: usize) !?[]u8 {
+        for (0..self.count) |i| {
+            const e = try self.entry(allocator, i);
+            defer allocator.free(e.name);
+            if (e.directory or !std.mem.eql(u8, e.name, path)) continue;
+            const start = @min(offset, e.size);
+            const count = @min(len, e.size - start);
+            // The CTR stream is addressed in whole blocks: decrypt from the
+            // preceding block boundary and drop the lead-in.
+            const lead = start % 16;
+            const data = try allocator.alloc(u8, lead + count);
+            errdefer allocator.free(data);
+            try self.decrypt(e.offset + start - lead, data, e.key);
+            if (lead != 0) std.mem.copyForwards(u8, data[0..count], data[lead..]);
+            return try allocator.realloc(data, count);
+        }
+        return null;
+    }
+
     pub fn walk(self: Package, allocator: std.mem.Allocator, context: anytype, comptime emit: anytype) !void {
         for (0..self.count) |i| {
             const e = try self.entry(allocator, i);
@@ -163,4 +185,49 @@ test "header identity survives an unsupported platform" {
     // A malformed content ID gives no identity at all.
     bytes[54] = 'X';
     try std.testing.expectError(error.InvalidPkg, read_header(&bytes));
+}
+
+test "ranged reads decrypt only the requested extent from any start" {
+    const allocator = std.testing.allocator;
+    var plain: [112]u8 = @splat(0);
+    std.mem.writeInt(u32, plain[0..4], 32, .big);
+    std.mem.writeInt(u32, plain[4..8], 3, .big);
+    std.mem.writeInt(u64, plain[8..16], 48, .big);
+    std.mem.writeInt(u64, plain[16..24], 64, .big);
+    plain[24] = 0x90;
+    plain[27] = 3;
+    @memcpy(plain[32..35], "A/B");
+    for (plain[48..], 0..) |*byte, i| byte.* = @truncate(i *% 5 +% 1);
+    const payload = plain[48..].*;
+
+    var bytes: [256 + plain.len]u8 = @splat(0);
+    @memcpy(bytes[0..4], "\x7fPKG");
+    std.mem.writeInt(u16, bytes[4..6], 0x8000, .big);
+    std.mem.writeInt(u16, bytes[6..8], 2, .big);
+    std.mem.writeInt(u32, bytes[8..12], 192, .big);
+    std.mem.writeInt(u32, bytes[12..16], 1, .big);
+    std.mem.writeInt(u32, bytes[16..20], 12, .big);
+    std.mem.writeInt(u32, bytes[20..24], 1, .big);
+    std.mem.writeInt(u64, bytes[24..32], bytes.len, .big);
+    std.mem.writeInt(u64, bytes[32..40], 256, .big);
+    std.mem.writeInt(u64, bytes[40..48], plain.len, .big);
+    @memcpy(bytes[48..84], "UP9000-NPUG00001_00-FIXTURE000000000");
+    std.mem.writeInt(u32, bytes[192..196], 2, .big);
+    std.mem.writeInt(u32, bytes[196..200], 4, .big);
+    std.mem.writeInt(u32, bytes[200..204], 7, .big);
+    crypto.crypt(.psp, bytes[112..128], 0, &plain, bytes[256..]);
+
+    const package = try Package.init(&bytes);
+    try std.testing.expectEqual(@as(?[]u8, null), try package.read_file_range(allocator, "A/C", 0, 16));
+    for ([_]usize{ 0, 1, 15, 16, 17, 63, 64, 70 }) |start| {
+        for ([_]usize{ 0, 1, 16, 100 }) |len| {
+            const range = (try package.read_file_range(allocator, "A/B", start, len)).?;
+            defer allocator.free(range);
+            const from = @min(start, payload.len);
+            try std.testing.expectEqualSlices(u8, payload[from..@min(start + len, payload.len)], range);
+        }
+    }
+    const whole = (try package.read_file(allocator, "A/B")).?;
+    defer allocator.free(whole);
+    try std.testing.expectEqualSlices(u8, &payload, whole);
 }

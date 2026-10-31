@@ -52,3 +52,42 @@ pub fn read_rap(io: std.Io, directory_path_bytes: []const u8, content_id: []cons
     if (count != 16) return error.InvalidEdatRap;
     return bytes[0..16].*;
 }
+
+pub const WriteStatus = enum {
+    /// The file did not exist and was created.
+    created,
+    /// An identical file already existed; nothing changed.
+    unchanged,
+    /// A different (or malformed) file exists; it was kept.
+    conflict,
+};
+
+/// Publish `<content_id>.rap` in `directory_path_bytes`, creating the directory
+/// 0700 if it is missing. The file is written 0600 to an unnamed temporary and
+/// linked into place, so readers never see a partial file and an existing file
+/// is never replaced: an identical one is a no-op, a different one a conflict.
+pub fn write_rap(io: std.Io, directory_path_bytes: []const u8, content_id: []const u8, rap: [16]u8) !WriteStatus {
+    if (content_id.len != 36 or std.mem.indexOfAny(u8, content_id, "/\\\x00") != null) return error.InvalidEdatContentId;
+    _ = try std.Io.Dir.cwd().createDirPathStatus(io, directory_path_bytes, .fromMode(0o700));
+    var directory = try std.Io.Dir.cwd().openDir(io, directory_path_bytes, .{});
+    defer directory.close(io);
+    var filename: [40]u8 = undefined;
+    @memcpy(filename[0..36], content_id);
+    @memcpy(filename[36..40], ".rap");
+    var atomic = try directory.createFileAtomic(io, &filename, .{ .permissions = .fromMode(0o600) });
+    defer atomic.deinit(io);
+    try atomic.file.writeStreamingAll(io, &rap);
+    try atomic.file.sync(io);
+    atomic.link(io) catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            var existing = read_rap(io, directory_path_bytes, content_id) catch |read_error| switch (read_error) {
+                error.InvalidEdatRap => return .conflict,
+                else => return read_error,
+            };
+            defer std.crypto.secureZero(u8, &existing);
+            return if (std.mem.eql(u8, &existing, &rap)) .unchanged else .conflict;
+        },
+        else => return err,
+    };
+    return .created;
+}

@@ -50,6 +50,14 @@ a nested tree containing them. `--threads N` caps threads (default: logical CPU
 count); `--no-progress` disables terminal progress. `--skip-existing` skips current
 ISO/PKG/NAND/updater results when `--catalog` is set; it is **off by default**. Bump the affected extractor revision when extraction behavior changes.
 
+`--rap-output DIR` additionally writes the licence key (RAP) that ingest derives from each
+PSN package's own `EBOOT.PBP` (see [EDAT keys](#edat-keys-derived-from-the-package)) as
+`<CONTENT_ID>.rap`, exactly 16 bytes. `DIR` is created mode 0700 when missing and files are
+0600, written atomically and never overwritten: an identical existing file is left alone, a
+different one is reported on stderr (content ID only) and kept. Without the option no RAP file
+is written; packages skipped by `--skip-existing` are not read, so they write none either.
+It does not need `--catalog`. Key bytes are never printed or logged.
+
 Filesystem discovery stays parallel. Root intake concurrency is `max(1, N / 4)`,
 rounded down from the configured `--threads N` cap before reserving a progress thread.
 This covers hashing, metadata parsing, and the immediate file walk, including ZIP members.
@@ -1051,13 +1059,45 @@ The Zig build links pinned make-npdata commit
 AES-table patches. Its GPLv3 crypto code is linked into the executable.
 No EDAT subprocess, input reread, temporary plaintext file or `PSPDB_EDAT` helper is used.
 
-License-2 EDATs select a regular, nonsymlink, exactly 16-byte
-`<NPD-content-id>.rap` from the shared license directory described above.
-Override that directory with `PSPDB_RAP_DIR`; otherwise `XDG_DATA_HOME` or
-`~/.local/share/pspdb/licenses` supplies the default. License bytes never enter
-catalog JSON or provenance. Missing/invalid licenses and failed authentication
-produce an EDAT extraction error, without rejecting the parent inventory or
-publishing plaintext.
+### EDAT keys derived from the package
+
+License-2 EDATs of a PSN package are decoded with a key taken **from the package itself**,
+not from a RAP file. Before the package walk (EDAT entries may precede `EBOOT.PBP` in the
+package table, so order is irrelevant) ingest decrypts only the PBP header and the first
+bytes of `USRDIR/CONTENT/EBOOT.PBP`'s `DATA.PSAR`, never the game payload, and
+recovers the PSP version key `V` with libkirk's `bbmac_getkey` from the protected header's
+own MAC: the NPUMDIMG header (MAC at 0xC0; PSP games, minis, PC Engine, NeoGeo) or the PS1
+Classic PGD (`PSISOIMG0000` PGD at +0x400, `PSTITLEIMG000000` PGD at +0x200; MAC at 0x70,
+header MAC verified against the DNAS key first). The EDAT key is then
+`X = AES-128-ECB-DECRYPT(key_357C[(type-1)*16 ..][0..16], V)` with `type` the NPUMDIMG
+version byte (2 or 3) or 1 for a PGD and `key_357C` the public table of libkirk
+`sceNpDrmGetFixedKey`; `X` is what `rap2rif(RAP)` yields, and the RAP is its exact inverse
+(`rif2rap`, verified against make-npdata's `rap_to_klicensee`). An NPUMDIMG header carries no
+independent authentication, so `X` is a candidate that the EDAT's own keyed MACs confirm
+(they always decide). Only packages with an `EBOOT.PBP` can be derived; DLC packages and
+PS3-native content cannot.
+
+Precedence per EDAT, by its NPD content ID:
+
+1. the key derived from a package whose content ID equals it (provenance option `key:derived-eboot`);
+2. otherwise a regular, nonsymlink, exactly 16-byte `<NPD-content-id>.rap` from the shared license
+   directory (`PSPDB_RAP_DIR`, else `XDG_DATA_HOME` or `~/.local/share/pspdb/licenses`;
+   option `key:rap-file`). A RAP file is **never** consulted when a derived key exists, so a
+   stale or wrong file for a derivable package is ignored, not trusted and not an error;
+3. otherwise empty licence markers are published as before (`unlicensed-marker`).
+
+Missing/invalid keys and failed authentication produce an EDAT extraction error, without
+rejecting the parent inventory or publishing plaintext. Key bytes never enter catalog JSON
+or provenance or any log.
+
+EDAT results stay **global**, keyed by the EDAT's SHA-256 alone, not contextual like
+DOCUMENT/DOCINFO or PC Engine/PSP-KEY: the MAC-authenticated plaintext is a pure function
+of the EDAT bytes whichever key opened it, so there is no sibling dependency to record.
+The `key:` option only says which key source opened it in the run that extracted it;
+a later run with no key reuses the stored result as before.
+
+EDAT revision 7 adds the package-derived key and the `key:derived-eboot` / `key:rap-file`
+provenance options; results of earlier revisions are not reused.
 
 EDAT revision 3 also recognizes the authenticated empty `ISO.BIN.EDAT` markers
 shipped beside `PBOOT.PBP` in PSP update packages. These NPD v2/license-3/flags-0x0c
@@ -1070,8 +1110,9 @@ EDAT revision 5 also accepts empty license-2 markers (`ISO.BIN.EDAT` and DLC
 payload, so no ciphertext is skipped. Their RIF-keyed header MAC cannot be checked
 without the buyer's license, so instead their header `dev_hash` must authenticate
 under a public klicensee (all-zero, PSX, or PSP key 1/2). They publish an empty
-`payload.dat`, with provenance option `unlicensed-marker`. A present RAP is still
-tried first and fully authenticates the marker; markers with a payload still require it.
+`payload.dat`, with provenance option `unlicensed-marker`. A derived key or present RAP is
+still tried first and fully authenticates the marker (no `unlicensed-marker` then); markers
+with a payload still require a key.
 
 EDAT revision 6 adds the SDAT and interleaved layouts of PlayStation Store packages. It
 supports license-2 NPD v1/flags-0 and v2/flags-0-or-0x0c files, v3 license-2 flags-0x3c

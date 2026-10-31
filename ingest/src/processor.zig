@@ -18,6 +18,7 @@ const pkg = @import("pkg.zig");
 const data_psp = @import("data_psp.zig");
 const revisions = @import("extractor_versions");
 const licenses = @import("licenses.zig");
+const npdrm_key = @import("npdrm_key.zig");
 const memory = @import("bytes.zig");
 const iso = @import("iso_reader.zig");
 const nand = @import("zig_psp_nand");
@@ -72,6 +73,11 @@ pub const Dispatch = struct {
     catalog: []const u8,
     state: ?*const CatalogState = null,
     rap_directory: ?[]const u8 = null,
+    /// Package EDAT keys derived from each package's own EBOOT.PBP, as RAP file
+    /// contents keyed by package content ID. Filled by process_pkg_checked before
+    /// its walk queues any EDAT; never serialized into tasks or provenance.
+    derived_raps: std.StringHashMapUnmanaged([16]u8) = .empty,
+    derived_mutex: std.Io.Mutex = .init,
     /// Absolute parent of external-helper (DOCUMENT) work directories.
     scratch_directory: []const u8 = "/tmp",
     /// Bounds concurrent PS1 Classic conversions: each holds whole disc images
@@ -85,7 +91,35 @@ pub const Dispatch = struct {
 
     pub fn deinit(self: *Dispatch) void {
         if (self.prx_key) |*key| key.deinit();
+        var derived = self.derived_raps.iterator();
+        while (derived.next()) |item| {
+            std.crypto.secureZero(u8, item.value_ptr);
+            self.visited.allocator.free(item.key_ptr.*);
+        }
+        self.derived_raps.deinit(self.visited.allocator);
         self.visited.deinit();
+    }
+
+    /// Remember the key derived for `content_id`. The first registration wins:
+    /// the same content ID always carries the same licence.
+    fn register_derived_rap(self: *Dispatch, io: std.Io, content_id: []const u8, rap: [16]u8) !void {
+        self.derived_mutex.lockUncancelable(io);
+        defer self.derived_mutex.unlock(io);
+        const allocator = self.visited.allocator;
+        const key = try allocator.dupe(u8, content_id);
+        errdefer allocator.free(key);
+        const slot = try self.derived_raps.getOrPut(allocator, key);
+        if (slot.found_existing) {
+            allocator.free(key);
+            return;
+        }
+        slot.value_ptr.* = rap;
+    }
+
+    fn derived_rap(self: *Dispatch, io: std.Io, content_id: []const u8) ?[16]u8 {
+        self.derived_mutex.lockUncancelable(io);
+        defer self.derived_mutex.unlock(io);
+        return self.derived_raps.get(content_id);
     }
 
     fn inspect(self: *Dispatch, allocator: std.mem.Allocator, io: std.Io, name: []const u8, input: memory.View, hash: [64]u8) !void {
@@ -225,7 +259,7 @@ pub fn process_iso_checked(allocator: std.mem.Allocator, io: std.Io, input: memo
 
 /// PKGs are roots just like ISOs; decrypted entries retain their own backing
 /// buffers so the existing extraction queue can outlive the package walk.
-pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?*Store, cache: ?catalog_io.Cache, dispatch: ?*Dispatch) !?Result {
+pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []const u8, store: ?*Store, cache: ?catalog_io.Cache, dispatch: ?*Dispatch, rap_output: ?[]const u8) !?Result {
     const hashes = hash_source(bytes);
     if (cache) |value| {
         if (try catalog_io.contains(allocator, io, value, hashes.sha256, bytes.len, .pkg)) return null;
@@ -236,6 +270,8 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
     errdefer result.deinit(allocator);
     result.sha256 = hashes.sha256;
     result.sha1 = hashes.sha1;
+    // Before the walk: EDAT entries may precede the EBOOT in the package table.
+    try derive_package_key(allocator, io, package, dispatch, rap_output);
     var inventory = Inventory{ .allocator = allocator, .io = io, .store = store, .dispatch = dispatch, .pair_documents = true, .pair_pce = true, .paths = .init(allocator) };
     defer inventory.deinit();
     const PackageInventory = struct {
@@ -277,6 +313,36 @@ pub fn process_pkg_checked(allocator: std.mem.Allocator, io: std.Io, bytes: []co
     result.extraction_errors = inventory.counts.extraction_errors;
     result.reused = inventory.counts.reused;
     return result;
+}
+
+/// Derive the package's EDAT key from its own EBOOT.PBP and publish it: to the
+/// extraction dispatch (EDAT decoding) and, with `rap_output`, as a RAP file.
+/// A package without a derivable key is not an error; an unwritable RAP output
+/// directory is, because the caller asked for those files.
+fn derive_package_key(allocator: std.mem.Allocator, io: std.Io, package: pkg.Package, dispatch: ?*Dispatch, rap_output: ?[]const u8) !void {
+    if (dispatch == null and rap_output == null) return;
+    const derived = npdrm_key.derive_rap(allocator, package) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        error.NpdrmHeaderAuthenticationFailed, error.NpdrmKeyDerivationFailed => {
+            std.debug.print("RAP derivation {s}: {s}\n", .{ package.content_id, @errorName(err) });
+            return;
+        },
+        // A damaged package table is reported by the walk itself.
+        else => return,
+    };
+    var rap = derived orelse return;
+    defer std.crypto.secureZero(u8, &rap);
+    if (dispatch) |value| try value.register_derived_rap(io, package.content_id, rap);
+    const directory = rap_output orelse return;
+    const status = licenses.write_rap(io, directory, package.content_id, rap) catch |err| switch (err) {
+        // A malformed header ID names no file; the walk still ingests the package.
+        error.InvalidEdatContentId => return,
+        else => {
+            std.debug.print("RAP output {s}: {s} in {s}\n", .{ package.content_id, @errorName(err), directory });
+            return err;
+        },
+    };
+    if (status == .conflict) std.debug.print("RAP output {s}: a different RAP file already exists in {s}; kept\n", .{ package.content_id, directory });
 }
 
 fn read_pkg_metadata(allocator: std.mem.Allocator, package: pkg.Package) !Result {
@@ -1099,17 +1165,38 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
 fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, inventory: *Inventory, output: *?external_extractor.Output) !extractor.Provenance {
     return switch (task.kind) {
         .edat => blk: {
-            // A licence marker without its RAP is published as an empty payload,
+            // A licence marker without any key is published as an empty payload,
             // marked in provenance because its RIF-keyed MAC was not checked.
             var unlicensed_marker = false;
+            const KeySource = enum { none, derived_eboot, rap_file };
+            var key_source: KeySource = .none;
+            // The key never changes what a successful decode returns (the keyed
+            // header and block MACs authenticate the plaintext), so the result
+            // stays a pure function of the EDAT bytes and is published without a
+            // sibling dependency; only `key:` records which key opened it.
             const bytes = edat.decode(allocator, task.input.bytes, null) catch |err| switch (err) {
                 error.MissingEdatRap => retry: {
+                    const content_id = try edat.content_id(task.input.bytes);
+                    // Precedence: the key derived from this package's EBOOT. A
+                    // RAP file is consulted only when none exists, so a stale or
+                    // wrong file can never override a derivable key.
+                    if (dispatch.derived_rap(inventory.io, content_id)) |derived| {
+                        var rap = derived;
+                        defer std.crypto.secureZero(u8, &rap);
+                        if (edat.decode(allocator, task.input.bytes, rap)) |plaintext| {
+                            key_source = .derived_eboot;
+                            break :retry plaintext;
+                        } else |decode_error| {
+                            if (decode_error != error.EdatAuthenticationFailed or !try edat.unlicensed_marker(task.input.bytes)) return decode_error;
+                            unlicensed_marker = true;
+                            break :retry try allocator.alloc(u8, 0);
+                        }
+                    }
                     const directory = dispatch.rap_directory orelse {
                         if (!try edat.unlicensed_marker(task.input.bytes)) return error.MissingEdatRap;
                         unlicensed_marker = true;
                         break :retry try allocator.alloc(u8, 0);
                     };
-                    const content_id = try edat.content_id(task.input.bytes);
                     var rap = licenses.read_rap(inventory.io, directory, content_id) catch |key_error| {
                         if (key_error == error.MissingEdatRap and try edat.unlicensed_marker(task.input.bytes)) {
                             unlicensed_marker = true;
@@ -1123,7 +1210,9 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
                         return key_error;
                     };
                     defer std.crypto.secureZero(u8, &rap);
-                    break :retry try edat.decode(allocator, task.input.bytes, rap);
+                    const plaintext = try edat.decode(allocator, task.input.bytes, rap);
+                    key_source = .rap_file;
+                    break :retry plaintext;
                 },
                 else => return err,
             };
@@ -1133,7 +1222,11 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
             break :blk .{
                 .name = "pspdb-ingest",
                 .version = revisions.edat,
-                .options = if (unlicensed_marker) &.{"unlicensed-marker"} else &.{},
+                .options = if (unlicensed_marker) &.{"unlicensed-marker"} else switch (key_source) {
+                    .none => &.{},
+                    .derived_eboot => &.{"key:derived-eboot"},
+                    .rap_file => &.{"key:rap-file"},
+                },
             };
         },
         .pspedat => blk: {
@@ -1367,7 +1460,7 @@ fn validate_path(name: []const u8) !void {
 
 /// Open and map one image read-only; optional outputs go only to the store.
 /// V1 targets POSIX: direct mmap avoids an implicit whole-file heap fallback.
-pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, kind: model.RootKind, store: ?*Store, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch, nand_fuse_directory: ?[]const u8) !?Result {
+pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, kind: model.RootKind, store: ?*Store, catalog: ?catalog_io.Cache, dispatch: ?*Dispatch, nand_fuse_directory: ?[]const u8, rap_output: ?[]const u8) !?Result {
     // Recheck the opened descriptor without following symlinks or blocking on
     // a FIFO substituted after discovery.
     const descriptor = try std.posix.openat(std.Io.Dir.cwd().handle, path, .{
@@ -1392,7 +1485,7 @@ pub fn process_file(allocator: std.mem.Allocator, io: std.Io, path: []const u8, 
     defer input.release();
     const result = switch (kind) {
         .iso => try process_iso_checked(allocator, io, input, store, catalog, dispatch),
-        .pkg => try process_pkg_checked(allocator, io, input.bytes, store, catalog, dispatch),
+        .pkg => try process_pkg_checked(allocator, io, input.bytes, store, catalog, dispatch, rap_output),
         .nand => try process_nand_checked(allocator, io, input.bytes, store, catalog, dispatch, nand_fuse_directory),
         .update => try process_update_checked(allocator, io, input, store, catalog, dispatch),
     };
@@ -1767,7 +1860,7 @@ test "recognized updater replaced before intake remains an update format error" 
     file.close(io);
     const path = try tmp.dir.realPathFileAlloc(io, "changed.pbp", allocator);
     defer allocator.free(path);
-    const result = (try process_file(allocator, io, path, .update, null, null, null, null)).?;
+    const result = (try process_file(allocator, io, path, .update, null, null, null, null, null)).?;
     defer result.deinit(allocator);
     try std.testing.expectEqual(model.RootKind.update, result.kind);
     try std.testing.expectEqualStrings("InvalidPbp", result.@"error".?);

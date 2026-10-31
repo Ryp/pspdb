@@ -13,6 +13,7 @@ const Options = struct {
     catalog: ?[]const u8 = null,
     skip_existing: bool = false,
     progress: bool = true,
+    rap_output: ?[]const u8 = null,
     help: bool = false,
 };
 
@@ -33,6 +34,10 @@ fn parse_args(allocator: std.mem.Allocator, args: []const []const u8, default_th
             i += 1;
             if (i == args.len) return error.MissingCatalogPath;
             options.catalog = args[i];
+        } else if (std.mem.eql(u8, arg, "--rap-output")) {
+            i += 1;
+            if (i == args.len) return error.MissingRapOutputPath;
+            options.rap_output = args[i];
         } else if (std.mem.eql(u8, arg, "--store")) {
             i += 1;
             if (i == args.len) return error.MissingStorePath;
@@ -78,11 +83,11 @@ fn parse_size(text: []const u8) ?u64 {
 pub fn main(init: std.process.Init) !u8 {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     const options = parse_args(init.arena.allocator(), args[1..], std.Thread.getCpuCount() catch 1) catch |err| {
-        std.debug.print("pspdb-ingest: {s}\nUsage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH [--store-max-size SIZE]] [--threads N] [--no-progress]\n", .{@errorName(err)});
+        std.debug.print("pspdb-ingest: {s}\nUsage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH [--store-max-size SIZE]] [--threads N] [--rap-output DIR] [--no-progress]\n", .{@errorName(err)});
         return 2;
     };
     if (options.help) {
-        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH [--store-max-size SIZE]] [--threads N] [--no-progress]\nHash ISO/PKG/NAND/update inputs across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. Accept .iso/.pkg/.nand, recognized raw NAND .bin files, and updater .pbp files with PARAM.SFO UPDATER_VER and a final PSAR section. ZIP ISO/PKG members are decompressed in memory; ZIP NAND/PBP members are not ingested. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes extracted file objects to the existing SHA-256 store layout, never original NAND dumps or updater PBPs. --store-max-size SIZE (bytes, or K/M/G binary suffix) keeps larger objects out of the store; they are still hashed, cataloged and extracted.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG/NAND/update results and checks nested extractor provenance (requires --catalog; off by default).\nSupported nested formats are processed automatically when --catalog is set; --store is optional. External adapters run through uv.\nPSPDB_NAND_FUSE_DIR overrides the private hash-keyed NAND fuse directory (default: $XDG_DATA_HOME/pspdb/nand-fuses or $HOME/.local/share/pspdb/nand-fuses).\n--threads caps all application threads (default: available logical CPUs).\n", .{});
+        std.debug.print("Usage: pspdb-ingest FOLDER... [--catalog PATH] [--skip-existing] [--store PATH [--store-max-size SIZE]] [--threads N] [--rap-output DIR] [--no-progress]\nHash ISO/PKG/NAND/update inputs across one or more folders using a shared worker pool and summary; failed folders do not stop the remaining inputs. Accept .iso/.pkg/.nand, recognized raw NAND .bin files, and updater .pbp files with PARAM.SFO UPDATER_VER and a final PSAR section. ZIP ISO/PKG members are decompressed in memory; ZIP NAND/PBP members are not ingested. ISOs require root UMD_DATA.BIN; retail PSP/PS1 PKGs retain original entry paths. --store writes extracted file objects to the existing SHA-256 store layout, never original NAND dumps or updater PBPs. --store-max-size SIZE (bytes, or K/M/G binary suffix) keeps larger objects out of the store; they are still hashed, cataloged and extracted.\n--catalog writes adjacent <hash>-ingest.json and <hash>-tree.json under <extractor>/v<version>/. --skip-existing skips current ISO/PKG/NAND/update results and checks nested extractor provenance (requires --catalog; off by default).\nSupported nested formats are processed automatically when --catalog is set; --store is optional. External adapters run through uv.\nEDAT keys are derived from each PSN package's own EBOOT.PBP; PSPDB_RAP_DIR (default: $XDG_DATA_HOME/pspdb/licenses or $HOME/.local/share/pspdb/licenses) supplies RAP files only for EDATs of content IDs that have no derivable key (e.g. DLC). --rap-output DIR also writes each derived key as <CONTENT_ID>.rap (DIR created 0700, files 0600, existing files never overwritten); without it no RAP file is written.\nPSPDB_NAND_FUSE_DIR overrides the private hash-keyed NAND fuse directory (default: $XDG_DATA_HOME/pspdb/nand-fuses or $HOME/.local/share/pspdb/nand-fuses).\n--threads caps all application threads (default: available logical CPUs).\n", .{});
         return 0;
     }
 
@@ -103,6 +108,10 @@ pub fn main(init: std.process.Init) !u8 {
     const store = if (store_value) |*value| value else null;
     const catalog = if (options.catalog) |path| blk: {
         try std.Io.Dir.cwd().createDirPath(io, path);
+        break :blk try std.Io.Dir.cwd().realPathFileAlloc(io, path, init.arena.allocator());
+    } else null;
+    const rap_output = if (options.rap_output) |path| blk: {
+        _ = try std.Io.Dir.cwd().createDirPathStatus(io, path, .fromMode(0o700));
         break :blk try std.Io.Dir.cwd().realPathFileAlloc(io, path, init.arena.allocator());
     } else null;
     const freshness = if (options.skip_existing) try catalog_state.load(init.gpa, io, catalog.?) else null;
@@ -130,7 +139,7 @@ pub fn main(init: std.process.Init) !u8 {
     ingest.log(io, "Ingesting {d} folders (thread cap {d}, ingest workers {d}, progress task {d})\n", .{
         options.folders.len, options.threads, worker_count, @as(usize, if (live) 1 else 0),
     });
-    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, rap_directory, scratch_directory, nand_fuse_directory, state) catch |err| {
+    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, rap_directory, rap_output, scratch_directory, nand_fuse_directory, state) catch |err| {
         root.end();
         std.debug.print("pspdb-ingest: {s}\n", .{@errorName(err)});
         return 1;
@@ -165,6 +174,9 @@ test "CLI requires a folder and a positive thread cap" {
     const options = try parse_args(allocator, &.{ "folder", "--threads", "1", "--no-progress" }, 4);
     try std.testing.expectEqual(@as(usize, 1), options.threads);
     try std.testing.expect(!options.progress);
+    try std.testing.expectEqual(null, options.rap_output);
+    try std.testing.expectError(error.MissingRapOutputPath, parse_args(allocator, &.{ "folder", "--rap-output" }, 4));
+    try std.testing.expectEqualStrings("raps", (try parse_args(allocator, &.{ "folder", "--rap-output", "raps" }, 4)).rap_output.?);
 }
 
 test {
@@ -173,5 +185,6 @@ test {
     _ = ingest;
     _ = @import("catalog.zig");
     _ = nand_fuses;
+    _ = @import("npdrm_key.zig");
     _ = @import("psx.zig");
 }

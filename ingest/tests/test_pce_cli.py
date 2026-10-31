@@ -211,7 +211,7 @@ class PceCliTests(unittest.TestCase):
         self.assertNotIn('extraction', entries['USRDIR/CONTENT/CONTENT.DAT'])
         self.assertNotIn('extraction', entries['USRDIR/DOC/CONTENT1.sdat'])
         digest = entries['USRDIR/DOC/CONTENT1.sdat']['sha256']
-        edat = json.loads((base / f'catalog/edat/v6/{digest}-tree.json').read_text())
+        edat = json.loads((base / f'catalog/edat/v7/{digest}-tree.json').read_text())
         self.assertNotIn('error', edat)
         self.assertEqual([e['path'] for e in edat['entries']], ['payload.dat'])
 
