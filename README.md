@@ -1168,7 +1168,8 @@ catalog identity and links remain stable when a display title changes.
 PS1 PKG ingest uses Zig-PSP for PBP/SFO parsing and a native, in-memory Zig
 pipeline (`ingest/src/psx/`, provenance `pspdb-psx` revision 4, options
 `in-memory`) to rebuild the discs, attached beneath the original `DATA.BIN`
-occurrence. There is no helper, scratch directory or environment variable. The
+occurrence; PBP revision 6 records that changed contextual provenance (revision 5
+results stay immutable). There is no helper, scratch directory or environment variable. The
 pipeline reproduces the former PSXtract-2 revision 3 output byte for byte:
 `DATA.PSAR` (`PSISOIMG0000` single or `PSTITLEIMG0000` multi disc) is parsed, each
 disc's data blocks are LZ-decoded into the data track, its sectors are regenerated
