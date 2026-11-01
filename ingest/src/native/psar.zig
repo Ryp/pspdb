@@ -1,13 +1,10 @@
-//! Pure-Zig port of `psar_native.cpp` (`pspdb_psar_walk`). The crypto cores it
-//! compiles in from the pinned pspdecrypt (IPL1/IPL2/IPL3, DES table
-//! decryption, stage 2/3 and kernel-key extraction, syscon keys) live in
-//! Zig-PSP's `psar_crypto.zig`; this file keeps the walk, the sink and the
-//! zlib/LZR glue.
+//! PSPDB's in-memory PSAR walk (formerly the C++ `pspdb_psar_walk`). The crypto
+//! cores (IPL1/IPL2/IPL3, DES table decryption, stage 2/3 and kernel-key
+//! extraction, syscon keys) live in Zig-PSP's `psar_crypto.zig`; this file keeps
+//! the walk, the sink and the zlib/LZR glue.
 //!
-//! Event order, names, directory flags and return codes match the C:
-//! 0 success; -1 malformed/transform; -2 allocation; -3 sink refused.
-//! -4 (OpenSSL legacy provider missing) has no equivalent: DES-CBC is
-//! implemented in the crypto module, so it is unreachable.
+//! Codes: 0 success; -1 malformed/transform; -2 allocation; -3 sink refused.
+//! psar.zig still maps -4 (former OpenSSL failure); it is no longer produced.
 //!
 //! Deliberate allocation differences: the two 1,000,000-byte stage buffers that
 //! the C keeps on the stack live on the heap here (allocation failure -> -2).

@@ -53,33 +53,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }));
 
-    const decrypt = b.dependency("pspdecrypt", .{});
-    const prepare = b.addSystemCommand(&.{"python3"});
-    prepare.addFileArg(b.path("../tools/prepare_native.py"));
-    prepare.addArgs(&.{ "--normalize", "libkirk/kirk_engine.c", "--normalize", "pspdecrypt_lib.cpp" });
-    prepare.addDirectoryArg(decrypt.path(""));
-    const native_source = prepare.addOutputDirectoryArg("pspdecrypt");
-    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-update-xor.patch"));
-    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-prx-native.patch"));
-    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-prx-coverage.patch"));
-    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-kle-native.patch"));
-    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-pops-native.patch"));
-    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-table-length.patch"));
-    prepare.addFileArg(b.path("../tools/patches/pspdecrypt-psar-memory.patch"));
-    module.addIncludePath(native_source);
-    module.addCSourceFiles(.{
-        .root = native_source,
-        .files = &.{ "libkirk/kirk_engine.c", "libkirk/amctrl.c", "libkirk/AES.c", "libkirk/SHA1.c", "libkirk/bn.c", "libkirk/ec.c", "kl4e.c", "syscon_ipl_keys.c" },
-        .flags = &.{ "-std=c11", "-fno-strict-aliasing" },
-    });
-    module.addCSourceFile(.{ .file = native_source.path(b, "PrxDecrypter.cpp"), .flags = &.{ "-std=c++17", "-fno-strict-aliasing" } });
-    module.addCSourceFile(.{ .file = b.path("src/prx_native.cpp"), .flags = &.{"-std=c++17"} });
-    module.addCSourceFile(.{ .file = b.path("src/pops_native.cpp"), .flags = &.{"-std=c++17"} });
-    module.addCSourceFile(.{ .file = b.path("src/psar_native.cpp"), .flags = &.{ "-std=c++17", "-fno-strict-aliasing" } });
-    module.addCSourceFile(.{ .file = b.path("src/pgd_native.c"), .flags = &.{"-std=c11"} });
-    module.addCSourceFile(.{ .file = b.path("src/psx/pgd_psx.c"), .flags = &.{"-std=c11"} });
-    module.addCSourceFile(.{ .file = b.path("src/npdrm_key.c"), .flags = &.{"-std=c11"} });
-    module.link_libcpp = true;
     // PSX Classics ATRAC3 (src/psx/atrac3/NOTICE). Bit-exactness depends on x87
     // `long double` arithmetic and volatile binary32 stores: never add fast-math,
     // contraction or -ffast-* flags here.
@@ -219,7 +192,6 @@ pub fn build(b: *std.Build) void {
         }).createModule());
     }
     module.linkSystemLibrary("archive", .{});
-    module.linkSystemLibrary("crypto", .{});
     module.linkSystemLibrary("z", .{});
     module.linkSystemLibrary("expat", .{ .use_pkg_config = .force });
     module.link_libc = true;
@@ -237,21 +209,4 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{ .root_module = module });
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
-
-    // Differential harness: the same C/C++ objects, include paths and system
-    // libraries come from `module` through the import graph, so the patch/prepare
-    // pipeline above runs once. Its test block also pulls in src/native/*.zig tests.
-    const diff_module = b.createModule(.{
-        .root_source_file = b.path("src/native_diff.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "ingest", .module = module }},
-    });
-    const diff_exe = b.addExecutable(.{ .name = "native-diff", .root_module = diff_module });
-    const diff_run = b.addRunArtifact(diff_exe);
-    diff_run.addPassthruArgs();
-    b.step("native-diff", "Compare the C pspdecrypt entry points with the pure-Zig ports (zig build native-diff -- --corpus FILE [--kind K] [--limit N])").dependOn(&diff_run.step);
-
-    const native_tests = b.addTest(.{ .root_module = diff_module });
-    test_step.dependOn(&b.addRunArtifact(native_tests).step);
 }

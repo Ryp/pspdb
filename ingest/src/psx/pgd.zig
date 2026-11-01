@@ -5,7 +5,7 @@
 //! before any plaintext is produced. The source is never modified.
 const std = @import("std");
 
-extern fn pspdb_psx_pgd_decrypt(source: [*]const u8, source_size: usize, output: [*]u8, output_size: usize) c_int;
+const psp_decrypt = @import("zig_psp_decrypt");
 
 pub const Error = error{
     /// Structural problem: short buffer, zero/non power-of-two block size, offsets out of range.
@@ -39,7 +39,7 @@ pub fn decrypt(allocator: std.mem.Allocator, bytes: []const u8) Error!Owned {
     if (bytes.len < 0x90 or bytes.len > std.math.maxInt(i32)) return error.InvalidPgd;
     const out = try allocator.alloc(u8, bytes.len);
     errdefer allocator.free(out);
-    const result = pspdb_psx_pgd_decrypt(bytes.ptr, bytes.len, out.ptr, out.len);
+    const result = psp_decrypt.pgd.decryptPsx(bytes, out);
     if (result < 0) return switch (result) {
         -2 => error.PgdHeaderMacMismatch,
         -3 => error.PgdDecryptionFailed,
@@ -56,17 +56,8 @@ pub fn decrypt(allocator: std.mem.Allocator, bytes: []const u8) Error!Owned {
 /// Synthetic PGD builder for unit tests (this file and psar.zig). Uses the same
 /// libkirk primitives, with an explicit version key, so no real content is needed.
 pub const testing_support = struct {
-    const MacKey = extern struct { kind: c_int, key: [16]u8, pad: [16]u8, pad_size: c_int };
-    const CipherKey = extern struct { kind: u32, seed: u32, key: [16]u8 };
-    extern fn kirk_init_prx() void;
-    extern fn sceDrmBBMacInit(mkey: *MacKey, kind: c_int) c_int;
-    extern fn sceDrmBBMacUpdate(mkey: *MacKey, buf: [*]u8, size: c_int) c_int;
-    extern fn sceDrmBBMacFinal(mkey: *MacKey, buf: [*]u8, vkey: ?[*]u8) c_int;
-    extern fn sceDrmBBCipherInit(ckey: *CipherKey, kind: c_int, mode: c_int, header_key: [*]u8, version_key: [*]u8, seed: u32) c_int;
-    extern fn sceDrmBBCipherUpdate(ckey: *CipherKey, data: [*]u8, size: c_int) c_int;
-    extern fn sceDrmBBCipherFinal(ckey: *CipherKey) c_int;
-
-    const dnas_key1a90 = [16]u8{ 0xED, 0xE2, 0x5D, 0x2D, 0xBB, 0xF8, 0x12, 0xE5, 0x3C, 0x5C, 0x59, 0x32, 0xFA, 0xE3, 0xE2, 0x43 };
+    const amctrl = psp_decrypt.amctrl;
+    const dnas_key1a90 = psp_decrypt.pgd.dnas_key1a90;
 
     pub const Options = struct {
         block_size: u32 = 0x400,
@@ -79,28 +70,27 @@ pub const testing_support = struct {
         declared_data_offset: ?u32 = null,
     };
 
-    fn mac(kind: c_int, out: []u8, input: []u8, key: ?*[16]u8, dnas: bool) void {
-        var state: MacKey = undefined;
-        std.debug.assert(sceDrmBBMacInit(&state, kind) == 0);
-        std.debug.assert(sceDrmBBMacUpdate(&state, input.ptr, @intCast(input.len)) == 0);
-        const key_ptr: ?[*]u8 = if (dnas) @constCast(&dnas_key1a90) else if (key) |k| k else null;
-        std.debug.assert(sceDrmBBMacFinal(&state, out.ptr, key_ptr) == 0);
+    fn mac(kind: i32, out: []u8, input: []u8, key: ?*[16]u8, dnas: bool) void {
+        var state: amctrl.MacKey = .{};
+        std.debug.assert(amctrl.macInit(&state, kind) == 0);
+        std.debug.assert(amctrl.macUpdate(&state, input) == 0);
+        const key_ptr: ?*const [16]u8 = if (dnas) &dnas_key1a90 else if (key) |k| k else null;
+        std.debug.assert(amctrl.macFinal(&state, out[0..16], key_ptr) == 0);
     }
 
-    fn crypt(kind: c_int, bytes: []u8, seed: []u8, key: *[16]u8) void {
-        var state: CipherKey = undefined;
-        std.debug.assert(sceDrmBBCipherInit(&state, kind, 2, seed.ptr, key, 0) == 0);
-        std.debug.assert(sceDrmBBCipherUpdate(&state, bytes.ptr, @intCast(bytes.len)) == 0);
-        std.debug.assert(sceDrmBBCipherFinal(&state) == 0);
+    fn crypt(kind: i32, bytes: []u8, seed: []u8, key: *[16]u8) void {
+        var state: amctrl.CipherKey = .{};
+        std.debug.assert(amctrl.cipherInit(&state, kind, 2, seed[0..16], key, 0) == 0);
+        std.debug.assert(amctrl.cipherUpdate(&state, bytes) == 0);
+        std.debug.assert(amctrl.cipherFinal(&state) == 0);
     }
 
     pub fn build(allocator: std.mem.Allocator, payload: []const u8, options: Options) ![]u8 {
-        kirk_init_prx();
         // Only the fixed-key profile (drm_type 1, key_index 1: mac/cipher type 1) is
         // buildable here: type 2 is fuse-id bound (KIRK 5/8 unavailable in the
         // decryption-only libkirk build) and type 3 needs bbmac_build_final2.
-        const mac_type: c_int = 1;
-        const cipher_type: c_int = 1;
+        const mac_type: i32 = 1;
+        const cipher_type: i32 = 1;
         const aligned = (payload.len + 15) & ~@as(usize, 15);
         const blocks = (aligned + options.block_size - 1) / options.block_size;
         const total = @max(0x90 + aligned + blocks * 16, options.total_len);

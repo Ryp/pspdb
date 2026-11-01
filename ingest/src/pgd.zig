@@ -3,7 +3,7 @@ const decoded_output = @import("decoded.zig");
 
 const max_source_size = 64 << 10;
 
-extern fn pspdb_pgd_decode(source: [*]const u8, source_size: usize, output: [*]u8, output_size: usize) c_int;
+const psp_decrypt = @import("zig_psp_decrypt");
 
 /// Authenticate and decrypt a fixed-key OPNSSMP PGD. The source is immutable;
 /// the caller owns the exact-size plaintext returned only after every MAC passes.
@@ -12,7 +12,7 @@ pub fn decode(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
         return error.InvalidPgd;
     const output = try allocator.alloc(u8, source.len);
     errdefer allocator.free(output);
-    const result = pspdb_pgd_decode(source.ptr, source.len, output.ptr, output.len);
+    const result = psp_decrypt.pgd.decode(source, output);
     if (result < 0) return switch (result) {
         -1 => error.UnsupportedPgd,
         -2 => error.PgdAuthenticationFailed,

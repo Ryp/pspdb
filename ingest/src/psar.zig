@@ -2,37 +2,7 @@
 //! in memory; larger archives replay validated input rather than retain it all.
 const std = @import("std");
 const memory = @import("bytes.zig");
-const lzr = @import("lzr.zig");
-
-const native_emit = *const fn (?*anyopaque, [*]const u8, usize, ?[*]const u8, usize, c_int) callconv(.c) c_int;
-extern fn pspdb_psar_walk(input: [*]const u8, size: usize, context: ?*anyopaque, emit: native_emit) c_int;
-
-// The legacy custom SHA-256 IV and 28-byte output are standard SHA-224. Its
-// caller deliberately preserves the last four bytes of the destination.
-export fn pspdb_psar_hash(custom: c_int, first: ?[*]const u8, first_size: usize, second: ?[*]const u8, second_size: usize, output: [*]u8) void {
-    const a = if (first_size == 0) "" else first.?[0..first_size];
-    const b = if (second_size == 0) "" else second.?[0..second_size];
-    if (custom != 0) {
-        var hash = std.crypto.hash.sha2.Sha224.init(.{});
-        hash.update(a);
-        hash.update(b);
-        hash.final(output[0..28]);
-    } else {
-        var hash = std.crypto.hash.sha2.Sha256.init(.{});
-        hash.update(a);
-        hash.update(b);
-        hash.final(output[0..32]);
-    }
-}
-
-// PSAR's chained compression members need the exact upstream input endpoint.
-export fn pspdb_psar_lzr(input: [*]const u8, size: usize, output: [*]u8, capacity: usize, consumed: *usize) c_int {
-    consumed.* = 0;
-    const member = lzr.decode_raw_member_into(input[0..size], output[0..capacity]) catch return -1;
-    if (member.written > std.math.maxInt(c_int)) return -1;
-    consumed.* = member.consumed;
-    return @intCast(member.written);
-}
+const native = @import("native/psar.zig");
 
 fn native_status(result: c_int) !void {
     return switch (result) {
@@ -138,7 +108,7 @@ const Collector = struct {
 pub fn walk(allocator: std.mem.Allocator, input: memory.View, context: anytype, comptime emit: anytype) !void {
     var collector: Collector = .{ .allocator = allocator };
     defer collector.deinit();
-    const result = pspdb_psar_walk(input.bytes.ptr, input.bytes.len, &collector, Collector.receive);
+    const result = native.walk(input.bytes, &collector, Collector.receive);
     if (collector.failure) |err| return err;
     try native_status(result);
     if (!collector.replay) {
@@ -184,7 +154,7 @@ pub fn walk(allocator: std.mem.Allocator, input: memory.View, context: anytype, 
         }
     };
     var replay: Replay = .{ .collector = &collector, .context = context };
-    const replay_result = pspdb_psar_walk(input.bytes.ptr, input.bytes.len, &replay, Replay.receive);
+    const replay_result = native.walk(input.bytes, &replay, Replay.receive);
     if (replay.failure) |err| return err;
     try native_status(replay_result);
     if (replay.events != collector.events or replay.emitted != collector.outputs.count()) return error.PsarReplayMismatch;

@@ -19,7 +19,7 @@ const pkg = @import("pkg.zig");
 
 const Aes128 = std.crypto.core.aes.Aes128;
 
-extern fn pspdb_npdrm_version_key(psar: [*]const u8, size: usize, version_key: *[16]u8, kind: *u8) c_int;
+const psp_decrypt = @import("zig_psp_decrypt");
 
 pub const eboot_path = "USRDIR/CONTENT/EBOOT.PBP";
 
@@ -101,7 +101,7 @@ pub fn rap_from_psar_header(psar: []const u8) !?[16]u8 {
     var version_key: [16]u8 = undefined;
     defer std.crypto.secureZero(u8, &version_key);
     var kind: u8 = 0;
-    switch (pspdb_npdrm_version_key(psar.ptr, psar.len, &version_key, &kind)) {
+    switch (psp_decrypt.npdrm.versionKey(psar, &version_key, &kind)) {
         0 => {},
         1, 2, 3 => return null, // Not NPDRM, truncated, or a header class without a klicensee.
         4 => return error.NpdrmHeaderAuthenticationFailed,
@@ -181,26 +181,20 @@ test "key_357C step selects one AES key per kind" {
 }
 
 const Libkirk = struct {
-    const MacKey = extern struct { kind: c_int, key: [16]u8, pad: [16]u8, pad_size: c_int };
-    extern fn kirk_init_prx() void;
-    extern fn sceDrmBBMacInit(mkey: *MacKey, kind: c_int) c_int;
-    extern fn sceDrmBBMacUpdate(mkey: *MacKey, buf: [*]u8, size: c_int) c_int;
-    extern fn sceDrmBBMacFinal(mkey: *MacKey, buf: [*]u8, vkey: ?[*]u8) c_int;
-    extern fn sceUtilsBufferCopyWithRange(out: [*]u8, out_size: c_int, in: [*]u8, in_size: c_int, cmd: c_int) c_int;
+    const amctrl = psp_decrypt.amctrl;
 
     /// Type-3 BBMAC as stored in an NPUMDIMG header: the MAC computed under the
     /// version key, KIRK-4 encrypted with key seed 0x63 (Final2 reverses this).
     fn npumdimg_bbmac(header: []u8, version_key: *[16]u8) [16]u8 {
-        kirk_init_prx();
-        var mac: MacKey = undefined;
-        std.debug.assert(sceDrmBBMacInit(&mac, 3) == 0);
-        std.debug.assert(sceDrmBBMacUpdate(&mac, header.ptr, @intCast(header.len)) == 0);
+        var mac: amctrl.MacKey = .{};
+        std.debug.assert(amctrl.macInit(&mac, 3) == 0);
+        std.debug.assert(amctrl.macUpdate(&mac, header) == 0);
         var tag: [16]u8 = undefined;
-        std.debug.assert(sceDrmBBMacFinal(&mac, &tag, version_key) == 0);
+        std.debug.assert(amctrl.macFinal(&mac, &tag, version_key) == 0);
         var buffer: [0x14 + 16]u8 align(4) = undefined;
         for ([_]u32{ 4, 0, 0, 0x63, 16 }, 0..) |word, i| std.mem.writeInt(u32, buffer[i * 4 ..][0..4], word, .little);
         @memcpy(buffer[0x14..], &tag);
-        std.debug.assert(sceUtilsBufferCopyWithRange(&buffer, buffer.len, &buffer, 16, 4) == 0);
+        std.debug.assert(@import("kirk").bufferCopyWithRange(&buffer, &buffer, 4) == 0);
         return buffer[0x14..][0..16].*;
     }
 };
@@ -208,7 +202,7 @@ const Libkirk = struct {
 fn expect_derivation(psar: []const u8, kind: u8, version_key: [16]u8) !void {
     var recovered: [16]u8 = undefined;
     var recovered_kind: u8 = 0;
-    try testing.expectEqual(@as(c_int, 0), pspdb_npdrm_version_key(psar.ptr, psar.len, &recovered, &recovered_kind));
+    try testing.expectEqual(@as(c_int, 0), psp_decrypt.npdrm.versionKey(psar, &recovered, &recovered_kind));
     try testing.expectEqual(kind, recovered_kind);
     try testing.expectEqualSlices(u8, &version_key, &recovered);
     const rap = (try rap_from_psar_header(psar)).?;

@@ -20,7 +20,7 @@ and its adjacent sign_np.h. No private key or signing operation is used.
 
 This verification path is pure Zig and allocation-free. Curve arithmetic and
 validation live in Zig-PSP, with all per-call state local; PSPDB contains only
-the format adapter. Other native extractors still require OpenSSL and libcrypto.
+the format adapter.
 
 PBP extraction verifies this format before emitting any optional
 OPNSSMP.PGD/STARTDAT children. Signature failure fails the input's ingest.

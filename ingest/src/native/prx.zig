@@ -1,5 +1,5 @@
-// PSPDB's pspdb_prx_decode wrapper (ingest/src/prx_native.cpp) around the
-// pure-Zig pspDecryptPRX port in Zig-PSP. Return codes mirror the C exactly.
+// PSPDB's PRX decode policy (size, magic and code mapping consumed by prx.zig)
+// around Zig-PSP's pspDecryptPRX port. Codes match the former C wrapper.
 const std = @import("std");
 const decryptPrx = @import("zig_psp_decrypt").prx.decryptPrx;
 

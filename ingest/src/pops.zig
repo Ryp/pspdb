@@ -1,7 +1,7 @@
 const std = @import("std");
 const decoded_output = @import("decoded.zig");
 
-extern fn pspdb_pops_decode(psp: [*]const u8, psp_len: usize, data_bin: [*]const u8, data_bin_len: usize, output: [*]u8, output_len: usize) c_int;
+const psp_decrypt = @import("zig_psp_decrypt");
 
 /// Authenticate and decrypt DATA.PSP using its sibling DATA.BIN title context.
 /// Inputs are borrowed, immutable and may be unaligned. The caller owns the
@@ -15,7 +15,7 @@ pub fn decode(allocator: std.mem.Allocator, psp_bytes: []const u8, data_bin_byte
     // The PRX decoder reconstructs KIRK headers in the complete declared envelope.
     const output = try allocator.alloc(u8, declared);
     errdefer allocator.free(output);
-    const result = pspdb_pops_decode(psp_bytes.ptr, psp_bytes.len, data_bin_bytes.ptr, data_bin_bytes.len, output.ptr, output.len);
+    const result = psp_decrypt.pops.decode(psp_bytes, data_bin_bytes, output);
     switch (result) {
         -10 => return error.InvalidPops,
         -11 => return error.InvalidPopsSize,

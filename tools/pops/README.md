@@ -8,13 +8,13 @@ when their ELF type is PSP PRX (0xffa0). Gzip naming preserves the format
 detected after decompression: `DATA.PSP → DATA.gz → DATA.elf`.
 The PRX subtype remains in the ELF header; no conversion occurs.
 
-The normal Zig build links the pinned pspdecrypt backend already used by PRX,
-plus libkirk's authenticated PGD key-recovery routines. No separate installation
-or `PSPDB_POPS` override is used. Source:
-https://github.com/John-K/pspdecrypt at `c156627db7634d395c380c0a9589130f603307fc`.
+The normal Zig build uses the pure-Zig PRX, PGD and KIRK ports in Zig-PSP
+(`tools/prxencrypt`, GPL-3.0), ported from pspdecrypt and libkirk
+(https://github.com/John-K/pspdecrypt at `c156627db7634d395c380c0a9589130f603307fc`).
+No separate installation or `PSPDB_POPS` override is used.
 The narrow POPS tag/key/XOR recipe is available only to seeded type-5 decoding;
-standalone PRX coverage is unchanged. Mutable KIRK and BBMac workspace is
-thread-local. Zig-PSP continues to own PBP parsing.
+standalone PRX coverage is unchanged. KIRK and BBMac state is call-local.
+Zig-PSP continues to own PBP parsing.
 
 ## Supported profile and checks
 
@@ -22,7 +22,7 @@ Initial support is POPS_EXEC mode20, tag0DAA06F0, KIRK code0x65, PGD key index1 
 DRM type1. Other profiles fail explicitly. PSISOIMG0000 locates PGD at0x400;
 PSTITLEIMG0000 locates it at0x200; real multi-disc remains unverified. The decoder
 checks section/header bounds, declared PRX/ciphertext sizes and the DNAS MAC;
-pspdecrypt then checks header SHA1 and KIRK authenticates the ciphertext.
+the PRX decoder then checks header SHA1 and KIRK authenticates the ciphertext.
 
 The native cutover reproduces Ginsei's 7134-byte gzip payload exactly against
 the retained helper oracle. Earlier helper research verified gzip and raw ELF

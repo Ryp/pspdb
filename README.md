@@ -12,12 +12,12 @@ Run the following commands from the repository root.
 ## Build and ingest
 
 Requires **Zig 0.17.0**, GNU **patch**, **pkg-config**, and development headers/libraries
-for **libarchive**, **OpenSSL 3**, **zlib** and **Expat**. PSAR filename-table
-decryption also requires OpenSSL's **legacy provider** for DES-CBC.
+for **libarchive**, **zlib** and **Expat**.
 Zig-PSP temporarily uses the local checkout at `../Zig-PSP`
 (relative to this repository), including uncommitted changes. This is a working-tree
-dependency, not an immutable revision pin. The first build fetches pinned
-pspdecrypt, make-npdata, pkg2zip and RCOMage configuration sources.
+dependency, not an immutable revision pin. PRX, PSAR, KL3E/KL4E, PGD, POPS and
+EDAT-key decryption use its pure-Zig ports (`tools/prxencrypt`, GPL-3.0). The first
+build fetches pinned make-npdata, pkg2zip and RCOMage configuration sources.
 
 ```sh
 (cd ingest && zig build -Doptimize=ReleaseSafe)
@@ -913,12 +913,12 @@ release the returned view, never separately free its backing.
 `gzip.zig` owns complete-stream and bounded single-member decompression;
 `containers.zig` only exposes borrowed container slices. PRX calls the codecs
 directly, keeping its declared-size and authentication boundaries explicit.
-Native source normalization and patch lists live in `ingest/build.zig`;
+Native source normalization and patch lists for make-npdata and pkg2zip live in `ingest/build.zig`;
 `tools/prepare_native.py` applies the shared preparation steps without mutating
 the fetched dependencies. Standalone builders explicitly opt into patching
 their already isolated temporary source directory.
 
-PSAR revision 4 runs the pinned pspdecrypt algorithms through a native memory
+PSAR revision 4 runs the Zig-PSP ports of the pspdecrypt algorithms through a native memory
 bridge. It preserves final-write semantics, decoded table lengths, secondary
 compression members, reboot modules, IPL stages and kernel-key outputs.
 Authenticated IPL kernel-key output may contain one 16-byte key or at least two
@@ -932,9 +932,9 @@ memory cap. The first complete walk must succeed before any output is emitted.
 Consumers borrow names/views until their callback returns and retain a view
 when its bytes must outlive that call.
 
-The build uses pspdecrypt commit `c156627db7634d395c380c0a9589130f603307fc`,
-shared PRX recipes and bounded per-call IPL state. DES uses a private OpenSSL
-legacy-provider context; KIRK state remains thread-local. The former custom
+The decoders are pure-Zig ports of pspdecrypt commit `c156627db7634d395c380c0a9589130f603307fc`
+in Zig-PSP, with shared PRX recipes and bounded per-call IPL state. DES-CBC is
+implemented in the crypto module; KIRK state is call-local. The former custom
 SHA-256 variant is standard SHA-224, including its 28-byte output.
 Decoded package tables describe model selection, not a complete installed
 firmware filesystem.
@@ -953,9 +953,9 @@ PSAR/RCO no longer use `pspdecrypt`, `rcomage`, their environment overrides or
 temporary extraction directories. Only DOCUMENT retains an external Python
 adapter, embedded in the binary and run through uv.
 
-PRX and KL3E/KL4E decode in memory through a pinned, patched pspdecrypt library
-linked by the Zig build. They need no external helper, NAS input reread, or
-temporary output files. This links GPLv3 pspdecrypt code into the ingest binary.
+PRX and KL3E/KL4E decode in memory through Zig-PSP's pure-Zig ports of pspdecrypt
+(`tools/prxencrypt`, GPL-3.0). They need no external helper, NAS input reread, or
+temporary output files. This links GPLv3 Zig-PSP code into the ingest binary.
 PRX revision 12 supports `~PSP` modules and `PSPsysGP` firmware resources,
 with layouts 0/1/2/4/5/6; legacy layout 8 shares the layout-0 algorithm.
 Coverage includes standard update XOR recipes and Go firmware index keys.
@@ -1142,7 +1142,6 @@ Original EDAT and decrypted DAT bytes are retained unchanged.
 For NPUMDIMG PBPs, the Zig [DATA.PSP parser](tools/patches/data-psp.md) verifies the
 SFO/content-ID signature through Zig-PSP's native KIRK curve implementation.
 Generated verification reports are not included in the extracted file inventory.
-Other native extractors still require OpenSSL development headers/library.
 Optional STARTDAT containers remain opaque; supported fixed-key `OPNSSMP.PGD`
 children are authenticated and decoded by the separate PGD extractor.
 

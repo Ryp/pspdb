@@ -8,7 +8,7 @@ const lzr_decoder = @import("lzr.zig");
 const prx_encrypt = @import("zig_psp_prx_encrypt");
 const kirk = @import("kirk");
 
-extern fn pspdb_prx_decode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) c_int;
+const native_prx = @import("native/prx.zig");
 
 const max_decoded_size = 64 << 20;
 
@@ -33,7 +33,7 @@ fn decrypt_plain(allocator: std.mem.Allocator, bytes: []const u8) !Decrypted {
     // them. Keep its full workspace until it finishes; never shrink an intermediate.
     const output = try allocator.alloc(u8, bytes.len);
     errdefer allocator.free(output);
-    const result = pspdb_prx_decode(bytes.ptr, bytes.len, output.ptr, output.len);
+    const result = native_prx.prxDecode(bytes, output);
     switch (result) {
         -1 => return error.InvalidPrx,
         -2 => return error.InvalidPrxSize,
