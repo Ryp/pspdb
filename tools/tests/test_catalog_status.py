@@ -53,6 +53,23 @@ class CatalogStatusTests(unittest.TestCase):
         self.assertEqual(report['fresh_pkgs'], {root: True})
         self.assertEqual(report['stale'], [])
 
+    def test_edat_key_source_options_keep_package_fresh(self):
+        self.revisions['edat'] = '7'
+        edat = dict(name='pspdb-ingest', version='7', options=[])
+        self.current['edat'] = edat
+        for source in ('key:derived-eboot', 'key:rap-file', 'unlicensed-marker'):
+            with self.subTest(source=source):
+                root, child = 'a'*64, 'b'*64
+                self.write('pkg', '1', root, [child])
+                self.write('edat', '7', child, provenance=dict(edat, options=[source]))
+                report = catalog_status(self.root, self.current)
+                self.assertEqual(report['fresh_pkgs'], {root: True})
+                self.assertEqual(report['stale'], [])
+        self.write('edat', '7', 'b'*64, provenance=dict(edat, options=['obsolete']))
+        report = catalog_status(self.root, self.current)
+        self.assertEqual(report['stale'][0]['reason'], 'extractor changed')
+        self.assertEqual(report['fresh_pkgs'], {})
+
     def test_failed_descendant_is_retryable_without_invalidating_successful_siblings(self):
         root, failed, sibling = 'a'*64, 'b'*64, 'c'*64
         self.write('pkg', '1', root, [failed, sibling])

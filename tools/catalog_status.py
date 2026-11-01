@@ -62,6 +62,22 @@ def extraction_error(tree):
     return None
 
 
+# Options that record how one result was produced (EDAT key source), not which
+# extractor ran. They vary per file under one revision and must not make a
+# successful result look like the output of a different extractor.
+RESULT_OPTIONS = {'edat': frozenset({'unlicensed-marker', 'key:derived-eboot', 'key:rap-file'})}
+
+
+def extractor_identity(kind, extractor):
+    result_options = RESULT_OPTIONS.get(kind)
+    if not result_options or not isinstance(extractor, dict):
+        return extractor
+    options = extractor.get('options')
+    if not isinstance(options, list):
+        return extractor
+    return dict(extractor, options=[option for option in options if option not in result_options])
+
+
 def catalog_status(root, current=None, unavailable=None, *, contextual_kinds=None):
     if contextual_kinds is None:
         contextual_kinds = json.loads(
@@ -148,7 +164,7 @@ def catalog_status(root, current=None, unavailable=None, *, contextual_kinds=Non
                   'extraction failed' if extraction_error(tree) is not None else
                   'missing current revision' if str(selected[node]) != extract_external.versions()[kind] else
                   'extractor unavailable' if expected is None else
-                  'extractor changed' if actual != expected else None)
+                  'extractor changed' if extractor_identity(kind, actual) != expected else None)
         if not reason:
             for entry in nested_entries(tree):
                 contextual = entry.get('extraction')
