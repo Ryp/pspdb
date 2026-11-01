@@ -51,8 +51,12 @@ const check_keys1 = [16]u8{ 0xaa, 0x85, 0x4d, 0xb0, 0xff, 0xca, 0x47, 0xeb, 0x38
 fn decrypt(allocator: std.mem.Allocator, bytes: []const u8, console_key: ?*const kirk.Cmd8Key) !Decrypted {
     // Nonzero signcheck bytes are only a heuristic: ordinary signed PRX types
     // can use this region too. Never transform an envelope that already decodes.
+    // CMD5 scrambles all of 0x80..0x150, including the declared size at 0xb0, so
+    // only an impossible declared size can indicate a signchecked header. Plain
+    // header fields with a failed decrypt (unknown tag, bad recipe) are not
+    // console-bound and must surface as their own errors.
     return decrypt_plain(allocator, bytes) catch |err| switch (err) {
-        error.InvalidPrxSize, error.PrxDecryptionFailed, error.PrxSizeMismatch => blk: {
+        error.InvalidPrxSize => blk: {
             if (bytes.len > std.math.maxInt(c_int) or !std.mem.startsWith(u8, bytes, "~PSP") or std.mem.allEqual(u8, bytes[0xd4..0x12c], 0)) return err;
             const key = console_key orelse return error.MissingNandFuseId;
             var command: [0x14 + 0xd0]u8 = @splat(0);

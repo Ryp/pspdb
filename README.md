@@ -959,6 +959,7 @@ temporary output files. This links GPLv3 pspdecrypt code into the ingest binary.
 PRX revision 12 supports `~PSP` modules and `PSPsysGP` firmware resources,
 with layouts 0/1/2/4/5/6; legacy layout 8 shares the layout-0 algorithm.
 Coverage includes standard update XOR recipes and Go firmware index keys.
+Coverage includes the 6.36 user-module tag `0x457B8AF0` (type 6). The console-bound CMD8 signcheck path is entered only when the scrambled size field at `0xB0` is invalid; other decrypt failures surface as themselves.
 Known resource tags select an exact recipe, and integrity failures are terminal.
 KIRK1 verifies the required CMAC or both ECDSA signatures before returning
 plaintext; type-6 verification uses correctly sized 21-byte curve scalars.

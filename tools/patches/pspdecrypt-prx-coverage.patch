@@ -1,10 +1,9 @@
 --- a/PrxDecrypter.cpp
 +++ b/PrxDecrypter.cpp
-@@ -20,6 +20,15 @@
- 	return u32(bytes[0]) | (u32(bytes[1]) << 8) |
+@@ -21,6 +21,15 @@
  		(u32(bytes[2]) << 16) | (u32(bytes[3]) << 24);
  }
-+
+ 
 +// Built-in key/XOR coverage from PPSSPP PrxDecrypter.cpp,
 +// commit 35d69dd4a11632ab6633b2fada84d393541e6131.
 +// SPRX's fixed XOR is selected by decrypt_mode, not by the tag. The caller's
@@ -13,10 +12,19 @@
 +	0x84, 0x7B, 0xF5, 0xFE, 0xE8, 0x4D, 0xAD, 0x7A,
 +	0xB5, 0x06, 0x28, 0x0E, 0x09, 0xFA, 0x81, 0xE1,
 +};
- 
++
  // Thank you PSARDUMPER & JPCSP keys
  
-@@ -132,10 +141,14 @@
+ // PRXDecrypter 16-byte tag keys.
+@@ -82,6 +91,7 @@
+ static const u8 keys630_k7[] = {0x77, 0x1C, 0x06, 0x5F, 0x53, 0xEC, 0x3F, 0xFC, 0x22, 0xCE, 0x5A, 0x27, 0xFF, 0x78, 0xA8, 0x48};
+ static const u8 keys630_k8[] = {0x81, 0xD1, 0x12, 0x89, 0x35, 0xC8, 0xEA, 0x8B, 0xE0, 0x02, 0x2D, 0x2D, 0x6A, 0x18, 0x67, 0xB8};
+ static const u8 keys636_k1[] = {0x07, 0xE3, 0x08, 0x64, 0x7F, 0x60, 0xA3, 0x36, 0x6A, 0x76, 0x21, 0x44, 0xC9, 0xD7, 0x06, 0x83};
++static const u8 keys636_1[] = {0x47, 0xEC, 0x60, 0x15, 0x12, 0x2C, 0xE3, 0xE0, 0x4A, 0x22, 0x6F, 0x31, 0x9F, 0xFA, 0x97, 0x3E};
+ static const u8 keys636_k2[] = {0x91, 0xF2, 0x02, 0x9E, 0x63, 0x32, 0x30, 0xA9, 0x1D, 0xDA, 0x0B, 0xA8, 0xB7, 0x41, 0xA3, 0xCC};
+ static const u8 keys638_k4[] = {0x98, 0x43, 0xFF, 0x85, 0x68, 0xB2, 0xDB, 0x3B, 0xD4, 0x22, 0xD0, 0x4F, 0xAB, 0x5F, 0x0A, 0x31};
+ static const u8 keys639_k3[] = {0x01, 0x7B, 0xF0, 0xE9, 0xBE, 0x9A, 0xDD, 0x54, 0x37, 0xEA, 0x0E, 0xC4, 0xD6, 0x4D, 0x8E, 0x9E};
+@@ -132,10 +142,14 @@
  static const u8 key_D91628F0[] = {0x49, 0xA4, 0xFC, 0x66, 0xDC, 0xE7, 0x62, 0x21, 0xDB, 0x18, 0xA7, 0x50, 0xD6, 0xA8, 0xC1, 0xB6};
  static const u8 key_D91680F0[] = {0x2C, 0x22, 0x9B, 0x12, 0x36, 0x74, 0x11, 0x67, 0x49, 0xD1, 0xD1, 0x88, 0x92, 0xF6, 0xA1, 0xD8};
  static const u8 key_D91681F0[] = {0x52, 0xB6, 0x36, 0x6C, 0x8C, 0x46, 0x7F, 0x7A, 0xCC, 0x11, 0x62, 0x99, 0xC1, 0x99, 0xBE, 0x98};
@@ -31,7 +39,10 @@
  static const u8 key_2FD30BF0[] = {0xD8, 0x58, 0x79, 0xF9, 0xA4, 0x22, 0xAF, 0x86, 0x90, 0xAC, 0xDA, 0x45, 0xCE, 0x60, 0x40, 0x3F};
  static const u8 keys02G_E[] = {0x9D, 0x09, 0xFD, 0x20, 0xF3, 0x8F, 0x10, 0x69, 0x0D, 0xB2, 0x6F, 0x00, 0xCC, 0xC5, 0x51, 0x2E};
  static const u8 keys03G_E[] = {0x4F, 0x44, 0x5C, 0x62, 0xB3, 0x53, 0xC4, 0x30, 0xFC, 0x3A, 0xA4, 0x5B, 0xEC, 0xFE, 0x51, 0xEA};
-@@ -298,1 +311,13 @@
+@@ -295,6 +309,18 @@
+ 		0x8B7196F2, 0xDB9BED4A, 0x51625B84, 0x4C1481B4, 0xF684F508, 0x30B44770,
+ 		0x93AA8E74, 0x90C579BC, 0x246EC88D, 0x2E051202, 0xC774842E, 0xA185D997,
+ 		0x7A2B3ADD, 0xFE835B6D, 0x508F184D, 0xEB4C4F13, 0x0E1993D3, 0xBA96DFD2};
 +// Firmware 2.50 index.dat: JPCSP KeyVault.g_keyB8, with the actual tag.
 +// Confirmed against mesg_led SHA256 67a186d002da629d97a3a1ba4cc0c86bb39c6a32f6adb8608d9ac3a78bcd0b8f:
 +// KIRK7 slot 0x5C pre-decrypts its 144-byte schedule at ELF offset 0x3304.
@@ -45,10 +56,17 @@
 +};
 +
  static const u32 g_key_INDEXDAT1xx[] = {
-@@ -345,1 +370,2 @@
+ 		0x76CB00AF, 0x111CE62F, 0xB7B27E36, 0x6D8DE8F9, 0xD54BF16A, 0xD9E90373,
+ 		0x7599D982, 0x51F82B0E, 0x636103AD, 0x8E40BC35, 0x2F332C94, 0xF513AAE9,
+@@ -342,6 +368,7 @@
+ 	{ 0x02000000, g_key2, 0x45 },
+ 	{ 0x03000000, g_key3, 0x46 },
+ 	{ 0x06000000, (u32*)g_keyDEVPSAR, 0x49 },
 +	{ 0xB818624D, g_key_INDEXDAT250, 0x5C, 0x5C },
  	{ 0x07000000, g_key_INDEXDAT1xx, 0x4A },
-@@ -379,8 +405,55 @@
+ 	{ 0x08000000, g_keyEBOOT1xx, 0x4B },
+ 	{ 0x09000000, g_key_GAMESHARE1xx, 0x4C },
+@@ -379,8 +406,55 @@
  	const u8 *seed;
  };
  
@@ -104,7 +122,15 @@
  	{ 0x4C9494F0, keys660_k1, 0x43 },
  	{ 0x4C9495F0, keys660_k2, 0x43 },
  	{ 0x4C9490F0, keys660_k3, 0x43 },
-@@ -471,9 +544,13 @@
+@@ -408,6 +482,7 @@
+ 	{ 0x380293F0, keys660_v5, 0x5A },
+ 	{ 0x4C948CF0, keys639_k3, 0x43 },
+ 	{ 0x4C948DF0, keys638_k4, 0x43 },
++	{ 0x457B8AF0, keys636_1, 0x5B },
+ 	{ 0x4C948BF0, keys636_k2, 0x43 },
+ 	{ 0x4C948AF0, keys636_k1, 0x43 },
+ 	{ 0x4C9487F0, keys630_k8, 0x43 },
+@@ -471,9 +546,13 @@
  	{ 0x4467415D, key_22E0, 0x59 },
  	{ 0x00000000, key_21C0, 0x42 },
  	{ 0x01000000, key_2250, 0x43 },
@@ -120,7 +146,7 @@
  	{ 0x2FD30BF0, key_2FD30BF0, 0x47 },
  	{ 0xD91605F0, key_D91605F0, 0x5D, 2},
  	{ 0xD91606F0, key_D91606F0, 0x5D, 2},
-@@ -878,7 +955,7 @@
+@@ -878,7 +957,7 @@
  	return decryptSize;
  }
  
@@ -129,7 +155,7 @@
  {
  	//INFO_LOG(LOADER, "Decrypting tag %08X", readPrx32(inbuf+0xD0));
  	const auto decryptSize = static_cast<int>(readPrx32(inbuf+0xB0));
-@@ -906,6 +983,11 @@
+@@ -906,6 +985,11 @@
  	// construct the header format for a type 2 prx
  	PRXType2 type2(inbuf);
  	type2.decrypt(pti->code);
@@ -141,7 +167,7 @@
  
  	SHA_CTX ctx;
  	SHAInit(&ctx);
-@@ -968,9 +1050,12 @@
+@@ -968,9 +1052,12 @@
  	// expand the seed into a xor buffer
  	auto xorbuf = expandSeed(pti->key, pti->code, seed);
  
@@ -155,7 +181,7 @@
  
  	SHA_CTX ctx;
  	SHAInit(&ctx);
-@@ -1033,7 +1118,7 @@
+@@ -1033,7 +1120,7 @@
  	// expand the seed into a xor buffer
  	auto xorbuf = expandSeed(pti->key, pti->code);
  
@@ -164,7 +190,8 @@
  	PRXType6 type6(inbuf);
  	type6.decrypt(pti->code);
  
-@@ -1087,9 +1172,26 @@
+@@ -1086,10 +1173,27 @@
+ 	kirk_init_prx();
  	u32 tag = readPrx32(inbuf+0xD0);
  	//INFO_LOG(LOADER, "Decrypting tag %08X", tag);
 -	// this would be significantly better if we had a log of the tags
@@ -194,25 +221,33 @@
  	if (res >= 0) {
  		if (verbose) {
  			printf("Decryption successful for tag %08X with type 0\n", tag);
-@@ -1100,4 +1202,5 @@
+@@ -1098,6 +1202,7 @@
+ 	}
+ 	
  	res = pspDecryptType1(inbuf, outbuf, size);
 +	if (res == -4) return res;
  	if (res >= 0) {
  		if (verbose) {
  			printf("Decryption successful for tag %08X with type 1\n", tag);
-@@ -1108,4 +1211,5 @@
+@@ -1106,6 +1211,7 @@
+ 	}
+ 	
  	res = pspDecryptType2(inbuf, outbuf, size);
 +	if (res == -4) return res;
  	if (res >= 0) {
  		if (verbose) {
  			printf("Decryption successful for tag %08X with type 2\n", tag);
-@@ -1116,4 +1220,5 @@
+@@ -1114,6 +1220,7 @@
+ 	}
+ 	
  	res = pspDecryptType5(inbuf, outbuf, size, seed);
 +	if (res == -4) return res;
  	if (res >= 0) {
  		if (verbose) {
  			printf("Decryption successful for tag %08X with type 5\n", tag);
-@@ -1124,8 +1229,17 @@
+@@ -1122,10 +1229,19 @@
+ 	}
+ 	
  	res = pspDecryptType6(inbuf, outbuf, size);
 +	if (res == -4) return res;
  	if (res >= 0) {
