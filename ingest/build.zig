@@ -228,5 +228,23 @@ pub fn build(b: *std.Build) void {
     b.step("run", "Hash and store extracted files from ISO/PKG/NAND/updater PBP and ZIP ISO/PKG inputs").dependOn(&run.step);
 
     const tests = b.addTest(.{ .root_module = module });
-    b.step("test", "Run unit tests").dependOn(&b.addRunArtifact(tests).step);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
+
+    // Differential harness: the same C/C++ objects, include paths and system
+    // libraries come from `module` through the import graph, so the patch/prepare
+    // pipeline above runs once. Its test block also pulls in src/native/*.zig tests.
+    const diff_module = b.createModule(.{
+        .root_source_file = b.path("src/native_diff.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "ingest", .module = module }},
+    });
+    const diff_exe = b.addExecutable(.{ .name = "native-diff", .root_module = diff_module });
+    const diff_run = b.addRunArtifact(diff_exe);
+    diff_run.addPassthruArgs();
+    b.step("native-diff", "Compare the C pspdecrypt entry points with the pure-Zig ports (zig build native-diff -- --corpus FILE [--kind K] [--limit N])").dependOn(&diff_run.step);
+
+    const native_tests = b.addTest(.{ .root_module = diff_module });
+    test_step.dependOn(&b.addRunArtifact(native_tests).step);
 }
