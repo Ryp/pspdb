@@ -17,10 +17,11 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const kirk = @import("native/kirk.zig");
-const amctrl = @import("native/amctrl.zig");
-const kle = @import("native/kle.zig");
-const prx_decrypter = @import("native/prx_decrypter.zig");
+const native = @import("ingest").native;
+const kirk = native.kirk;
+const amctrl = native.amctrl;
+const kle = native.kle;
+const prx_decrypter = native.prx_decrypter;
 
 // psar_native.cpp calls back into Zig exports (pspdb_psar_lzr/hash) that live
 // in the ingest module and are only analyzed through its call graph; referencing
@@ -36,6 +37,13 @@ const c = struct {
 
     extern fn pspdb_prx_decode(input: [*]const u8, input_len: usize, output: [*]u8, output_len: usize) c_int;
     extern fn decompress_kle_bounded(output: [*]u8, output_size: c_int, input: [*]const u8, input_size: c_int, is_kl4e: c_int) c_int;
+
+    const Emit = *const fn (?*anyopaque, [*]const u8, usize, ?[*]const u8, usize, c_int) callconv(.c) c_int;
+    extern fn pspdb_psar_walk(input: [*]const u8, size: usize, context: ?*anyopaque, emit: Emit) c_int;
+    extern fn pspdb_pgd_decode(source: [*]const u8, source_size: usize, output: [*]u8, output_size: usize) c_int;
+    extern fn pspdb_psx_pgd_decrypt(source: [*]const u8, source_size: usize, output: [*]u8, output_size: usize) c_int;
+    extern fn pspdb_pops_decode(psp: [*]const u8, psp_len: usize, data_bin: [*]const u8, data_bin_len: usize, output: [*]u8, output_len: usize) c_int;
+    extern fn pspdb_npdrm_version_key(psar: [*]const u8, size: usize, version_key: *[16]u8, kind: *u8) c_int;
 
     extern fn kirk_init_prx() void;
     extern fn sceUtilsBufferCopyWithRange(out: ?[*]u8, out_size: c_int, in: ?[*]u8, in_size: c_int, cmd: c_int) c_int;
@@ -202,6 +210,17 @@ fn casePgd(ctx: *Ctx, path: []const u8) Outcome {
     defer ctx.gpa.free(src);
     if (src.len < 0xb0 or src.len > max_pgd_size or !std.mem.eql(u8, src[0..4], "\x00PGD")) return .skipped;
 
+    // Full pspdb_pgd_decode with the capacity src/pgd.zig passes (source.len).
+    {
+        const out_c = ctx.filled(src.len);
+        defer ctx.gpa.free(out_c);
+        const out_z = ctx.filled(src.len);
+        defer ctx.gpa.free(out_z);
+        const rc_c = c.pspdb_pgd_decode(src.ptr, src.len, out_c.ptr, out_c.len);
+        const rc_z = native.pgd.decode(src, out_z);
+        ctx.check("pgd_decode", rc_c, rc_z, out_c, out_z);
+    }
+
     const header: [0x90]u8 = src[0..0x90].*;
 
     // The primitives as pgd_native.c exercises them, under both fixed-key types.
@@ -240,6 +259,211 @@ fn casePgd(ctx: *Ctx, path: []const u8) Outcome {
     const plain = ctx.alloc(aligned);
     defer ctx.gpa.free(plain);
     cipherPair(ctx, "cipher_data", 1, 2, hdr[0x30..0x40].*, version_key, 0, src[data_offset..][0..aligned], plain);
+    return ctx.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 cases: psar, pops, npdrm, psx_pgd
+// ---------------------------------------------------------------------------
+
+const PsarEvent = struct {
+    name: []u8,
+    size: usize,
+    directory: c_int,
+    has_bytes: bool,
+    hash: [32]u8,
+    callback_rc: c_int,
+};
+
+const PsarEvents = struct {
+    gpa: Allocator,
+    list: std.ArrayList(PsarEvent) = .empty,
+
+    fn deinit(self: *PsarEvents) void {
+        for (self.list.items) |e| self.gpa.free(e.name);
+        self.list.deinit(self.gpa);
+    }
+
+    fn receive(raw: ?*anyopaque, name: [*]const u8, name_size: usize, bytes: ?[*]const u8, size: usize, directory: c_int) callconv(.c) c_int {
+        const self: *PsarEvents = @ptrCast(@alignCast(raw.?));
+        var hash: [32]u8 = @splat(0);
+        if (bytes) |b| std.crypto.hash.sha2.Sha256.hash(b[0..size], &hash, .{});
+        const rc: c_int = 0;
+        self.list.append(self.gpa, .{
+            .name = self.gpa.dupe(u8, name[0..name_size]) catch @panic("out of memory"),
+            .size = size,
+            .directory = directory,
+            .has_bytes = bytes != null,
+            .hash = hash,
+            .callback_rc = rc,
+        }) catch @panic("out of memory");
+        return rc;
+    }
+};
+
+fn casePsar(ctx: *Ctx, path: []const u8) Outcome {
+    const bytes = ctx.readFile(path) orelse return .read_error;
+    defer ctx.gpa.free(bytes);
+    var ev_c: PsarEvents = .{ .gpa = ctx.gpa };
+    defer ev_c.deinit();
+    var ev_z: PsarEvents = .{ .gpa = ctx.gpa };
+    defer ev_z.deinit();
+    const rc_c = c.pspdb_psar_walk(bytes.ptr, bytes.len, &ev_c, PsarEvents.receive);
+    const rc_z = native.psar.walk(bytes, &ev_z, PsarEvents.receive);
+    if (rc_c != rc_z) {
+        ctx.report("psar_walk_code", rc_c, rc_z, null);
+        return ctx.finish();
+    }
+    const n = @min(ev_c.list.items.len, ev_z.list.items.len);
+    for (ev_c.list.items[0..n], ev_z.list.items[0..n], 0..) |a, b, i| {
+        const same = std.mem.eql(u8, a.name, b.name) and a.size == b.size and a.directory == b.directory and
+            a.has_bytes == b.has_bytes and std.mem.eql(u8, &a.hash, &b.hash) and a.callback_rc == b.callback_rc;
+        if (!same) {
+            ctx.report("psar_event", rc_c, rc_z, i);
+            return ctx.finish();
+        }
+    }
+    if (ev_c.list.items.len != ev_z.list.items.len) ctx.report("psar_event_count", rc_c, rc_z, n);
+    return ctx.finish();
+}
+
+fn casePops(ctx: *Ctx, fields: []const []const u8) Outcome {
+    if (fields.len < 5) return .skipped;
+    const psp = ctx.readFile(fields[2]) orelse return .read_error;
+    defer ctx.gpa.free(psp);
+    const bin = ctx.readFile(fields[4]) orelse return .read_error;
+    defer ctx.gpa.free(bin);
+    // Preconditions of src/pops.zig decode(); anything failing them never reaches C.
+    if (psp.len < 0x150 or psp.len > std.math.maxInt(c_int)) return .skipped;
+    const declared = std.mem.readInt(u32, psp[0x2c..0x30], .little);
+    if (declared < 0x150 or declared > psp.len) return .skipped;
+    const out_c = ctx.filled(declared);
+    defer ctx.gpa.free(out_c);
+    const out_z = ctx.filled(declared);
+    defer ctx.gpa.free(out_z);
+    const rc_c = c.pspdb_pops_decode(psp.ptr, psp.len, bin.ptr, bin.len, out_c.ptr, out_c.len);
+    const rc_z = native.pops.decode(psp, bin, out_z);
+    ctx.check("pops_decode", rc_c, rc_z, out_c, out_z);
+    return ctx.finish();
+}
+
+/// DATA.PSAR of a PBP: from the header offset at 0x24 to the end of the file.
+fn pbpPsar(pbp: []const u8) ?[]const u8 {
+    if (pbp.len < 0x28 or !std.mem.eql(u8, pbp[0..4], "\x00PBP")) return null;
+    const offset = std.mem.readInt(u32, pbp[0x24..0x28], .little);
+    if (offset > pbp.len) return null;
+    return pbp[offset..];
+}
+
+/// Longest PSAR prefix src/npdrm_key.zig reads (psar_prefix_size).
+const npdrm_prefix_size = 0x400 + 0x90;
+
+fn caseNpdrm(ctx: *Ctx, path: []const u8) Outcome {
+    const pbp = ctx.readFile(path) orelse return .read_error;
+    defer ctx.gpa.free(pbp);
+    const psar = pbpPsar(pbp) orelse return .skipped;
+    const prefix = psar[0..@min(psar.len, npdrm_prefix_size)];
+    var key_c: [16]u8 = @splat(fill_byte);
+    var key_z: [16]u8 = @splat(fill_byte);
+    var kind_c: u8 = 0;
+    var kind_z: u8 = 0;
+    const rc_c = c.pspdb_npdrm_version_key(prefix.ptr, prefix.len, &key_c, &kind_c);
+    const rc_z = native.npdrm_key.versionKey(prefix, &key_z, &kind_z);
+    // Equality only: key bytes are never printed.
+    if (rc_c != rc_z) {
+        ctx.report("npdrm_code", rc_c, rc_z, null);
+    } else {
+        if (kind_c != kind_z) ctx.report("npdrm_kind", kind_c, kind_z, null);
+        if (std.mem.indexOfDiff(u8, &key_c, &key_z)) |o| ctx.report("npdrm_key", rc_c, rc_z, o);
+    }
+    secureZero(&key_c);
+    secureZero(&key_z);
+    return ctx.finish();
+}
+
+fn secureZero(buf: []u8) void {
+    std.crypto.secureZero(u8, buf);
+}
+
+// PS1 PGD windows inside DATA.PSAR, as src/psx/psar.zig cuts them (parse()).
+const psx_iso_header_offset = 0x400;
+const psx_iso_header_size = 0xB6600;
+const psx_iso_map_offset = 0x200;
+const psx_iso_map_size = 0x2A0;
+const psx_max_discs = 5;
+const psx_max_aux_pgd = 64 << 20;
+
+fn le32(bytes: []const u8, offset: usize) u32 {
+    return std.mem.readInt(u32, bytes[offset..][0..4], .little);
+}
+
+/// Compare one pspdb_psx_pgd_decrypt call (capacity = source.len, as
+/// psx/pgd.zig). Returns C's plaintext (caller frees) when it succeeded.
+fn psxPgdPair(ctx: *Ctx, label: []const u8, source: []const u8) ?[]u8 {
+    // Preconditions of psx/pgd.zig decrypt().
+    if (source.len < 0x90 or source.len > std.math.maxInt(i32)) return null;
+    const out_c = ctx.filled(source.len);
+    const out_z = ctx.filled(source.len);
+    defer ctx.gpa.free(out_z);
+    const rc_c = c.pspdb_psx_pgd_decrypt(source.ptr, source.len, out_c.ptr, out_c.len);
+    const rc_z = native.psx_pgd.decrypt(source, out_z);
+    ctx.check(label, rc_c, rc_z, out_c, out_z);
+    if (rc_c > 0 and @as(usize, @intCast(rc_c)) <= out_c.len) {
+        const plain = ctx.gpa.realloc(out_c, @intCast(rc_c)) catch @panic("out of memory");
+        return plain;
+    }
+    ctx.gpa.free(out_c);
+    return null;
+}
+
+fn psxAux(ctx: *Ctx, label: []const u8, bytes: []const u8) void {
+    if (bytes.len > psx_max_aux_pgd) return;
+    if (psxPgdPair(ctx, label, bytes)) |plain| ctx.gpa.free(plain);
+}
+
+fn psxDisc(ctx: *Ctx, data: []const u8, disc_offset: u32) ?[]u8 {
+    const header_at = @as(u64, disc_offset) + psx_iso_header_offset;
+    if (header_at > data.len or data.len - header_at < psx_iso_header_size) return null;
+    return psxPgdPair(ctx, "psx_iso_header", data[@intCast(header_at)..][0..psx_iso_header_size]);
+}
+
+fn casePsxPgd(ctx: *Ctx, path: []const u8) Outcome {
+    const pbp = ctx.readFile(path) orelse return .read_error;
+    defer ctx.gpa.free(pbp);
+    const data = pbpPsar(pbp) orelse return .skipped;
+    if (data.len < 0x10) return .skipped;
+    const single = std.mem.eql(u8, data[0..12], "PSISOIMG0000");
+    const multi = std.mem.eql(u8, data[0..16], "PSTITLEIMG000000");
+    if (!single and !multi) return .skipped;
+
+    const startdat_offset: u32 = le32(data, if (multi) 0x10 else 0xC);
+    var special_offset: u32 = 0;
+    if (single) {
+        if (psxDisc(ctx, data, 0)) |header| {
+            defer ctx.gpa.free(header);
+            if (header.len >= 0xED8) {
+                special_offset = le32(header, 0xE20);
+                const unknown_offset = le32(header, 0xED4);
+                if (startdat_offset > 0 and unknown_offset != 0 and startdat_offset <= data.len and
+                    unknown_offset <= startdat_offset and startdat_offset - unknown_offset >= 0x90)
+                    psxAux(ctx, "psx_unknown_data", data[unknown_offset..startdat_offset]);
+            }
+        }
+    } else if (data.len >= psx_iso_map_offset + psx_iso_map_size) {
+        if (psxPgdPair(ctx, "psx_iso_map", data[psx_iso_map_offset..][0..psx_iso_map_size])) |map| {
+            defer ctx.gpa.free(map);
+            if (map.len >= 0x88) {
+                special_offset = le32(map, 0x84);
+                for (0..psx_max_discs) |slot| {
+                    const disc_offset = le32(map, slot * 4);
+                    if (disc_offset == 0) continue;
+                    if (psxDisc(ctx, data, disc_offset)) |header| ctx.gpa.free(header);
+                }
+            }
+        }
+    }
+    if (special_offset != 0 and special_offset <= data.len and data.len - special_offset >= 0x90)
+        psxAux(ctx, "psx_special_data", data[special_offset..]);
     return ctx.finish();
 }
 
@@ -637,7 +861,10 @@ fn runRow(ctx: *Ctx, fields: []const []const u8) Outcome {
     if (std.mem.eql(u8, kind, "prx")) return casePrx(ctx, path);
     if (std.mem.eql(u8, kind, "kl3e") or std.mem.eql(u8, kind, "kl4e")) return caseKle(ctx, path);
     if (std.mem.eql(u8, kind, "pgd")) return casePgd(ctx, path);
-    // Phase 2: psar, psx_pgd, pops, npdrm.
+    if (std.mem.eql(u8, kind, "psar")) return casePsar(ctx, path);
+    if (std.mem.eql(u8, kind, "pops")) return casePops(ctx, fields);
+    if (std.mem.eql(u8, kind, "npdrm")) return caseNpdrm(ctx, path);
+    if (std.mem.eql(u8, kind, "psx_pgd")) return casePsxPgd(ctx, path);
     return .skipped;
 }
 

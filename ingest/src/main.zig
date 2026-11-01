@@ -4,6 +4,8 @@ const Store = @import("store.zig").Store;
 const catalog_state = @import("catalog_state.zig");
 const licenses = @import("licenses.zig");
 const nand_fuses = @import("nand_fuses.zig");
+/// Pure-Zig pspdecrypt ports, reached by the differential harness through this module.
+pub const native = @import("native.zig");
 
 const Options = struct {
     folders: []const []const u8 = &.{},
