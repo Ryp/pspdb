@@ -17,11 +17,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     module.addImport("kirk", kirk);
-    module.addImport("zig_psp_nand", b.createModule(.{
+    const nand = b.createModule(.{
         .root_source_file = sdk.path("tools/nand/nand.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "kirk", .module = kirk }},
+    });
+    module.addImport("zig_psp_nand", nand);
+    module.addImport("zig_psp_decrypt", b.createModule(.{
+        .root_source_file = sdk.path("tools/prxencrypt/decrypt.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{ .{ .name = "kirk", .module = kirk }, .{ .name = "nand", .module = nand } },
     }));
     module.addImport("zig_psp_npumdimg_crypto", b.createModule(.{
         .root_source_file = sdk.path("tools/prxencrypt/npumdimg_crypto.zig"),

@@ -21,7 +21,7 @@ const native = @import("ingest").native;
 const kirk = native.kirk;
 const amctrl = native.amctrl;
 const kle = native.kle;
-const prx_decrypter = native.prx_decrypter;
+const prx_decrypter = native.prx;
 
 // psar_native.cpp calls back into Zig exports (pspdb_psar_lzr/hash) that live
 // in the ingest module and are only analyzed through its call graph; referencing
@@ -368,7 +368,7 @@ fn caseNpdrm(ctx: *Ctx, path: []const u8) Outcome {
     var kind_c: u8 = 0;
     var kind_z: u8 = 0;
     const rc_c = c.pspdb_npdrm_version_key(prefix.ptr, prefix.len, &key_c, &kind_c);
-    const rc_z = native.npdrm_key.versionKey(prefix, &key_z, &kind_z);
+    const rc_z = native.npdrm.versionKey(prefix, &key_z, &kind_z);
     // Equality only: key bytes are never printed.
     if (rc_c != rc_z) {
         ctx.report("npdrm_code", rc_c, rc_z, null);
@@ -406,7 +406,7 @@ fn psxPgdPair(ctx: *Ctx, label: []const u8, source: []const u8) ?[]u8 {
     const out_z = ctx.filled(source.len);
     defer ctx.gpa.free(out_z);
     const rc_c = c.pspdb_psx_pgd_decrypt(source.ptr, source.len, out_c.ptr, out_c.len);
-    const rc_z = native.psx_pgd.decrypt(source, out_z);
+    const rc_z = native.pgd.decryptPsx(source, out_z);
     ctx.check(label, rc_c, rc_z, out_c, out_z);
     if (rc_c > 0 and @as(usize, @intCast(rc_c)) <= out_c.len) {
         const plain = ctx.gpa.realloc(out_c, @intCast(rc_c)) catch @panic("out of memory");
