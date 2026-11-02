@@ -4,6 +4,8 @@ const Store = @import("store.zig").Store;
 const catalog_state = @import("catalog_state.zig");
 const licenses = @import("licenses.zig");
 const nand_fuses = @import("nand_fuses.zig");
+/// Reached by the DOCUMENT differential harness through this module.
+pub const document = @import("document.zig");
 
 const Options = struct {
     folders: []const []const u8 = &.{},
