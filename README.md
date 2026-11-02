@@ -481,7 +481,8 @@ Changes to adapter behavior, naming rules, metadata parsing, or file detection a
 require a revision bump for the extractor whose output changes. `schema_version`
 remains the JSON format version, independent of extractor revisions.
 
-`--skip-existing` uses uv/Python for the read-only provenance scan at startup.
+`--skip-existing` uses uv/Python for the read-only provenance scan at startup; this is the
+only Python in the ingest.
 Affected ISOs are read again, while current intermediate
 extractions reuse stored child bytes. Missing stored children cause that
 extractor to run again. Source ISOs/ZIPs must still be available; this command does
@@ -889,13 +890,11 @@ Detection uses signatures except that generic PGD dispatch is restricted to the
 known `OPNSSMP.PGD` basename. SCE borrows slices directly.
 PBP extraction and embedded PKG metadata use Zig-PSP's native PBP memory API,
 with borrowed slices, validated bounds, complete final-section handling and no
-temporary files. PSPDB imports the SDK source directly. Remaining external tools
-receive input bytes in private temporary directories, not by reopening CAS objects.
+temporary files. PSPDB imports the SDK source directly. Extractors work on retained
+input buffers, not by reopening CAS objects.
 Zig hashes their outputs and queues
 nested extraction using retained buffers; `--store` additionally persists those bytes.
-Temporary input/output directories are removed after the immediate walk. They
-are created under an absolute `TMPDIR` when set, otherwise `/tmp`; the helpers
-inherit it. Only the DOCUMENT helper still uses scratch space.
+No extractor uses scratch directories or `TMPDIR`.
 Retail PKG keys and offset AES-CTR, plus NPUMDIMG metadata hashing/signature
 verification, live in Zig-PSP's `tools/prxencrypt/pkg_crypto.zig` and
 `npumdimg_crypto.zig`. PSPDB retains container parsing and catalog policy.
@@ -950,8 +949,8 @@ trees can expand substantially when serialized; no new XML output-budget policy
 is imposed.
 
 PSAR/RCO no longer use `pspdecrypt`, `rcomage`, their environment overrides or
-temporary extraction directories. Only DOCUMENT retains an external Python
-adapter, embedded in the binary and run through uv.
+temporary extraction directories. DOCUMENT is native too; the only remaining Python in
+the ingest is the `--skip-existing` freshness scan.
 
 PRX and KL3E/KL4E decode in memory through Zig-PSP's pure-Zig ports of pspdecrypt
 (`tools/prxencrypt`, GPL-3.0). They need no external helper, NAS input reread, or
@@ -1215,11 +1214,7 @@ Each conversion holds the decrypted PSAR views, the data track and every decoded
 audio track in memory (hundreds of MB per disc); at most two PSX conversions run
 at once process-wide, whatever `--threads` is.
 
-External helper execution (DOCUMENT) requires Linux `/proc/self/fd`. Ingestion holds
-an open executable descriptor across provenance queries, hashing and launch, so
-atomic helper replacement cannot mix versions within one extraction. Publish helper
-updates atomically; modifying an executable in place is not protected by this
-descriptor pinning.
+DOCUMENT, like PSX, needs no external process, `/proc/self/fd` or scratch space.
 
 Standard VMP memory-card wrappers expose their unchanged 131072-byte raw card as
 an `.mcr` child. This follows the
@@ -1228,44 +1223,31 @@ an `.mcr` child. This follows the
 extraction, not signature verification or per-save filesystem interpretation.
 VMP extraction preserves the original wrapper.
 
-### Legacy DOCUMENT manuals
+### DOCUMENT manuals
 
-Fixed-key PS1/PSP manuals and explicitly paired PSP manuals use the pinned
-[PSP-DOCUMENT.DAT reader](https://github.com/seiya-dev/PSP-DOCUMENT.DAT/tree/8c95b37949c9a9ca183b7fd69c85d2e2dad7216d).
-Build its isolated helper with Python 3.12+; dependencies stay in the uv environment:
-
-```sh
-uv sync --locked
-git clone https://github.com/seiya-dev/PSP-DOCUMENT.DAT .work/PSP-DOCUMENT.DAT
-git -C .work/PSP-DOCUMENT.DAT checkout 8c95b37949c9a9ca183b7fd69c85d2e2dad7216d
-uv run --locked python tools/build_document.py \
-  --source .work/PSP-DOCUMENT.DAT --output .work/pspdb-document
-PSPDB_DOCUMENT="$PWD/.work/pspdb-document" uv run --locked \
-  ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
-  --catalog catalog --store /path/to/store
-```
-
-The builder verifies pinned source hashes, applies bounded-reader safety changes,
-and creates a deterministic zipapp without modifying upstream sources or installing
-system packages. Keep `PSPDB_DOCUMENT` set for freshness scans too, and run through
-`uv run --locked` so the helper has its declared Pillow/PyCryptodome dependencies.
-
-The patched readers borrow the supplied source bytes and decode one page at a
-time. Pillow validates each unchanged PNG in memory before the helper writes it
-directly into its private publication directory. Readers no longer reopen source
-snapshots, reconstruct unused DAT buffers or write intermediate PNG trees.
-DOCUMENT remains an external Python helper: the ingestion adapter still stages
-its explicit inputs and consumes the published page files.
+Fixed-key PS1/PSP manuals and explicitly paired PSP manuals decode in memory
+through Zig-PSP's `tools/prxencrypt/document.zig` (a port of the pinned
+[PSP-DOCUMENT.DAT reader](https://github.com/seiya-dev/PSP-DOCUMENT.DAT/tree/8c95b37949c9a9ca183b7fd69c85d2e2dad7216d))
+driven by `ingest/src/document.zig`, provenance `pspdb-document` revision 5, options
+`in-memory`. There is no helper, environment variable, scratch directory or Python
+dependency. The extractor borrows the source and companion bytes and emits each page
+PNG (and the `psp`/`ps3` directories) straight into the inventory. Any decoder error is
+a non-fatal `ExtractionFailed` on the DOCUMENT extraction; allocation failure stays
+fatal. It was verified identical to the former Python helper on all 2,274 recorded
+catalog DOCUMENT extractions, except that Pillow's PNG check became the structural
+check below.
 
 DOCUMENT revision 3 recorded the byte-input/callback implementation separately
-from earlier revision 2 helper provenance; revision 4 adds 999-slot tables, distinct
-PS1 PS3-only frames, 320-byte companions, zero-page manuals and the 128 MiB cap
-described below, so earlier DOCUMENT results (including their errors) are
-regenerated into new `v4` pairs and containers embedding them become stale. ISO/PKG revision 4 and nested ISO9660
-revision 3 provide new namespaces for inventories embedding paired manual results.
-Keep historical records intact: different helper hashes/options must not overwrite
-successful results at the same revision. Rebuild the ingester after updating
-`tools/extractor_versions.json`; build/configure the helper above before ingesting.
+from earlier revision 2 helper provenance (`PSP-DOCUMENT.DAT`); revision 4 adds
+999-slot tables, distinct PS1 PS3-only frames, 320-byte companions, zero-page manuals
+and the 128 MiB cap described below; revision 5 moves extraction to the native
+extractor with the new provenance and structural PNG validator. Earlier DOCUMENT
+results keep their `PSP-DOCUMENT.DAT` provenance and are still understood; new
+results are written into new `v5` pairs and containers embedding DOCUMENT results
+become stale. ISO/PKG revision 4 and nested ISO9660 revision 3 provide namespaces
+for inventories embedding paired manual results. Keep historical records intact:
+different provenance/options must not overwrite successful results at the same
+revision. Rebuild the ingester after updating `tools/extractor_versions.json`.
 The first run at these new revisions reprocesses affected source kinds even with
 `--skip-existing`; it adds new pairs without replacing the older revisions.
 
@@ -1274,13 +1256,13 @@ or generic PGD magic. The reader checks supported header/table/page protection;
 these are source-consistency checks, not independent trusted-origin authentication.
 Extraction preserves the wrapper and exact PNG bytes. Neutral `psp/001.png` and
 `ps3/001.png` paths retain each platform's page ordinals, including shared frames.
-The helper emits a JSON source/page map on stdout, including original source
-identity and frame offsets/sizes/hashes. This generated metadata is not an
-extracted file; the output directory and DOCUMENT inventory contain only page PNGs.
+Only page PNGs are published; no source/page map is generated.
 
-All expected pages must pass PNG CRC, end-boundary and pixel decoding checks before
-atomic publication. Late-page failure leaves the caller's output empty and records
-an extraction error in the parent inventory. No whole-disc reconstruction or inferred PBP key is used.
+All expected pages must pass a structural PNG check (signature, chunk CRCs, IHDR
+pixel budget, a single trailing IEND) before any page is emitted. The check replaces
+the former Pillow validation and does not decode pixels. A late-page failure emits
+nothing and records an extraction error in the parent inventory. No whole-disc
+reconstruction or inferred PBP key is used.
 Support covers the 99-slot (header code 0) and 999-slot (code 1) families. PSP
 manuals require PS3 frames identical to the PSP frames; PS1 manuals may also carry
 PS3 frames distinct from the PSP ones, which are decoded, authenticated and
@@ -1289,9 +1271,9 @@ link). Generic PGD remains unsupported. A structurally valid, fully authenticate
 manual with zero pages succeeds with an empty extraction (no page files, no error).
 A frame whose authenticated PNG is itself truncated (an authoring defect) stays an
 error and publishes nothing.
-Resource limits are 128 MiB input (`MAX_SOURCE` in the helper, `max_document_size`
-in the ingester), 256 MiB total page frames, 4096 encrypted-range descriptors per
-page and 16 Mi pixels per image.
+Resource limits are 128 MiB input (`max_source` in `ingest/src/document.zig`,
+`max_document_size` in the ingester), 256 MiB total page frames, 4096 encrypted-range
+descriptors per page and 16 Mi pixels per image.
 
 For non-default PSP manuals, PKG, ISO and nested ISO9660 inventories bind an
 unrecognized legacy-PGD `DOCUMENT.DAT` to its exact same-directory `DOCINFO.EDAT`.
@@ -1309,14 +1291,11 @@ actual size (304 or 320).
 Paired results are inline on the original DOCUMENT occurrence, never globally
 cached by its hash alone. `dependencies` records the companion's path relative to
 that immediate inventory, SHA-256 and size. Reuse validates the same sibling
-binding; helper provenance changes invalidate the containing result. Generated
-page maps also retain the companion's byte identity. Titles are not key inputs.
-Direct helper use requires an explicit `--docinfo PATH`; it never discovers
-siblings from the input filename.
+binding; provenance changes invalidate the containing result. Titles are not key
+inputs. The extractor never discovers a companion from the input filename.
 
-DOCUMENT extraction publishes only page images, with the generated source/page
-map on helper stdout instead of a `structure.json` child. This also applies to
-inline manual inventories. Rebuild the DOCUMENT helper before use.
+DOCUMENT extraction publishes only page images; there is no source/page map and no
+`structure.json` child. This also applies to inline manual inventories.
 
 ### PC Engine Archives
 

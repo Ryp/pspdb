@@ -19,10 +19,8 @@ uv run --locked ./ingest/zig-out/bin/pspdb-ingest /path/to/inputs \
 Use a fresh staging catalog for each contribution. This command writes complete
 recursive metadata and hashes without a content store. Add `--store /path/to/store`
 only when you also want to persist extracted bytes locally.
-For supported manuals, rebuild and configure the
-[DOCUMENT helper](README.md#legacy-document-manuals) before ingestion and
-freshness checks. Revision 3 uses byte-input readers but still requires the
-external helper and Pillow. Missing helpers are not successful extraction.
+Manuals are extracted natively ([DOCUMENT](README.md#document-manuals), revision 5);
+no helper or extra configuration is needed.
 
 PSMF/PMF movies and raw MPEG program streams remain opaque source files.
 Keep source files and extracted bytes local; contribute only metadata/tree pairs.

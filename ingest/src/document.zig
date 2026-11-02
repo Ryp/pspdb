@@ -195,3 +195,16 @@ test "checkPng enforces the IHDR pixel budget" {
     defer zero.deinit(std.testing.allocator);
     try std.testing.expectError(error.InvalidPng, checkPng(zero.items));
 }
+
+test "extract emits nothing for a valid zero-page manual and for a tampered one fails" {
+    const Ctx = struct {
+        fn emit(_: void, _: []const u8, _: ?[]const u8) anyerror!void {
+            return error.UnexpectedEmit;
+        }
+    };
+    var manual: [document.zero_page_manual_len]u8 = undefined;
+    document.zeroPageManual(&manual);
+    try extract(std.testing.allocator, &manual, null, {}, Ctx.emit);
+    manual[0x20] ^= 1;
+    try std.testing.expectError(error.AuthenticationFailed, extract(std.testing.allocator, &manual, null, {}, Ctx.emit));
+}

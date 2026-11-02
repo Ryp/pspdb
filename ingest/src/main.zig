@@ -4,8 +4,6 @@ const Store = @import("store.zig").Store;
 const catalog_state = @import("catalog_state.zig");
 const licenses = @import("licenses.zig");
 const nand_fuses = @import("nand_fuses.zig");
-/// Reached by the DOCUMENT differential harness through this module.
-pub const document = @import("document.zig");
 
 const Options = struct {
     folders: []const []const u8 = &.{},
@@ -123,11 +121,6 @@ pub fn main(init: std.process.Init) !u8 {
         error.MissingHomeDirectory => null,
         else => return err,
     };
-    // Helpers inherit TMPDIR too, so Python's tempfile follows the same root.
-    const scratch_directory = if (init.environ_map.get("TMPDIR")) |value|
-        (if (value.len != 0 and std.Io.Dir.path.isAbsolute(value)) value else "/tmp")
-    else
-        "/tmp";
     const nand_fuse_directory = nand_fuses.directory_path(init.arena.allocator(), init.environ_map) catch |err| switch (err) {
         error.MissingHomeDirectory => null,
         else => return err,
@@ -141,7 +134,7 @@ pub fn main(init: std.process.Init) !u8 {
     ingest.log(io, "Ingesting {d} folders (thread cap {d}, ingest workers {d}, progress task {d})\n", .{
         options.folders.len, options.threads, worker_count, @as(usize, if (live) 1 else 0),
     });
-    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, rap_directory, rap_output, scratch_directory, nand_fuse_directory, state) catch |err| {
+    const stats = ingest.run(init.gpa, io, options.folders, worker_count, options.threads, root, store, catalog, options.skip_existing, rap_directory, rap_output, nand_fuse_directory, state) catch |err| {
         root.end();
         std.debug.print("pspdb-ingest: {s}\n", .{@errorName(err)});
         return 1;

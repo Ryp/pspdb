@@ -25,7 +25,7 @@ const nand = @import("zig_psp_nand");
 const kirk = @import("kirk");
 const nand_fuses = @import("nand_fuses.zig");
 const extractor = @import("extractor.zig");
-const external_extractor = @import("external_extractor.zig");
+const document_decoder = @import("document.zig");
 const psx = @import("psx.zig");
 const CatalogState = @import("catalog_state.zig").State;
 const store_objects = @import("store.zig");
@@ -43,6 +43,7 @@ const pce_key_name = "PSP-KEY.EDAT";
 const pce_options: []const []const u8 = &.{ "in-memory", "xor-table:b2d7084c", "content-dat:structure-checked", "content1-sdat:mac-verified" };
 const pcecd_options: []const []const u8 = &.{ "in-memory", "toc-bound", "sector-image-2048" };
 const psx_options: []const []const u8 = &.{"in-memory"};
+const document_options: []const []const u8 = &.{"in-memory"};
 /// Concurrent PS1 Classic conversions (see `Dispatch.psx_slots`).
 const max_psx_conversions = 2;
 const pcecd_output_name = "disc.iso";
@@ -78,8 +79,6 @@ pub const Dispatch = struct {
     /// its walk queues any EDAT; never serialized into tasks or provenance.
     derived_raps: std.StringHashMapUnmanaged([16]u8) = .empty,
     derived_mutex: std.Io.Mutex = .init,
-    /// Absolute parent of external-helper (DOCUMENT) work directories.
-    scratch_directory: []const u8 = "/tmp",
     /// Bounds concurrent PS1 Classic conversions: each holds whole disc images
     /// (hundreds of MB) plus its decrypted source in memory.
     psx_slots: std.Io.Semaphore = .{ .permits = max_psx_conversions },
@@ -772,7 +771,7 @@ const Inventory = struct {
             const companion = self.entries.items[companion_index];
             const source = self.document_inputs.get(index) orelse return error.InvalidDocument;
             const companion_input = self.document_inputs.get(companion_index);
-            try self.attach(entry, .document, source.bytes, if (companion_input) |view| view.bytes else "", entry.sha256.?);
+            try self.attach(entry, .document, source.bytes, if (companion_input) |view| view.bytes else "");
             if (companion.type == .file) {
                 const dependencies = try self.allocator.alloc(Dependency, 1);
                 errdefer self.allocator.free(dependencies);
@@ -802,7 +801,7 @@ const Inventory = struct {
                 continue;
             }
             const key_entry = self.entries.items[key_index.?];
-            try self.attach_context(entry, .pce, source.bytes, key_input.?.bytes, entry.sha256.?, .{ .sdat = role.sdat });
+            try self.attach_context(entry, .pce, source.bytes, key_input.?.bytes, .{ .sdat = role.sdat });
             try self.bind_dependency(entry, key_entry);
         }
     }
@@ -816,27 +815,37 @@ const Inventory = struct {
         entry.extraction.?.dependencies = dependencies;
     }
 
-    fn extract_external(self: *Inventory, hash: [64]u8, input: []const u8, kind: extractor.Kind, companion: ?[]const u8) !external_extractor.Output {
-        return external_extractor.extract(self.allocator, self.io, if (self.dispatch) |dispatch| dispatch.scratch_directory else "/tmp", hash, input, kind, companion) catch |err| {
-            switch (err) {
-                error.ExtractionFailed, error.ExtractorUnavailable, error.InvalidExtractorProvenance => {},
-                else => self.fatal = true,
-            }
-            return err;
+    fn document_provenance() extractor.Provenance {
+        return .{ .name = "pspdb-document", .version = revisions.document, .options = document_options };
+    }
+
+    /// Decodes a manual in memory. Any decoder failure is a non-fatal
+    /// `ExtractionFailed`; allocation failure and emit failures that already
+    /// marked the inventory fatal stay fatal.
+    fn extract_document(self: *Inventory, input: []const u8, docinfo: ?[]const u8) !void {
+        document_decoder.extract(self.allocator, input, docinfo, self, Inventory.emit_document) catch |err| {
+            if (err == error.OutOfMemory) self.fatal = true;
+            if (self.fatal) return err;
+            return error.ExtractionFailed;
         };
     }
 
-    fn walk_external(self: *Inventory, kind: extractor.Kind, output: external_extractor.Output) !void {
-        output.walk(self.allocator, self.io, kind == .document, self, Inventory.emit_view) catch |err| {
-            switch (err) {
-                error.EmptyExtraction, error.UnsupportedExtractedEntry, error.InvalidIsoPath, error.DuplicateIsoPath => {},
-                else => self.fatal = true,
-            }
+    // The extractor's pages die with its arena; the catalog needs an owned copy.
+    fn emit_document(self: *Inventory, name: []const u8, contents: ?[]const u8) anyerror!void {
+        const bytes = contents orelse return self.emit_view(name, null);
+        const copy = self.allocator.dupe(u8, bytes) catch |err| {
+            self.fatal = true;
             return err;
         };
+        const view = memory.Owner.take_allocated(self.allocator, copy) catch |err| {
+            self.fatal = true;
+            return err;
+        };
+        defer view.release();
+        try self.emit_view(name, view);
     }
 
-    fn decode_context(self: *Inventory, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8, output: *?external_extractor.Output) !extractor.Provenance {
+    fn decode_context(self: *Inventory, kind: extractor.Kind, input: []const u8, companion: []const u8) !extractor.Provenance {
         if (kind == .psx) return self.decode_psx(input);
         if (kind == .pops) {
             const output_value = try pops.extract(self.allocator, input, companion);
@@ -861,10 +870,10 @@ const Inventory = struct {
         if (kind == .document) {
             if (companion.len != document_docinfo_size and companion.len != document_docinfo_padded_size) return error.InvalidDocinfo;
             if (input.len > max_document_size) return error.InvalidDocument;
+            try self.extract_document(input, companion);
+            return document_provenance();
         }
-        output.* = try self.extract_external(hash, input, kind, if (kind == .document) companion else null);
-        try self.walk_external(kind, output.*.?);
-        return output.*.?.provenance.?.value;
+        unreachable;
     }
 
     /// Whole-PBP context under DATA.BIN: every disc image and auxiliary container
@@ -956,7 +965,7 @@ const Inventory = struct {
                 const index = self.paths.get(track.file).?;
                 const entry = &self.entries.items[index];
                 const bin = plain[entries_offset(entries, track.file)..][0..entry.size_bytes.?];
-                try self.attach_context(entry, .pcecd, bin, "", entry.sha256.?, .{ .track = track, .require_ipl = first_code });
+                try self.attach_context(entry, .pcecd, bin, "", .{ .track = track, .require_ipl = first_code });
                 try self.bind_dependency(entry, self.entries.items[toc_index]);
             }
         }
@@ -968,18 +977,16 @@ const Inventory = struct {
         unreachable;
     }
 
-    fn attach(self: *Inventory, entry: *Entry, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8) !void {
-        return self.attach_context(entry, kind, input, companion, hash, .{});
+    fn attach(self: *Inventory, entry: *Entry, kind: extractor.Kind, input: []const u8, companion: []const u8) !void {
+        return self.attach_context(entry, kind, input, companion, .{});
     }
 
-    fn attach_context(self: *Inventory, entry: *Entry, kind: extractor.Kind, input: []const u8, companion: []const u8, hash: [64]u8, context: PceContext) !void {
+    fn attach_context(self: *Inventory, entry: *Entry, kind: extractor.Kind, input: []const u8, companion: []const u8, context: PceContext) !void {
         var child = Inventory{ .allocator = self.allocator, .io = self.io, .store = self.store, .dispatch = self.dispatch, .pce_context = context, .paths = .init(self.allocator) };
         defer child.deinit();
-        var output: ?external_extractor.Output = null;
-        defer if (output) |value| value.deinit(self.allocator, self.io);
         var failure: ?[]const u8 = null;
         errdefer if (failure) |message| self.allocator.free(message);
-        const provenance = child.decode_context(kind, input, companion, hash, &output) catch |err| blk: {
+        const provenance = child.decode_context(kind, input, companion) catch |err| blk: {
             failure = extraction_error(&child, err) catch |fatal| {
                 self.fatal = true;
                 return fatal;
@@ -987,7 +994,6 @@ const Inventory = struct {
             break :blk orchestrator(kind);
         };
         try self.attach_inline(entry, &child, provenance, if (kind == .pops or kind == .pcecd) "source_stem" else "identity", &failure);
-        if (output) |*value| entry.extraction.?.owned_provenance = value.take_provenance();
     }
 
     // Takes the finalized child entries and its first error only on success.
@@ -1113,8 +1119,7 @@ test "KL extraction accepts absent mismatched and empty-stem suffixes" {
         for ([_][]const u8{ "DATA", mismatched, suffix_only }) |name| {
             var inventory = Inventory{ .allocator = allocator, .io = std.testing.io, .store = null, .dispatch = null, .paths = .init(allocator) };
             defer inventory.deinit();
-            var output: ?external_extractor.Output = null;
-            _ = try execute_task(allocator, .{ .name = name, .input = input, .hash = hash_source(&encoded).sha256, .kind = kind }, &dispatch, &inventory, &output);
+            _ = try execute_task(allocator, .{ .name = name, .input = input, .hash = hash_source(&encoded).sha256, .kind = kind }, &dispatch, &inventory);
             try std.testing.expectEqual(@as(usize, 1), inventory.entries.items.len);
             const entry = inventory.entries.items[0];
             try std.testing.expectEqualStrings("payload.bin", entry.path);
@@ -1143,11 +1148,9 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
         .paths = .init(allocator),
     };
     defer inventory.deinit();
-    var output: ?external_extractor.Output = null;
-    defer if (output) |value| value.deinit(allocator, io);
     var failure: ?[]const u8 = null;
     defer if (failure) |message| allocator.free(message);
-    const provenance = execute_task(allocator, task, dispatch, &inventory, &output) catch |err| blk: {
+    const provenance = execute_task(allocator, task, dispatch, &inventory) catch |err| blk: {
         // A validated gzip prefix with an enclosing suffix stays opaque.
         if (task.kind == .gzip and err == error.NotStandaloneGzip) return inventory.counts;
         failure = try extraction_error(&inventory, err);
@@ -1162,7 +1165,7 @@ pub fn process_task(allocator: std.mem.Allocator, io: std.Io, task: Task, dispat
     return inventory.counts;
 }
 
-fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, inventory: *Inventory, output: *?external_extractor.Output) !extractor.Provenance {
+fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, inventory: *Inventory) !extractor.Provenance {
     return switch (task.kind) {
         .edat => blk: {
             // A licence marker without any key is published as an empty payload,
@@ -1305,18 +1308,17 @@ fn execute_task(allocator: std.mem.Allocator, task: Task, dispatch: *Dispatch, i
             try pbp.walk(inventory, Inventory.emit);
             if (is_pops) {
                 if (inventory.paths.get("DATA.PSP")) |index| {
-                    try inventory.attach(&inventory.entries.items[index], .pops, pbp.get("DATA.PSP").?, data_bin, task.hash);
+                    try inventory.attach(&inventory.entries.items[index], .pops, pbp.get("DATA.PSP").?, data_bin);
                 }
                 if (inventory.paths.get("DATA.BIN")) |index| {
-                    try inventory.attach(&inventory.entries.items[index], .psx, task.input.bytes, "", task.hash);
+                    try inventory.attach(&inventory.entries.items[index], .psx, task.input.bytes, "");
                 }
             }
             break :blk .{ .name = "Zig-PSP zPBPTool", .version = revisions.pbp, .options = &.{"in-memory"} };
         },
         .document => blk: {
-            output.* = try inventory.extract_external(task.hash, task.input.bytes, task.kind, null);
-            try inventory.walk_external(task.kind, output.*.?);
-            break :blk output.*.?.provenance.?.value;
+            try inventory.extract_document(task.input.bytes, null);
+            break :blk Inventory.document_provenance();
         },
         // Contextual kinds only exist as attachments of a parent inventory.
         .pops, .psx => unreachable,

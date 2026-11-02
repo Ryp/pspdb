@@ -209,17 +209,4 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{ .root_module = module });
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
-
-    // Differential harness: reuses `module` (C objects, include paths, system
-    // libraries) through the import graph.
-    const diff_module = b.createModule(.{
-        .root_source_file = b.path("src/document_diff.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{.{ .name = "ingest", .module = module }},
-    });
-    const diff_exe = b.addExecutable(.{ .name = "document-diff", .root_module = diff_module });
-    const diff_run = b.addRunArtifact(diff_exe);
-    diff_run.addPassthruArgs();
-    b.step("document-diff", "Compare recorded DOCUMENT extractions with document.zig (zig build document-diff -- --corpus FILE [--limit N])").dependOn(&diff_run.step);
 }

@@ -19,7 +19,6 @@ import pycdlib
 
 
 GAME_UMD = b"UMDT-99872|8D53CBDF6A4FC495|0001|G" + b"\0" * 13 + b"|"
-DOCUMENT_HEADER = b'\0PGD\x01\0\0\0\x01\0\0\0\0\0\0\0\x67\x68\xbd\x14\xca\x5d\x47\x4a'
 
 
 def iso_bytes(umd=GAME_UMD, nested=False):
@@ -898,137 +897,6 @@ class IngestCliTests(unittest.TestCase):
             # The superseded invalid gzip must never become a queued error tree.
             self.assertFalse((catalog / 'gzip').exists())
 
-    def test_nested_external_trees_keep_inputs_alive_and_stop_cycles(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / 'inputs'; root.mkdir()
-            store = Path(tmp) / 'store'; catalog = Path(tmp) / 'catalog'
-            parent = DOCUMENT_HEADER + b'parent'; child = DOCUMENT_HEADER + b'child'
-            parent_hash = hashlib.sha256(parent).hexdigest()
-            child_hash = hashlib.sha256(child).hexdigest()
-            iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
-            for name, data in [('UMD_DATA.BIN', GAME_UMD), ('UPDATE.DAT', parent)]:
-                iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
-            output = BytesIO(); iso.write_fp(output); iso.close()
-            (root / 'sample.iso').write_bytes(output.getvalue())
-            # With one worker, the parent temporary directory must already be gone
-            # before the child runs; the child owns its in-memory input.
-            # Both extractions emit the same nested DOCUMENT: its own output
-            # contains a cycle. This exercises scheduling, not a fake decoder.
-            tool = Path(tmp) / 'document-helper'
-            tool.write_text(f'''#!{sys.executable}
-import json, os, sys
-from pathlib import Path
-if sys.argv[1:] == ['--provenance']:
-    print(json.dumps({{'name': 'PSP-DOCUMENT.DAT', 'options': ['page-files-only:1']}}))
-    raise SystemExit
-output = Path(sys.argv[sys.argv.index('--output') + 1])
-log = Path(os.environ['PSPDB_TEST_OUTPUTS'])
-previous = log.read_text().splitlines() if log.exists() else []
-assert all(not Path(path).exists() for path in previous)
-with log.open('a') as stream:
-    stream.write(str(output) + '\\n')
-(output / 'child.dat').write_bytes(bytes.fromhex('{child.hex()}'))
-(output / 'module.prx').write_bytes(b'decoded')
-if os.environ.get('PSPDB_TEST_FAIL_CHILD') == '1' and previous:
-    (output / 'link').symlink_to('module.prx')
-''')
-            tool.chmod(0o755)
-            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
-                code, output = self.run_cli(root, '--catalog', str(catalog), '--store', str(store),
-                    '--threads', '1', '--no-progress')
-            self.assertEqual(code, 0, output)
-            self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
-            self.assertEqual({source_hash(p) for p in (catalog / 'document' / ('v' + VERSIONS['document'])).glob('*-ingest.json')}, {parent_hash, child_hash})
-            for h in (parent_hash, child_hash):
-                tree = json.loads(tree_path(catalog, h).read_text())
-                self.assertEqual(next(e['sha256'] for e in tree['entries'] if e['path'] == 'child.dat'), child_hash)
-            iso_record = json.loads(next((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json')).read_text())
-            iso_tree = json.loads(tree_path(catalog, iso_record['sha256']).read_text())
-            self.assertEqual({e['path'] for e in iso_tree['entries']}, {'UMD_DATA.BIN', 'UPDATE.DAT'})
-            # A failure while Zig walks a child must also clean both temp trees.
-            (Path(tmp) / 'outputs').unlink()
-            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs'), 'PSPDB_TEST_FAIL_CHILD': '1'}):
-                code, output = self.run_cli(root, '--catalog', str(catalog / 'failed'), '--store', str(store),
-                    '--threads', '1', '--no-progress')
-            self.assertEqual(code, 0, output)
-            self.assertIn('UnsupportedExtractedEntry', output)
-            self.assertEqual(len(self.records(output)), 1)
-            tree = json.loads(tree_path(catalog / 'failed', child_hash).read_text())
-            self.assertEqual(tree['error'], 'UnsupportedExtractedEntry')
-            self.assertTrue(all(not Path(p).exists() for p in (Path(tmp) / 'outputs').read_text().splitlines()))
-            # A failed attempt can be retried in place, without revising sources.
-            (Path(tmp) / 'outputs').unlink()
-            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs')}):
-                code, output = self.run_cli(root, '--catalog', str(catalog / 'failed'), '--store', str(store),
-                    '--threads', '1', '--no-progress')
-            self.assertEqual(code, 0, output)
-            recovered = json.loads(tree_path(catalog / 'failed', child_hash).read_text())
-            self.assertNotIn('error', recovered)
-            self.assertEqual({e['path'] for e in recovered['entries']}, {'child.dat', 'module.prx'})
-            # An unsuccessful later attempt must not downgrade that success.
-            (Path(tmp) / 'outputs').unlink()
-            with patch.dict(os.environ, {'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_OUTPUTS': str(Path(tmp) / 'outputs'), 'PSPDB_TEST_FAIL_CHILD': '1'}):
-                code, output = self.run_cli(root, '--catalog', str(catalog / 'failed'), '--store', str(store),
-                    '--threads', '1', '--no-progress')
-            self.assertEqual(code, 0, output)
-            self.assertEqual(json.loads(tree_path(catalog / 'failed', child_hash).read_text()), recovered)
-
-
-    def test_nested_jobs_overlap_within_and_across_isos_before_publication(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
-            catalog = root / 'catalog'; markers = root / 'started'; markers.mkdir()
-            hashes = set()
-            for index in range(2):
-                iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
-                files = [('UMD_DATA.BIN', GAME_UMD)]
-                for child in range(2):
-                    payload = DOCUMENT_HEADER + f'{index}/{child}'.encode()
-                    hashes.add(hashlib.sha256(payload).hexdigest())
-                    files.append((f'CHILD{child}.BIN', payload))
-                for name, payload in files:
-                    iso.add_fp(BytesIO(payload), len(payload), iso_path='/' + name + ';1')
-                image = BytesIO(); iso.write_fp(image); iso.close()
-                if index == 0:
-                    (inputs / 'one.iso').write_bytes(image.getvalue())
-                else:
-                    with zipfile.ZipFile(inputs / 'two.zip', 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-                        archive.writestr('two.iso', image.getvalue())
-            # Four extractors rendezvous. Serial recursive processing deadlocks
-            # here; premature ISO publication is rejected before joining.
-            tool = root / 'document-helper'
-            tool.write_text(f'''#!{sys.executable}
-import hashlib, json, os, sys, time
-from pathlib import Path
-if sys.argv[1:] == ['--provenance']:
-    print(json.dumps({{'name': 'PSP-DOCUMENT.DAT', 'options': ['page-files-only:1']}}))
-    raise SystemExit
-assert not (Path(os.environ['PSPDB_TEST_CATALOG']) / 'iso').exists()
-markers = Path(os.environ['PSPDB_TEST_STARTED'])
-(markers / hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest()).touch()
-deadline = time.monotonic() + 5
-while len(list(markers.iterdir())) < 4:
-    assert time.monotonic() < deadline
-    time.sleep(0.01)
-output = Path(sys.argv[sys.argv.index('--output') + 1])
-with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
-    stream.write(str(output) + '\\n')
-(output / 'module.prx').write_bytes(b'decoded')
-''')
-            tool.chmod(0o755)
-            with patch.dict(os.environ, {
-                'PSPDB_DOCUMENT': str(tool), 'PSPDB_TEST_STARTED': str(markers),
-                'PSPDB_TEST_CATALOG': str(catalog), 'PSPDB_TEST_OUTPUTS': str(root / 'outputs'),
-            }):
-                code, output = self.run_cli(inputs, '--catalog', str(catalog),
-                    '--threads', '4', '--no-progress')
-            self.assertEqual(code, 0, output)
-            self.assertEqual({p.name for p in markers.iterdir()}, hashes)
-            self.assertEqual(len(list((catalog / 'iso' / ('v' + VERSIONS['iso'])).glob('*-ingest.json'))), 2)
-            self.assertEqual({source_hash(p) for p in (catalog / 'document' / ('v' + VERSIONS['document'])).glob('*-ingest.json')}, hashes)
-            self.assertEqual(len(self.records(output)), 2)
-            self.assertTrue(all(not Path(p).exists() for p in (root / 'outputs').read_text().splitlines()))
-
     def test_legacy_rco_helper_cannot_accept_an_invalid_container(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
@@ -1221,22 +1089,8 @@ with Path(os.environ['PSPDB_TEST_OUTPUTS']).open('a') as stream:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); inputs = root / 'inputs'; inputs.mkdir()
             catalog, store = root / 'catalog', root / 'store'
-            parent = DOCUMENT_HEADER + b'revision-test'
             child = gzip.compress(b'decoded resource', mtime=0)
-            compressed = root / 'child.gz'; compressed.write_bytes(child)
-            calls = root / 'calls'
-            tool = root / 'document-helper'
-            tool.write_text(f'''#!{sys.executable}
-import json, os, shutil, sys
-from pathlib import Path
-if sys.argv[1:] == ['--provenance']:
-    print(json.dumps({{'name': 'PSP-DOCUMENT.DAT', 'options': ['page-files-only:1']}}))
-    raise SystemExit
-with Path(os.environ['PSPDB_CALLS']).open('a') as stream:
-    stream.write('called\\n')
-shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--output') + 1]) / 'child.gz')
-''')
-            tool.chmod(0o755)
+            parent = child
             iso = pycdlib.PyCdlib(); iso.new(interchange_level=3)
             for name, data in [('UMD_DATA.BIN', GAME_UMD), ('UPDATE.DAT', parent)]:
                 iso.add_fp(BytesIO(data), len(data), iso_path='/' + name + ';1')
@@ -1244,8 +1098,7 @@ shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--outpu
             iso_hash = hashlib.sha256((inputs / 'sample.iso').read_bytes()).hexdigest()
             child_hash = hashlib.sha256(child).hexdigest()
             args = ['--catalog', str(catalog), '--store', str(store), '--threads', '1', '--no-progress', '--skip-existing']
-            env = {'PSPDB_DOCUMENT': str(tool), 'PSPDB_CHILD': str(compressed), 'PSPDB_CALLS': str(calls)}
-            with patch.dict(os.environ, env):
+            with patch.dict(os.environ, {}):
                 code, output = self.run_cli(inputs, *args)
                 self.assertEqual(code, 0, output)
                 old = {key: value for key, value in snapshot(catalog).items() if value[3] is not None}
@@ -1273,19 +1126,17 @@ shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--outpu
                     result = subprocess.run([str(checkout / 'ingest/zig-out/bin/pspdb-ingest'), str(inputs), *args], capture_output=True, text=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     return result.stdout + result.stderr
-                # ISO and DOCUMENT are current: a stale gzip descendant still prevents skipping.
+                # The ISO is current: a stale gzip descendant still prevents skipping.
                 revisions['gzip'] = str(int(revisions['gzip']) + 1)
                 output = rebuild()
                 self.assertIn('Already cataloged: 0 sources skipped.', output)
                 self.assertTrue((catalog / 'gzip' / ('v' + revisions['gzip']) / (child_hash + '-tree.json')).exists())
-                self.assertEqual(calls.read_text().splitlines(), ['called'])
                 self.assertTrue(all(snapshot(catalog)[key] == value for key, value in old.items()))
                 # An ISO bump writes a fresh adjacent pair and retains the previous pair.
                 revisions['iso'] = str(int(revisions['iso']) + 1)
                 rebuild()
                 self.assertTrue((catalog / 'iso' / ('v' + revisions['iso']) / (iso_hash + '-ingest.json')).exists())
                 self.assertTrue((catalog / 'iso' / ('v' + revisions['iso']) / (iso_hash + '-tree.json')).exists())
-                self.assertEqual(calls.read_text().splitlines(), ['called'])
                 self.assertTrue(all(snapshot(catalog)[key] == value for key, value in old.items()))
                 output = rebuild()
                 self.assertIn('Already cataloged: 1 sources skipped.', output)
@@ -1295,14 +1146,6 @@ shutil.copyfile(os.environ['PSPDB_CHILD'], Path(sys.argv[sys.argv.index('--outpu
                 (catalog / 'gzip' / ('v' + revisions['gzip']) / (child_hash + '-tree.json')).unlink()
                 rebuild()
                 self.assertEqual(child_object.read_bytes(), child)
-                self.assertEqual(calls.read_text().splitlines(), ['called', 'called'])
-                # A changed executable cannot silently overwrite its current revision.
-                tool.write_text(tool.read_text() + '# changed executable\n')
-                before = snapshot(catalog)
-                result = subprocess.run([str(checkout / 'ingest/zig-out/bin/pspdb-ingest'), str(inputs), *args], capture_output=True, text=True, timeout=30)
-                self.assertEqual(result.returncode, 1)
-                self.assertIn('CatalogConflict', result.stdout + result.stderr)
-                self.assertEqual(snapshot(catalog), before)
 
     def test_empty_folder_and_missing_root(self):
         with tempfile.TemporaryDirectory() as tmp:

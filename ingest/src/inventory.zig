@@ -23,7 +23,6 @@ pub const InlineExtraction = struct {
     entries: []Entry,
     dependencies: []Dependency = &.{},
     @"error": ?[]const u8 = null,
-    owned_provenance: ?std.json.Parsed(extractor.Provenance) = null,
 
     pub fn jsonStringify(self: InlineExtraction, json: *std.json.Stringify) !void {
         try json.beginObject();
@@ -65,7 +64,6 @@ pub const Entry = struct {
             if (tree.@"error") |message| allocator.free(message);
             for (tree.dependencies) |dependency| dependency.deinit(allocator);
             allocator.free(tree.dependencies);
-            if (tree.owned_provenance) |provenance| provenance.deinit();
             allocator.destroy(tree);
         }
     }
